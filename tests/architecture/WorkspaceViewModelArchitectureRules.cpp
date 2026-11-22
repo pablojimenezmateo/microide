@@ -758,6 +758,7 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
       {"src/workspace/render/NotificationToastPaint.cpp", "void PaintNotificationToasts("},
       {"src/workspace/render/DebugPaneRender.cpp", "void PaintDebugPaneBody("},
       {"src/workspace/render/GitSidebarPaint.cpp", "void PaintGitPanelHead("},
+      {"src/workspace/render/WorkspaceShellRenderFrame.cpp", "void WorkspaceShell::PaintEditorPane("},
   };
   const std::regex forbidden(
       R"(\bcontext_\b|\b[a-z_]+_service_\b|\bPointerOver\s*\(|\bRenderViewModelBuilder\b|)"

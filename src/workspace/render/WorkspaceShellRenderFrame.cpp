@@ -119,11 +119,14 @@ struct EditorOverviewPaneCache {
 // for search matches and diagnostics (rebuilt only when a source or the lane changed),
 // plus a live caret marker on top. Scratch vectors are caller-owned/thread-local so a
 // steady frame allocates nothing.
+// `diagnostics` are the pane's, already filtered to the minimum severity, and
+// `search` the find widget's state while it draws matches on this pane (else null):
+// the pane's prepared paint inputs (PreparedFrameState::EditorPanePaint).
 void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
-                             ProjectWorkspaceState& project_state,
-                             const OverlaySurfaceViewModel& overlay_vm,
-                             editor::TextViewport& viewport, bool pane_active,
-                             editor::DiagnosticSeverity diag_min_severity, const SDL_FRect& track,
+                             const editor::TextViewport& viewport,
+                             std::span<const editor::PublishedDiagnostic> diagnostics,
+                             std::uint64_t diagnostics_revision, editor::DiagnosticSeverity diag_min_severity,
+                             const BufferSearchState* search, const SDL_FRect& track,
                              float pane_left, EditorOverviewPaneCache& cache,
                              std::vector<overview::MarkerInput>& inputs,
                              std::vector<std::uint32_t>& buckets, std::vector<SDL_Color>& palette) {
@@ -139,17 +142,15 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
   const std::size_t total_rows = viewport.visual_line_count();
   const auto marker_row = [&viewport](std::size_t line) { return viewport.VisualRowForLine(line); };
 
-  const BufferSearchState& buffer_search = project_state.overlay.workflow.buffer_search;
-  const bool search_active =
-      pane_active &&
-      (overlay_vm.mode == OverlayMode::BufferSearch || overlay_vm.mode == OverlayMode::BufferReplace) &&
-      !buffer_search.matches.empty();
+  static const BufferSearchState kNoSearch;
+  const BufferSearchState& buffer_search = search != nullptr ? *search : kNoSearch;
+  const bool search_active = search != nullptr && !buffer_search.matches.empty();
 
   EditorOverviewSignature sig;
   sig.viewport = &viewport;
   sig.line_count = total_rows;
   sig.dirty = viewport.dirty();
-  sig.diag_revision = project_state.diagnostics_store.revision();
+  sig.diag_revision = diagnostics_revision;
   sig.diag_min_severity = static_cast<int>(diag_min_severity);
   sig.search_active = search_active;
   sig.search_revision = buffer_search.matches_revision;
@@ -163,15 +164,9 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
     // Diagnostics stay visible while the buffer is dirty: LspService slides their
     // positions through each edit so they track the text until the server
     // republishes. Only a pathless (unsaved scratch) buffer has none.
-    if (!viewport.path().empty()) {
-      if (const std::vector<editor::PublishedDiagnostic>* diags =
-              project_state.diagnostics_store.FindByPathKey(viewport.path_key());
-          diags != nullptr) {
-        thread_local std::vector<editor::PublishedDiagnostic> tls_filtered;
-        const std::span<const editor::PublishedDiagnostic> filtered =
-            editor::FilterDiagnosticsAtLeastSeverity(
-                std::span<const editor::PublishedDiagnostic>(*diags), diag_min_severity,
-                tls_filtered);
+    {
+      {
+        const std::span<const editor::PublishedDiagnostic> filtered = diagnostics;
         // Saturate diagnostic rows into int: a std::size_t line beyond INT_MAX
         // (a plugin/LSP coordinate near the host ceiling) would otherwise wrap to a
         // negative/small row and mis-place the overview marker. (TD-2026-07-16-69.)
@@ -881,6 +876,109 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                             (project_state.overlay.mode == OverlayMode::BufferSearch ||
                              project_state.overlay.mode == OverlayMode::BufferReplace);
     std::array<bool, kMaxEditorGroups> committed{};
+    // Every editor pane's paint inputs, built here once (derived-damage 2.3):
+    // PaintEditorPane draws from them and nothing else, and the rows key on them.
+    for (PreparedFrameState::EditorPanePaint& paint : frame_state_.editor_pane_paint) {
+      paint.valid = false;
+    }
+    const bool fold_enabled = setting("editor.fold.enabled", true);
+    const bool sticky_enabled = setting("editor.fold.sticky_scroll.enabled", true);
+    const int sticky_depth =
+        ParseStickyScrollMaxDepthSetting(GetSettingValue("editor.fold.sticky_scroll.max_depth"));
+    const editor::DiagnosticSeverity min_severity =
+        editor::ParseDiagnosticSeverity(GetSettingValue("diagnostics.min_severity").value_or("hint"));
+    const editor::InsetGapFeatureFlags inset_flags =
+        insets_possible ? editor::InsetGapFeatureFlags{.inline_surfaces = setting("plugins.inline_surfaces", false),
+                                                       .code_lens_above = setting("plugins.code_lens_above", false),
+                                                       .ghost_text = setting("plugins.ghost_text", false)}
+                        : editor::InsetGapFeatureFlags{};
+    const RenderViewModelBuilder pane_builder(context_);
+    const auto fill_pane_paint = [&](std::size_t gi, const EditorPaneLayout& pane, EditorGroup& group,
+                                     editor::TextViewport& viewport, bool focused) {
+      PreparedFrameState::EditorPanePaint& paint = frame_state_.editor_pane_paint[gi];
+      paint.valid = true;
+      paint.viewport = &viewport;
+      paint.folding = fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
+      paint.rect = pane.rect;
+      paint.active = pane.active;
+      paint.metrics = frame_state_.pane_metrics[gi];
+      paint.bracket_match = pane.active && setting("editor.brackets.match_highlight.enabled", true);
+      paint.indent_guides = setting("editor.view.indent_guides.enabled", true);
+      paint.render_whitespace = setting("editor.view.render_whitespace", false);
+      paint.line_numbers = setting("editor.line_numbers", true);
+      paint.overview_ruler = setting("editor.view.overview_ruler.enabled", true);
+      paint.diagnostics_min_severity = min_severity;
+      paint.vertical_bar_dragged =
+          pane.active && context_.interaction_state.drag_target == DragTarget::EditorVerticalScrollbar;
+      paint.horizontal_bar_dragged =
+          pane.active && context_.interaction_state.drag_target == DragTarget::EditorHorizontalScrollbar;
+      paint.drop_indicator.reset();
+      if (pane.active && context_.interaction_state.text_dragging() &&
+          context_.interaction_state.text_drag_has_drop) {
+        paint.drop_indicator = editor::TextPosition{.line = context_.interaction_state.text_drag_drop_line,
+                                                    .column = context_.interaction_state.text_drag_drop_column};
+      }
+      const bool debug_on = DebugEnabled();
+      if (viewport.is_placeholder()) {
+        // An empty group's home surface (recents and shortcuts), memoized by the builder.
+        pane_builder.BuildEditorViewModelInto(paint.view_model, viewport, paint.metrics.visible_rows, paint.folding,
+                                              setting("editor.occurrences.enabled", true),
+                                              setting("editor.search.case_sensitive", false),
+                                              fold_enabled && sticky_enabled && paint.folding != nullptr, sticky_depth,
+                                              paint.render_whitespace, debug_on,
+                                              debug_on ? &project_state.breakpoint_store : nullptr,
+                                              debug_on ? &project_state.debug_execution : nullptr);
+        paint.welcome = &pane_builder.BuildWelcomeView(recents_service_);
+        paint.diagnostics = {};
+        paint.decorations = nullptr;
+        paint.blame = nullptr;
+        paint.search_query.clear();
+        paint.explicit_search_matches = {};
+        paint.active_search_match.reset();
+        paint.find_scope.reset();
+        paint.blame_source = nullptr;
+        paint.ruler_search = nullptr;
+        return;
+      }
+      paint.welcome = nullptr;
+      pane_builder.BuildEditorViewModelInto(
+          paint.view_model, viewport, paint.metrics.visible_rows, paint.folding,
+          setting("editor.occurrences.enabled", true) && pane.active, setting("editor.search.case_sensitive", false),
+          fold_enabled && sticky_enabled && paint.folding != nullptr, sticky_depth, paint.render_whitespace, debug_on,
+          debug_on ? &project_state.breakpoint_store : nullptr, debug_on ? &project_state.debug_execution : nullptr,
+          inset_flags, paint.metrics.line_height);
+      paint.diagnostics = {};
+      if (!viewport.path().empty()) {
+        if (const auto* published = project_state.diagnostics_store.FindByPathKey(viewport.path_key())) {
+          paint.diagnostics = editor::FilterDiagnosticsAtLeastSeverity(
+              std::span<const editor::PublishedDiagnostic>(*published), min_severity, paint.filtered_diagnostics);
+        }
+      }
+      paint.decorations =
+          !viewport.dirty() && !viewport.path().empty() && insets_possible
+              ? project_state.plugin_presentation_if_present()->decorations.FindByPathKey(viewport.path_key())
+              : nullptr;
+      const std::optional<editor::EditorBlameOverlay>& blame = editor_blame_overlay_service_.VisibleOverlay();
+      paint.blame = pane.active && blame.has_value() ? &*blame : nullptr;
+      paint.blame_source = pane.active ? &blame : nullptr;
+      paint.diagnostics_revision = project_state.diagnostics_store.revision();
+      // The find widget's highlights, on the focused pane while it is the overlay:
+      // a regex or a scoped find draws its precomputed match set, a literal one its
+      // query (EditorViewRenderer scans each row for it).
+      const bool find_here = pane.active && find_shown;
+      const bool explicit_matches = find_here && (buffer_search.regex || buffer_search.scope.has_value());
+      paint.explicit_search_matches =
+          explicit_matches
+              ? BufferSearchHighlightFragments(viewport, buffer_search.matches, buffer_search.matches_revision)
+              : std::span<const editor::SelectionRange>{};
+      paint.search_query.assign(find_here && !explicit_matches ? buffer_search.query.text() : std::string_view{});
+      paint.active_search_match = pane.active ? ActiveBufferSearchMatch() : std::nullopt;
+      paint.find_scope = find_here && buffer_search.scope.has_value()
+                             ? std::optional<editor::SelectionRange>(buffer_search.scope->range)
+                             : std::nullopt;
+      paint.ruler_search = find_here ? &buffer_search : nullptr;
+      (void)focused;
+    };
     for (const EditorPaneLayout& pane : panes) {
       const std::size_t gi = pane.group_index;
       if (gi >= kMaxEditorGroups || gi >= project_state.editor_groups.size() || !frame_state_.pane_metrics_valid[gi]) {
@@ -889,7 +987,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       EditorGroup& group = project_state.editor_groups[gi];
       const bool diff_in_front = group.has_active_tab() && (group.active_tab().kind == TabEntry::Kind::Compare ||
                                                             group.active_tab().kind == TabEntry::Kind::Merge);
-      const editor::TextViewport* viewport = GroupActiveViewport(group);
+      editor::TextViewport* viewport = GroupActiveViewport(group);
       const auto surface = static_cast<DerivedSurface>(static_cast<std::size_t>(DerivedSurface::EditorPane0) + gi);
       std::vector<DerivedDamage::Unit>& units = frame_state_.derived_damage.Begin(surface);
       committed[gi] = true;
@@ -1050,11 +1148,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
       }
-      if (diff_in_front || viewport == nullptr || viewport->is_placeholder()) {
+      if (diff_in_front || viewport == nullptr) {
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
       }
       const bool focused = gi == focused_group;
+      fill_pane_paint(gi, pane, group, *viewport, focused);
+      if (viewport->is_placeholder()) {
+        // The home surface repaints whole when anything it shows moves: the pane,
+        // its size, the recents list (the builder's memo, a new object per change).
+        PaintFingerprint welcome;
+        welcome.Add(pane.rect).Add(reinterpret_cast<std::uintptr_t>(frame_state_.editor_pane_paint[gi].welcome))
+            .Add(settings.value());
+        units.push_back({pane.rect, welcome.value()});
+        frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
+        continue;
+      }
+      const PreparedFrameState::EditorPanePaint& paint = frame_state_.editor_pane_paint[gi];
       const editor::EditorViewMetrics& metrics = frame_state_.pane_metrics[gi];
       const editor::FoldingModel* folds =
           setting("editor.fold.enabled", true) ? GroupFoldingModelPtr(group) : nullptr;
@@ -1096,21 +1206,38 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           pane_key.Add(frame.line).Add(std::string_view(frame.source_path_normalized));
         }
       }
+      // What the pane's view model adds beyond each row's own line: the sticky band's
+      // lines, inset gaps and their contents, the ghost-text tail, the execution line,
+      // breakpoint marks; and the drop indicator of a text drag.
+      {
+        const editor::EditorViewModel& vm = paint.view_model;
+        pane_key.Add(vm.sticky_lines.size());
+        for (const std::size_t line : vm.sticky_lines) {
+          pane_key.Add(line).Add(viewport->lines().LineView(std::min(line, viewport->line_count() - 1)));
+        }
+        pane_key.Add(vm.row_gaps.size()).Add(vm.row_gap_contents.size()).Add(vm.code_lens_above);
+        for (const editor::RowGap& gap : vm.row_gaps) {
+          pane_key.Add(gap.visual_row).Add(gap.height).Add(static_cast<int>(gap.placement));
+        }
+        if (vm.ghost_text_tail.has_value()) {
+          pane_key.Add(vm.ghost_text_tail->visual_row).Add(vm.ghost_text_tail->text);
+        }
+        pane_key.Add(vm.execution_line_index.has_value() ? *vm.execution_line_index + 1 : 0);
+        pane_key.Add(vm.breakpoint_gutter_marks.size());
+        for (const editor::BreakpointGutterMark& mark : vm.breakpoint_gutter_marks) {
+          pane_key.Add(mark.line_index).Add(mark.enabled).Add(mark.verified).Add(mark.has_condition).Add(mark.is_logpoint);
+        }
+        if (paint.drop_indicator.has_value()) {
+          pane_key.Add(paint.drop_indicator->line).Add(paint.drop_indicator->column);
+        }
+      }
       if (focused && find_shown) {
         pane_key.Add(std::string_view(buffer_search.query.text()))
             .Add(buffer_search.matches_revision)
             .Add(buffer_search.regex)
             .Add(buffer_search.scope.has_value());
       }
-      std::span<const editor::PublishedDiagnostic> diagnostics;
-      if (!viewport->path().empty()) {
-        if (const auto* published = project_state.diagnostics_store.FindByPathKey(viewport->path_key())) {
-          diagnostics = *published;
-        }
-      }
-      const std::optional<editor::EditorBlameOverlay> no_blame;
-      const std::optional<editor::EditorBlameOverlay>& blame =
-          pane.active ? editor_blame_overlay_service_.VisibleOverlay() : no_blame;
+      const std::span<const editor::PublishedDiagnostic> diagnostics = paint.diagnostics;
       const EditorRowKeyInputs inputs{
           .viewport = viewport,
           .pane_rect = pane.rect,
@@ -1127,7 +1254,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                               : std::nullopt,
           .folds = folds,
           .active_search_match = focused ? ActiveBufferSearchMatch() : std::nullopt,
-          .blame = blame.has_value() ? &*blame : nullptr,
+          .blame = paint.blame,
       };
       AppendEditorRowUnits(inputs, frame_state_.editor_row_keys, units);
       // The scrollbars, and the overview ruler in the vertical one's track: what
@@ -2140,6 +2267,78 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
   }
 }
 
+// One editor pane, from the inputs frame prep built for it and nothing else
+// (derived-damage 2.3; CheckDerivedSurfacePaintReadsOnlyItsSnapshot): its rows'
+// derived units key on the same inputs, so what this draws is what they compare.
+void WorkspaceShell::PaintEditorPane(SDL_Renderer* renderer, std::size_t group_index, bool draw_caret) {
+  const PreparedFrameState::EditorPanePaint& paint = frame_state_.editor_pane_paint[group_index];
+  editor::TextViewport& viewport = *paint.viewport;
+  const editor::EditorViewMetrics& metrics = paint.metrics;
+  // A pane paints inside itself: squeezed by a split divider, a glyph at its
+  // edge overhung onto the neighbouring border in a full frame and not in a
+  // partial one of the pane (QaFlowRegression/
+  // EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
+  const render::ScopedRenderClip pane_clip(renderer, paint.rect);
+  if (paint.welcome != nullptr) {
+    editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, viewport, paint.rect, draw_caret, "",
+                                 std::nullopt, std::nullopt, {}, &paint.view_model, paint.bracket_match,
+                                 paint.indent_guides, paint.render_whitespace, paint.folding, paint.welcome);
+    return;
+  }
+  util::PerformanceTrace::Scope pane_scope("WorkspaceShell::Render::EditorPane");
+  static const std::optional<editor::EditorBlameOverlay> kNoBlame;
+  editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, viewport, paint.rect, draw_caret,
+                               paint.search_query, paint.active_search_match,
+                               paint.blame_source != nullptr ? *paint.blame_source : kNoBlame, paint.diagnostics,
+                               &paint.view_model, paint.bracket_match, paint.indent_guides, paint.render_whitespace,
+                               paint.folding, nullptr, paint.decorations, paint.line_numbers,
+                               paint.explicit_search_matches, paint.find_scope);
+  {
+    util::PerformanceTrace::Scope insets_scope("WorkspaceShell::Render::EditorPane::Insets");
+    DrawEditorInsets(renderer, paint.rect, metrics, viewport.scroll_line(), paint.view_model);
+  }
+  // Insertion-point indicator for a selection drag-and-drop in flight. No other
+  // gesture here has one, and without it the drop is a guess: the real caret stays
+  // inside the selection being dragged (TD-2026-08-13-204). Drawn after the pane
+  // so it is never painted over, and only on the pane that owns the gesture.
+  if (paint.drop_indicator.has_value()) {
+    const std::size_t visual_row = viewport.VisualRowForLine(paint.drop_indicator->line);
+    if (visual_row >= viewport.scroll_line() && visual_row < viewport.scroll_line() + metrics.visible_rows) {
+      const std::size_t visual_column = viewport.VisualColumnAt(paint.drop_indicator->line, paint.drop_indicator->column);
+      const float x = metrics.text_x +
+                      static_cast<float>(visual_column - std::min(visual_column, viewport.horizontal_scroll())) *
+                          editor_text_renderer_.CharWidth();
+      const float y =
+          metrics.first_line_y + static_cast<float>(visual_row - viewport.scroll_line()) * metrics.line_height;
+      if (x >= metrics.text_x && x < paint.rect.x + paint.rect.w) {
+        DrawFilledRect(renderer, MakeRect(x, y, 2.0f, metrics.line_height), theme_.accent);
+      }
+    }
+  }
+  // The scrollbars, and the overview ruler in the vertical one's track. Its marker
+  // caches are one per group, keyed by a cheap signature so the marker set rebuilds
+  // only when a source or the lane geometry changes (never on scroll or caret moves).
+  thread_local std::array<EditorOverviewPaneCache, kMaxEditorGroups> tls_overview_caches;
+  thread_local std::vector<overview::MarkerInput> tls_overview_inputs;
+  thread_local std::vector<std::uint32_t> tls_overview_buckets;
+  thread_local std::vector<SDL_Color> tls_overview_palette;
+  const auto scroll_layout = ComputeEditorScrollLayout(paint.rect, viewport, metrics);
+  if (scroll_layout.vertical_scrollbar.has_value()) {
+    DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track, scroll_layout.vertical_scrollbar->thumb,
+                  paint.vertical_bar_dragged);
+    if (paint.overview_ruler) {
+      DrawEditorOverviewRuler(renderer, theme_, viewport, paint.diagnostics, paint.diagnostics_revision,
+                              paint.diagnostics_min_severity, paint.ruler_search,
+                              scroll_layout.vertical_scrollbar->track, paint.rect.x, tls_overview_caches[group_index],
+                              tls_overview_inputs, tls_overview_buckets, tls_overview_palette);
+    }
+  }
+  if (scroll_layout.horizontal_scrollbar.has_value()) {
+    DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+                  scroll_layout.horizontal_scrollbar->thumb, paint.horizontal_bar_dragged);
+  }
+}
+
 void WorkspaceShell::RenderActiveWorkspaceSurface(
     SDL_Renderer* renderer,
     const WorkspaceLayout& layout,
@@ -2226,284 +2425,17 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
   }
   {
-    // Resolved once per frame; "hint" (the default) means show all, so the filter
-    // returns the store span untouched (zero cost).
-    const editor::DiagnosticSeverity diagnostics_min_severity =
-        editor::ParseDiagnosticSeverity(
-            GetSettingValue("diagnostics.min_severity").value_or("hint"));
-    const auto diagnostics_for_viewport =
-        [&project_state, diagnostics_min_severity](const editor::TextViewport& viewport)
-        -> std::span<const editor::PublishedDiagnostic> {
-      if (viewport.path().empty()) {
-        return {};
-      }
-      const auto* diagnostics = project_state.diagnostics_store.FindByPathKey(viewport.path_key());
-      if (diagnostics == nullptr) {
-        return {};
-      }
-      // Reused across panes: each result is consumed by its Render call before the
-      // next diagnostics_for_viewport call, so a single scratch buffer is safe.
-      static thread_local std::vector<editor::PublishedDiagnostic> tls_filtered_diagnostics;
-      return editor::FilterDiagnosticsAtLeastSeverity(
-          std::span<const editor::PublishedDiagnostic>(*diagnostics), diagnostics_min_severity,
-          tls_filtered_diagnostics);
-    };
-    const auto decorations_for_viewport =
-        [&project_state](const editor::TextViewport& viewport) -> const editor::FileDecorations* {
-      if (viewport.path().empty() || viewport.dirty()) {
-        return nullptr;
-      }
-      const auto* pres = project_state.plugin_presentation_if_present();
-      return pres != nullptr ? pres->decorations.FindByPathKey(viewport.path_key()) : nullptr;
-    };
-    const auto setting_enabled = [this](std::string_view id, bool default_value) {
-      return SettingFlagEnabled(GetSettingValue(id), default_value);
-    };
-    const bool bracket_match_highlight_enabled =
-        setting_enabled("editor.brackets.match_highlight.enabled", true);
-    const bool indent_guides_enabled =
-        setting_enabled("editor.view.indent_guides.enabled", true);
-    const bool render_whitespace_enabled =
-        setting_enabled("editor.view.render_whitespace", false);
-    const bool line_numbers_enabled = setting_enabled("editor.line_numbers", true);
-    const bool overview_ruler_enabled = setting_enabled("editor.view.overview_ruler.enabled", true);
-    // Phase E1: inline plugin-surface insets. Experimental and off by default, so
-    // the editor geometry stays byte-for-byte identical for everyone else. One
-    // master gate, like DebugEnabled(): with no plugin/LSP presentation bundle the
-    // inset flags are unused (BuildEditorInsetGaps early-outs on a null bundle), so
-    // a no-plugin session skips these three per-frame setting reads entirely.
-    const editor::InsetGapFeatureFlags inset_flags =
-        project_state.plugin_presentation_if_present() != nullptr
-            ? editor::InsetGapFeatureFlags{
-                  .inline_surfaces = setting_enabled("plugins.inline_surfaces", false),
-                  .code_lens_above = setting_enabled("plugins.code_lens_above", false),
-                  .ghost_text = setting_enabled("plugins.ghost_text", false),
-              }
-            : editor::InsetGapFeatureFlags{};
-    const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
-    const bool occurrences_highlight_enabled_global =
-        setting_enabled("editor.occurrences.enabled", true);
-    const bool occurrences_case_sensitive =
-        setting_enabled("editor.search.case_sensitive", false);
-    // Breakpoint gutter dots only render when the debugger is enabled (default
-    // off), keeping the editor byte-for-byte unchanged for non-debug users.
-    const bool debug_enabled = DebugEnabled();
-    const editor::BreakpointStore* breakpoint_store =
-        debug_enabled ? &project_state.breakpoint_store : nullptr;
-    const DebugExecutionView* debug_execution =
-        debug_enabled ? &project_state.debug_execution : nullptr;
-    // Folding freshness (including the fold-disabled expand+detach) already ran once
-    // in PrepareFrameOnce::RefreshEditorFoldingModels; the render path only reads the
-    // resolved model below via GroupFoldingModelPtr (TD-2026-07-17A-004).
-    const RenderViewModelBuilder editor_render_builder(context_);
-    const bool sticky_scroll_setting_enabled =
-        setting_enabled("editor.fold.sticky_scroll.enabled", true);
-    const int sticky_scroll_max_depth =
-        ParseStickyScrollMaxDepthSetting(GetSettingValue("editor.fold.sticky_scroll.max_depth"));
-    thread_local editor::EditorViewModel tls_editor_surface_vm;
-    const EditorPaneLayouts& panes = editor_panes;
-    thread_local std::vector<editor::EditorViewMetrics> tls_pane_scroll_metrics;
-    thread_local std::vector<unsigned char> tls_pane_scroll_metrics_valid;
-    tls_pane_scroll_metrics.resize(panes.size());
-    tls_pane_scroll_metrics_valid.assign(panes.size(), 0);
-    // Per-group editor render: each pane resolves its own group's active viewport
-    // and folding model, so every pane in a split scrolls/folds independently.
-    for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
-      const EditorPaneLayout& pane = panes[pane_index];
-      if (pane.group_index >= project_state.editor_groups.size()) {
-        continue;
-      }
-      if (pane.group_index < kMaxEditorGroups && pane_shows_diff[pane.group_index]) {
-        continue;  // painted above
-      }
-      EditorGroup& group = project_state.editor_groups[pane.group_index];
-      editor::TextViewport* viewport = GroupActiveViewport(group);
-      if (viewport == nullptr) {
+    // Every editor pane in front, from the inputs frame prep built for it
+    // (PreparedFrameState::EditorPanePaint): PaintEditorPane reads nothing else.
+    for (const EditorPaneLayout& pane : editor_panes) {
+      const std::size_t gi = pane.group_index;
+      if (gi >= kMaxEditorGroups || pane_shows_diff[gi] || !frame_state_.editor_pane_paint[gi].valid) {
         continue;
       }
       if (pane.active && active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = pane.rect;
       }
-      // A pane paints inside itself: squeezed by a split divider, a glyph at its
-      // edge overhung onto the neighbouring border in a full frame and not in a
-      // partial one of the pane (QaFlowRegression/
-      // EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
-      const render::ScopedRenderClip pane_clip(renderer, pane.rect);
-
-      // An empty group renders the welcome home surface (recents + shortcuts).
-      // Sized at frame prep (pane_metrics): paint reads the geometry everything
-      // between frames resolved against.
-      if (pane.group_index >= kMaxEditorGroups || !frame_state_.pane_metrics_valid[pane.group_index]) {
-        continue;
-      }
-      const editor::EditorViewMetrics& metrics = frame_state_.pane_metrics[pane.group_index];
-      if (viewport->is_placeholder()) {
-        editor::FoldingModel* welcome_fold =
-            fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
-        const bool sticky_active =
-            fold_enabled && sticky_scroll_setting_enabled && welcome_fold != nullptr;
-        editor_render_builder.BuildEditorViewModelInto(
-            tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
-            occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
-            debug_execution);
-        // Borrowed, not copied: BuildWelcomeView owns a memo keyed on (MRU
-        // revision, project root) and the renderer only reads the model.
-        const editor::WelcomeViewModel& welcome_vm =
-            editor_render_builder.BuildWelcomeView(recents_service_);
-        editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, *viewport, pane.rect,
-                                     pane.active && draw_editor_caret, "", std::nullopt,
-                                     std::nullopt, {}, &tls_editor_surface_vm,
-                                     bracket_match_highlight_enabled, indent_guides_enabled,
-                                     render_whitespace_enabled, welcome_fold, &welcome_vm);
-        continue;
-      }
-
-      editor::FoldingModel* group_folding_model =
-          fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
-      const editor::FoldingModel* folding_for_vm = fold_enabled ? group_folding_model : nullptr;
-      const bool sticky_active =
-          fold_enabled && sticky_scroll_setting_enabled && folding_for_vm != nullptr;
-      const bool occurrences_for_pane =
-          occurrences_highlight_enabled_global && pane.active;
-      // Named for the whole pane, because that is what it covers: the view-model
-      // build, the blame overlay, the find-highlight fragments, the row render and
-      // the insets. It used to be called `BuildEditorViewModel`, which is only the
-      // first of those -- and on `editor_soft_wrap_long_line_scroll` the pane cost
-      // 1.05 ms a frame while its one instrumented child accounted for 0.19, so
-      // 0.86 ms a frame had no name at all (TD-2026-08-15-248).
-      util::PerformanceTrace::Scope vm_scope("WorkspaceShell::Render::EditorPane");
-      {
-        util::PerformanceTrace::Scope build_scope(
-            "WorkspaceShell::Render::EditorPane::BuildViewModel");
-        editor_render_builder.BuildEditorViewModelInto(
-            tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
-            occurrences_for_pane, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
-            debug_execution, inset_flags, metrics.line_height);
-      }
-      tls_pane_scroll_metrics[pane_index] = metrics;
-      tls_pane_scroll_metrics_valid[pane_index] = 1;
-      // Built at frame prep for the active pane; the hover card and Copy SHA
-      // resolve against the same overlay.
-      const std::optional<editor::EditorBlameOverlay> no_blame;
-      const std::optional<editor::EditorBlameOverlay>& blame_overlay =
-          pane.active ? editor_blame_overlay_service_.VisibleOverlay() : no_blame;
-      // In-file find highlights: regex/whole-buffer mode drives the highlight from the
-      // precomputed (possibly multi-line) match set — a literal query scan cannot
-      // reproduce a regex or `\n`-spanning match — while literal mode keeps the fast
-      // cached per-line query scan.
-      const BufferSearchState& buffer_search_state =
-          project_state.overlay.workflow.buffer_search;
-      const bool buffer_find_active =
-          pane.active && (overlay_vm.mode == OverlayMode::BufferSearch ||
-                          overlay_vm.mode == OverlayMode::BufferReplace);
-      // Find in Selection highlights the scoped match set too: the literal scan
-      // would light up every occurrence in the file.
-      const bool buffer_explicit_matches = buffer_find_active && (buffer_search_state.regex ||
-                                                                  buffer_search_state.scope.has_value());
-      const std::span<const editor::SelectionRange> explicit_search_matches =
-          buffer_explicit_matches
-              ? BufferSearchHighlightFragments(*viewport, buffer_search_state.matches,
-                                               buffer_search_state.matches_revision)
-              : std::span<const editor::SelectionRange>{};
-      const std::string_view buffer_search_query_for_render =
-          (buffer_find_active && !buffer_explicit_matches)
-              ? std::string_view(overlay_vm.buffer_search_query_text)
-              : std::string_view{};
-      editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, *viewport, pane.rect,
-                                   pane.active && draw_editor_caret,
-                                   buffer_search_query_for_render,
-                                   pane.active ? ActiveBufferSearchMatch() : std::nullopt,
-                                   blame_overlay, diagnostics_for_viewport(*viewport),
-                                   &tls_editor_surface_vm,
-                                   pane.active && bracket_match_highlight_enabled,
-                                   indent_guides_enabled, render_whitespace_enabled,
-                                   group_folding_model, nullptr,
-                                   decorations_for_viewport(*viewport), line_numbers_enabled,
-                                   explicit_search_matches,
-                                   buffer_find_active && buffer_search_state.scope.has_value()
-                                       ? std::optional(buffer_search_state.scope->range)
-                                       : std::nullopt);
-      {
-        util::PerformanceTrace::Scope insets_scope(
-            "WorkspaceShell::Render::EditorPane::Insets");
-        DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
-                         tls_editor_surface_vm);
-      }
-
-      // Insertion-point indicator for a selection drag-and-drop in flight. No
-      // other gesture here has one, and without it the drop is a guess: the real
-      // caret stays inside the selection being dragged (TD-2026-08-13-204).
-      // Drawn after the pane so it is never painted over, and only on the pane
-      // that owns the gesture.
-      if (pane.active && context_.interaction_state.text_dragging() &&
-          context_.interaction_state.text_drag_has_drop) {
-        const std::size_t drop_line = context_.interaction_state.text_drag_drop_line;
-        const std::size_t drop_column = context_.interaction_state.text_drag_drop_column;
-        const std::size_t visual_row = viewport->VisualRowForLine(drop_line);
-        if (visual_row >= viewport->scroll_line() &&
-            visual_row < viewport->scroll_line() + metrics.visible_rows) {
-          const std::size_t visual_column = viewport->VisualColumnAt(drop_line, drop_column);
-          const float x = metrics.text_x +
-                          static_cast<float>(visual_column - std::min(visual_column,
-                                                                      viewport->horizontal_scroll())) *
-                              editor_text_renderer_.CharWidth();
-          const float y = metrics.first_line_y +
-                          static_cast<float>(visual_row - viewport->scroll_line()) *
-                              metrics.line_height;
-          if (x >= metrics.text_x && x < pane.rect.x + pane.rect.w) {
-            DrawFilledRect(renderer, MakeRect(x, y, 2.0f, metrics.line_height), theme_.accent);
-          }
-        }
-      }
-    }
-    // Overview-ruler marker caches, one per pane, keyed by a cheap signature so the
-    // search+diagnostic marker set only rebuilds when a source or the lane geometry
-    // changes (never on scroll or caret movement).
-    thread_local std::vector<EditorOverviewPaneCache> tls_overview_caches;
-    thread_local std::vector<overview::MarkerInput> tls_overview_inputs;
-    thread_local std::vector<std::uint32_t> tls_overview_buckets;
-    thread_local std::vector<SDL_Color> tls_overview_palette;
-    if (overview_ruler_enabled) {
-      tls_overview_caches.resize(panes.size());
-    }
-    for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
-      const EditorPaneLayout& pane = panes[pane_index];
-      if (pane.group_index >= project_state.editor_groups.size()) {
-        continue;
-      }
-      if (pane.group_index < kMaxEditorGroups && pane_shows_diff[pane.group_index]) {
-        continue;
-      }
-      editor::TextViewport* viewport =
-          GroupActiveViewport(project_state.editor_groups[pane.group_index]);
-      if (viewport == nullptr || viewport->is_placeholder() ||
-          pane_index >= tls_pane_scroll_metrics_valid.size() ||
-          tls_pane_scroll_metrics_valid[pane_index] == 0) {
-        continue;
-      }
-      const editor::EditorViewMetrics& metrics = tls_pane_scroll_metrics[pane_index];
-      const auto scroll_layout = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
-      if (scroll_layout.vertical_scrollbar.has_value()) {
-        DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track,
-                      scroll_layout.vertical_scrollbar->thumb,
-                      pane.active &&
-                         context_.interaction_state.drag_target == DragTarget::EditorVerticalScrollbar);
-        if (overview_ruler_enabled) {
-          DrawEditorOverviewRuler(renderer, theme_, project_state, overlay_vm, *viewport,
-                                  pane.active, diagnostics_min_severity,
-                                  scroll_layout.vertical_scrollbar->track, pane.rect.x,
-                                  tls_overview_caches[pane_index], tls_overview_inputs,
-                                  tls_overview_buckets, tls_overview_palette);
-        }
-      }
-      if (scroll_layout.horizontal_scrollbar.has_value()) {
-        DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
-                      scroll_layout.horizontal_scrollbar->thumb,
-                      pane.active &&
-                         context_.interaction_state.drag_target == DragTarget::EditorHorizontalScrollbar);
-      }
+      PaintEditorPane(renderer, gi, pane.active && draw_editor_caret);
     }
     for (const EditorSplitDividerRect& divider : editor_surface_group_rects.dividers) {
       const bool divider_active =

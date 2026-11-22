@@ -1067,6 +1067,7 @@
   void SyncPluginSurfacePreviewClosed();
   void RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                                const editor::SurfaceContent* content, float scroll_y);
+  void PaintEditorPane(SDL_Renderer* renderer, std::size_t group_index, bool draw_caret);
   void DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
                         const editor::EditorViewMetrics& metrics, std::size_t scroll_line,
                         const editor::EditorViewModel& view_model);

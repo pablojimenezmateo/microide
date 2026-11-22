@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 
 #include "editor/BracketScanner.h"
 #include <string>
@@ -309,6 +310,44 @@ struct PreparedFrameState {
   // Per-row keys of the editor pane being prepared (EditorRowUnits): scratch,
   // cleared per pane, capacity kept across frames.
   std::vector<std::uint64_t> editor_row_keys;
+  // An editor pane's paint inputs, built once at frame prep (derived-damage 2.3):
+  // its rows' units key on them and PaintEditorPane draws from nothing else.
+  // Pointers name objects that stay put for the frame (the viewport, its fold
+  // model, the decoration and blame stores); the view model and the filtered
+  // diagnostics are owned here and keep their capacity across frames.
+  struct EditorPanePaint {
+    bool valid = false;
+    editor::TextViewport* viewport = nullptr;
+    editor::FoldingModel* folding = nullptr;
+    SDL_FRect rect{};
+    bool active = false;
+    editor::EditorViewMetrics metrics{};
+    editor::EditorViewModel view_model;
+    const editor::WelcomeViewModel* welcome = nullptr;  // a placeholder viewport's home surface
+    std::vector<editor::PublishedDiagnostic> filtered_diagnostics;
+    std::span<const editor::PublishedDiagnostic> diagnostics;
+    const editor::FileDecorations* decorations = nullptr;
+    const editor::EditorBlameOverlay* blame = nullptr;
+    const std::optional<editor::EditorBlameOverlay>* blame_source = nullptr;  // what `blame` points into
+    std::uint64_t diagnostics_revision = 0;
+    // The find widget's highlights: a literal query, or a precomputed match set.
+    std::string search_query;
+    std::span<const editor::SelectionRange> explicit_search_matches;
+    std::optional<editor::SelectionRange> active_search_match;
+    std::optional<editor::SelectionRange> find_scope;
+    bool bracket_match = false;
+    bool indent_guides = false;
+    bool render_whitespace = false;
+    bool line_numbers = true;
+    bool overview_ruler = false;
+    editor::DiagnosticSeverity diagnostics_min_severity = editor::DiagnosticSeverity::Hint;
+    const BufferSearchState* ruler_search = nullptr;  // the find state while the ruler draws its matches
+    bool vertical_bar_dragged = false;
+    bool horizontal_bar_dragged = false;
+    // A selection drag-and-drop's insertion point on this pane (line, column).
+    std::optional<editor::TextPosition> drop_indicator;
+  };
+  std::array<EditorPanePaint, kMaxEditorGroups> editor_pane_paint{};
   // The status bar this frame paints, settled at prep: its view model, and per
   // segment the row, text, colour and hover it is drawn with. Paint draws these
   // and nothing else, so the fingerprint of each is everything that segment
