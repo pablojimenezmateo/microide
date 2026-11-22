@@ -177,3 +177,29 @@ editor_render_whitespace_paint    128.499   129.886   1.1    526.5    526.5
 ```
 
 Verdict: within budget (no p50 > +5%, allocations identical).
+
+## 4.1, the sidebar: the git panel's head (b33224a6a)
+
+The Source Control panel's head is DerivedSurface::GitPanelHead. Its units are the
+action and branch rows, the Commit button or commit line, the banners, and the open
+draft's staged summary, labels, fields, confirm button, pre-checks, status line and
+caret, laid out by PrepareGitPanelHeadFrame. The snapshot holds the frame's
+GitSidebarPresentation. The draft's control rects, its caret and the list's scroll
+row are published at prep, no longer by paint. Until the list's rows are units, the
+list is one unit (its rect, scroll row and line count), so a head that grows a banner
+repaints the list it moves.
+
+A/B, base ad9f80e24 vs head b33224a6a, soak paused, 3 rounds x 10 iterations, order
+flipped per round, median of the rounds' p50 wall:
+
+```
+scenario                             base p50  head p50    d%  alloc b  alloc h
+commit_open_with_large_staged_set      17.001    16.985  -0.1     6194     6194
+git_sidebar_activate                   11.489    11.513   0.2      850      850
+git_sidebar_refresh_large_repo         15.651    15.724   0.5     6626     6626
+git_sidebar_refresh_many_untracked     15.759    15.734  -0.2    11432    11432
+menu_hover_paint                       89.042    89.284   0.3      172      172
+```
+
+Verdict: within budget (no p50 > +5%, allocations identical). Still to come in 4.1's
+sidebar part: the git list's rows, then the file tree's rows.
