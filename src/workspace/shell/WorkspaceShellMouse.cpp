@@ -744,16 +744,38 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
   return true;
 }
 
+void WorkspaceShell::AbandonPointerGestures() {
+  ClearDragState();
+  context_.interaction_state.single_line_drag_surface = TextInputSurface::None;
+  context_.interaction_state.mouse_selecting = false;
+  context_.interaction_state.text_drag = InteractionState::TextDragState::None;
+  context_.interaction_state.text_drag_has_drop = false;
+  context_.interaction_state.editor_box_selecting = false;
+  selection_autoscroll::Disarm(context_.interaction_state);
+  if (TerminalPaneState* terminal = ActiveTerminalPane(); terminal != nullptr) {
+    terminal->mouse_selecting = false;
+  }
+  (void)MakeSidebarMouseCoordinator().CancelPathDrag();
+  // A tab drag is a drag too: left lifted, its ghost stayed pinned to a pointer
+  // that was no longer sending us anything, and its auto-scroll kept the
+  // animation tick awake.
+  (void)MakeTabMouseCoordinator().CancelDrag();
+}
+
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseButtonUp");
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
   const DamageMark mark = MarkDamage();
 
-  if (context_.prompts.dirty_visible) {
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
-    return true;
-  }
-  if (context_.prompts.surface_visible) {
+  if (context_.prompts.dirty_visible || context_.prompts.surface_visible) {
+    // The prompt owns the pointer, but this release still ends whatever the press
+    // began -- a prompt that opened mid-drag (Ctrl+W on an unsaved file, the button
+    // still down) left the drag in flight with no button down, and the selection
+    // autoscroll kept replaying it, extending the selection to the end of the file
+    // behind the prompt. Abandoned rather than finished: nothing drops under a modal.
+    if (event.button.button == SDL_BUTTON_LEFT) {
+      AbandonPointerGestures();
+    }
     EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
     return true;
   }

@@ -785,6 +785,61 @@ void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
          "losing focus mid-drag must end the selection gesture");
 }
 
+// A modal prompt that opens mid-drag (Ctrl+W on an unsaved file, the button still
+// down) takes the release: the button-up returned for the prompt before it ended
+// any gesture, so the selection stayed "in progress" with no button down, and the
+// autoscroll's wake replayed the held pointer -- with the button mask -- every
+// tick, scrolling the document and extending the selection to its end behind the
+// prompt and after it closed.
+void TestWorkspaceShellEditorDragEndsWhenAPromptTakesTheRelease() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line " + std::to_string(i) + " of the document\n";
+  }
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  Expect(SendMouseDown(shell, metrics.text_x + 0.1f,
+                       metrics.first_line_y + metrics.line_height * 0.5f, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+  const float below_y = pane.y + pane.h + 200.0f;
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, below_y, SDL_BUTTON_LMASK),
+         "dragging below the editor should be handled");
+  (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+
+  Expect(SendKeyDown(shell, SDLK_W, SDL_KMOD_CTRL), "Ctrl+W mid-drag is handled");
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing the unsaved file asks first (the case under test)");
+  (void)SendMouseUp(shell, pane.x + pane.w * 0.5f, below_y, SDL_BUTTON_LEFT);
+  Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
+         "the release ends the selection gesture, prompt or not");
+
+  const std::size_t scroll_at_release = WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  const auto selection_at_release = WorkspaceShellTestAccess::ActiveEditor(shell).selection_range();
+  for (int tick = 0; tick < 4; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell) == scroll_at_release,
+         "with the button up the editor must not keep scrolling behind the prompt (from " +
+             std::to_string(scroll_at_release) + " to " +
+             std::to_string(WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell)) + ")");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).selection_range() == selection_at_release,
+         "with the button up the selection must not keep growing");
+}
+
 // A double-click that then drags selects whole WORDS, and a triple-click drag
 // whole LINES. The click's own expansion used to be collapsed straight back to
 // character granularity by the first motion event, because the drag extended
@@ -1354,6 +1409,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellClickInsideSelectionStillCollapsesCaret);
   AddTest(tests, "WorkspaceShell/EditorDragAutoscrollsPastTheEdge",
           TestWorkspaceShellEditorDragAutoscrollsPastTheEdge);
+  AddTest(tests, "WorkspaceShell/EditorDragEndsWhenAPromptTakesTheRelease",
+          TestWorkspaceShellEditorDragEndsWhenAPromptTakesTheRelease);
   AddTest(tests, "WorkspaceShell/EditorDragAutoscrollStopsOnFocusLoss",
           TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss);
   AddTest(tests, "WorkspaceShell/EditorMultiClickDragKeepsItsGranularity",

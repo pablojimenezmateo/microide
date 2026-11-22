@@ -4,7 +4,6 @@
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
-#include "workspace/coordinators/SelectionAutoscroll.h"
 
 #include <optional>
 #include <utility>
@@ -442,20 +441,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                   shell->glue_->remote_host_service->LeaveSessions();
                 }
               },
-          .end_selection_gesture =
-              [shell]() {
-                shell->context_.interaction_state.mouse_selecting = false;
-                shell->context_.interaction_state.text_drag =
-                    InteractionState::TextDragState::None;
-                shell->context_.interaction_state.text_drag_has_drop = false;
-                shell->context_.interaction_state.editor_box_selecting = false;
-                selection_autoscroll::Disarm(shell->context_.interaction_state);
-                // A tab drag is a drag too, and it used to survive the focus loss:
-                // the strip stayed with a lifted tab and a floating ghost pinned to
-                // a pointer that was no longer sending us anything, and its
-                // auto-scroll kept the animation tick awake.
-                shell->MakeTabMouseCoordinator().CancelDrag();
-              },
+          .end_selection_gesture = [shell]() { shell->AbandonPointerGestures(); },
           .request_window_redraw = [shell]() { shell->RequestWindowRedraw(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {

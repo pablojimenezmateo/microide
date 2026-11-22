@@ -1551,6 +1551,9 @@
                           std::size_t column);
   bool HandleMouseButtonDown(const SDL_Event& event);
   bool HandleMouseButtonUp(const SDL_Event& event);
+  // Ends every pointer gesture in flight without its effect (no drop, no move):
+  // for a release that will not reach it (focus loss) or that a modal takes.
+  void AbandonPointerGestures();
   bool HandleMouseMotion(const SDL_Event& event);
   bool HandleMouseWheel(const SDL_Event& event);
   // Cached for the shell's lifetime, like MakeActionContext: ActionAvailability is
