@@ -7073,6 +7073,108 @@ void TestAnInsetGapThatOpensOrClosesRepaintsTheRowsItMoves() {
   fixture.ExpectFresh(NothingAnnounced(), "both strips closed");
 }
 
+// A caret blink repaints the rows that hold a caret, and nothing else: the pane's
+// units fold the frame's draw-caret phase into those rows. The blink used to name
+// the whole focused pane (451,896 px of a 1280x720 window, twice a second while
+// the caret blinks). Checked both ways -- lit to dark and back -- with the caret
+// at column 0 beside the gutter, a second caret, and on a wrapped line.
+void TestACaretBlinkRepaintsTheCaretsRowsOnly() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string text = OneBlockFile(40);
+  text += std::string(600, 'w') + "\n";
+  FlowFixture fixture("blink.cpp", text);
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  const Uint64 interval = TestAccess::CaretBlinkIntervalMs(fixture.shell);
+  const std::function<void()> lit = [&] { TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks()); };
+  const std::function<void()> dark = [&] {
+    TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks() - interval - 50);
+  };
+  // One blink from the phase painted to the other: its damage inside the pane, and
+  // the partial frame against a full one.
+  const auto blink = [&](bool to_lit, const std::string& what, float max_rows) {
+    (to_lit ? dark : lit)();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    (to_lit ? lit : dark)();
+    const workspace::RenderInvalidation wake = TestAccess::HandleScheduledWake(fixture.shell).redraw;
+    Expect(wake.frame && !wake.full && wake.rects.empty(), what + ": the blink's wake asks for a frame");
+    const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, FlowFixture::kWidth, FlowFixture::kHeight, wake);
+    float covered = 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      SDL_FRect inside{};
+      if (SDL_GetRectIntersectionFloat(&rect, &pane, &inside)) {
+        covered += inside.w * inside.h;
+      }
+    }
+    const float line_height = TestAccess::TextLineHeight(fixture.shell) * 1.25f;
+    Expect(!damage.full && covered > 0.0f && covered <= pane.w * line_height * max_rows,
+           what + ": the blink repaints its caret rows, " + std::to_string(covered) + " px of the pane's " +
+               std::to_string(pane.w * pane.h));
+    // And the frame it paints is the frame a full repaint paints.
+    (to_lit ? dark : lit)();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    workspace::RenderInvalidation frame;
+    frame.frame = true;
+    const auto diff = PaintAndDiffWithFullRepaint(fixture.shell, fixture.canvas, FlowFixture::kWidth,
+                                                  FlowFixture::kHeight, frame, to_lit ? lit : dark);
+    Expect(diff.identical(), what + ": the blink's frame should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  viewport.MoveCursorTo(5, 0);
+  blink(true, "column 0, dark to lit", 1.5f);
+  blink(false, "column 0, lit to dark", 1.5f);
+  viewport.MoveCursorTo(7, 9);
+  viewport.AddSecondaryCaret(12, 4);
+  blink(true, "two carets, dark to lit", 3.0f);
+  blink(false, "two carets, lit to dark", 3.0f);
+  viewport.ClearSecondaryCarets();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "wrap on"), "wrap on should run");
+  viewport.MoveCursorTo(42, 300);  // inside the long line, on one of its wrapped rows
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  blink(true, "a wrapped line, dark to lit", 1.5f);
+  blink(false, "a wrapped line, lit to dark", 1.5f);
+}
+
+// In a split, the pane without the keyboard keeps every key across a blink: it
+// draws no caret, so the blink damages nothing in it.
+void TestACaretBlinkDamagesNothingInTheOtherPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.cpp", OneBlockFile(60));
+  WriteFile(fixture.root / "b.cpp", OneBlockFile(60, /*lines_above=*/2));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right b.cpp"), "split-right should open b.cpp beside a.cpp");
+  const Uint64 interval = TestAccess::CaretBlinkIntervalMs(fixture.shell);
+  for (int pass = 0; pass < 2; ++pass) {
+    TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks() - interval - 50);
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  }
+  TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks());
+  const workspace::RenderInvalidation damage =
+      FrameDamage(fixture.shell, fixture.canvas, FlowFixture::kWidth, FlowFixture::kHeight,
+                  TestAccess::HandleScheduledWake(fixture.shell).redraw);
+  const SDL_FRect other = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);    // a.cpp, without the keyboard
+  const SDL_FRect focused = TestAccess::GroupEditorSurfaceRect(fixture.shell, 1);  // b.cpp, with it
+  Expect(!damage.full, "a blink in a split does not repaint the window");
+  bool in_focused = false;
+  for (const SDL_FRect& rect : damage.rects) {
+    // A pixel of slack at the divider between the panes.
+    const SDL_FRect inner{other.x, other.y, other.w - 2.0f, other.h};
+    Expect(!SDL_HasRectIntersectionFloat(&rect, &inner),
+           "a blink damages nothing in the pane without the keyboard (damaged " + std::to_string(rect.x) + "," +
+               std::to_string(rect.y) + " " + std::to_string(rect.w) + "x" + std::to_string(rect.h) + ")");
+    in_focused = in_focused || SDL_HasRectIntersectionFloat(&rect, &focused);
+  }
+  Expect(in_focused, "the blink repaints the caret's row in the focused pane");
+}
+
 // The indent guides' pitch is the viewport's indent width, which no row's text
 // holds and the pane key left out.
 void TestAnIndentWidthChangeRepaintsTheIndentGuides() {
@@ -7141,6 +7243,7 @@ void TestAWrappedLinesRowsKeyOnEveryByteOfIt() {
 
 }  // namespace
 
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheStickyBandFollowsTheCaretOffItsLine", TestTheStickyBandFollowsTheCaretOffItsLine);
   AddTest(tests, "QaFlowRegression/SplitPanesKeepTheirOwnStickyLines", TestSplitPanesKeepTheirOwnStickyLines);
@@ -7151,6 +7254,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AnIndentWidthChangeRepaintsTheIndentGuides",
           TestAnIndentWidthChangeRepaintsTheIndentGuides);
   AddTest(tests, "QaFlowRegression/AWrappedLinesRowsKeyOnEveryByteOfIt", TestAWrappedLinesRowsKeyOnEveryByteOfIt);
+  AddTest(tests, "QaFlowRegression/ACaretBlinkRepaintsTheCaretsRowsOnly", TestACaretBlinkRepaintsTheCaretsRowsOnly);
+  AddTest(tests, "QaFlowRegression/ACaretBlinkDamagesNothingInTheOtherPane", TestACaretBlinkDamagesNothingInTheOtherPane);
   AddTest(tests, "QaFlowRegression/ScrollingTheProjectStripRepaintsIt", TestScrollingTheProjectStripRepaintsIt);
   AddTest(tests, "QaFlowRegression/AContextMenuClosesOverTheRowsItPainted", TestAContextMenuClosesOverTheRowsItPainted);
   AddTest(tests, "QaFlowRegression/APointerOnAToastHoversNoMenuRowBeneathIt",

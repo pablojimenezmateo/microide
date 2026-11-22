@@ -34,7 +34,8 @@ std::uint64_t MixSpans(std::uint64_t hash, const std::vector<compare::CompareTex
 
 // Folds the right side's caret, selections and bracket marks on `line` (0-based).
 std::uint64_t MixRightMarks(std::uint64_t hash, const CompareTabState& compare,
-                            const std::optional<editor::BracketMatchPair>& bracket_pair, std::size_t line) {
+                            const std::optional<editor::BracketMatchPair>& bracket_pair, bool caret_drawn,
+                            std::size_t line) {
   const editor::TextViewport& right = compare.right_viewport;
   if (!compare.right_view_active) {
     return hash;
@@ -51,14 +52,14 @@ std::uint64_t MixRightMarks(std::uint64_t hash, const CompareTabState& compare,
                line == end.line ? end.column : ~std::uint64_t{0});
   };
   if (right.cursor_line() == line) {
-    hash = Mix(Mix(hash, 0xCA), right.cursor_column());
+    hash = Mix(Mix(Mix(hash, 0xCA), right.cursor_column()), caret_drawn ? 1u : 2u);
   }
   if (const auto selection = right.selection_range(); selection.has_value()) {
     fold_range(0x5E, *selection);
   }
   for (const auto& caret : right.secondary_caret_range_view()) {
     if (caret.position.line == line) {
-      hash = Mix(Mix(hash, 0xCB), caret.position.column);
+      hash = Mix(Mix(Mix(hash, 0xCB), caret.position.column), caret_drawn ? 1u : 2u);
     }
     if (caret.selection_anchor.has_value()) {
       fold_range(0x5F, editor::SelectionRange{.start = *caret.selection_anchor, .end = caret.position});
@@ -109,7 +110,8 @@ std::optional<editor::BracketMatchPair> CompareBracketMatch(CompareTabState& com
 
 void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeometry& geometry,
                            std::uint64_t surface_key, const std::optional<editor::BracketMatchPair>& bracket_pair,
-                           const editor::EditorBlameOverlay* blame, std::vector<DerivedDamage::Unit>& units) {
+                           const editor::EditorBlameOverlay* blame, bool caret_drawn,
+                           std::vector<DerivedDamage::Unit>& units) {
   const std::size_t visual_count = CompareTabVisualRowCount(compare);
   const std::uint64_t long_line_stand_in = compare.right_viewport.content_revision();
   int painted_rows = 0;
@@ -163,7 +165,7 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
       key = MixTokens(key, compare.left_token_window.Tokens(model_index));
       key = MixTokens(key, compare.right_token_window.Tokens(model_index));
       if (model.right_line > 0) {
-        key = MixRightMarks(key, compare, bracket_pair, static_cast<std::size_t>(model.right_line - 1));
+        key = MixRightMarks(key, compare, bracket_pair, caret_drawn, static_cast<std::size_t>(model.right_line - 1));
         if (blame != nullptr && blame->visible) {
           for (const editor::EditorBlameLine& line : blame->lines) {
             if (line.line_index == static_cast<std::size_t>(model.right_line - 1)) {

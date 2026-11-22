@@ -146,13 +146,26 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
   // The carets and selections on each row.
   ForRowsOfLine(by_line, viewport.cursor_line(),
                 [&](std::size_t row) { fold_into(row, 0xCA, viewport.cursor_column(), 0); });
+  if (inputs.caret_drawn) {
+    // The caret itself, on the one row that draws it: a wrapped line's caret is on
+    // the caret's visual row, the rest of the line's rows keep their keys.
+    if (viewport.soft_wrap()) {
+      const std::size_t visual = viewport.cursor_visual_row();
+      if (visual >= scroll && visual - scroll < row_keys.size()) {
+        fold_into(visual - scroll, 0xCC, 1, 0);
+      }
+    } else {
+      ForRowsOfLine(by_line, viewport.cursor_line(), [&](std::size_t row) { fold_into(row, 0xCC, 1, 0); });
+    }
+  }
   if (const auto selection = viewport.selection_range(); selection.has_value()) {
     ForRangeLines(by_line, *selection,
                   [&](std::size_t row, std::uint64_t from, std::uint64_t to) { fold_into(row, 0x5E, from, to); });
   }
   for (const auto& caret : viewport.secondary_caret_range_view()) {
-    ForRowsOfLine(by_line, caret.position.line,
-                  [&](std::size_t row) { fold_into(row, 0xCB, caret.position.column, 0); });
+    ForRowsOfLine(by_line, caret.position.line, [&](std::size_t row) {
+      fold_into(row, 0xCB, caret.position.column, inputs.caret_drawn ? 1 : 0);
+    });
     if (caret.selection_anchor.has_value()) {
       ForRangeLines(by_line, editor::SelectionRange{.start = *caret.selection_anchor, .end = caret.position},
                     [&](std::size_t row, std::uint64_t from, std::uint64_t to) { fold_into(row, 0x5F, from, to); });

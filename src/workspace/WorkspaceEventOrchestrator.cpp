@@ -306,9 +306,13 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
     };
   }
 
-  // No visible caret region means there is nothing to repaint for caret blink.
-  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonNone);
-  return {};
+  // A blinking caret that names no rect is drawn by a surface that derives its
+  // own damage (an editor pane's, a compare's or a merge's caret rows): the blink
+  // owes a frame, and prep damages what the phase changed -- or nothing.
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonCaretBlink);
+  EventResult blink{.handled = true};
+  blink.redraw.frame = true;
+  return blink;
 }
 
 }  // namespace microide::workspace

@@ -183,7 +183,11 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Editor) {
-    return ActiveEditorCaretRect(*layout);
+    // An editor's, a compare's or a merge's caret is its rows': each row holding a
+    // caret keys on whether this frame draws it (EditorRowUnits, CompareRowUnits),
+    // so a blink names no rect -- its wake asks for a frame and prep damages those
+    // rows. This used to name the whole pane, and every blink repainted it.
+    return std::nullopt;
   }
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
     return ActiveTerminalCaretRect(*layout);

@@ -717,6 +717,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     chrome_unit(layout.menu_bar, inputs);  // the custom title bar draws the title
   }
   frame_state_.caret_visible = CaretVisibleNow();
+  // The editor (and the compare/merge editable panes) paint the caret only while
+  // the editor OWNS the blinking caret -- the condition under which the blink
+  // wake asks the editor for a frame (CurrentCaretDirtyRect). Drawing it in another
+  // input's blink phase, with only that input's rect repainted, froze the editor
+  // caret in whatever phase the last editor repaint caught. Decided here, once,
+  // before the panes' units: the rows holding a caret key on it.
+  prepared_frame_draw_editor_caret_ =
+      frame_state_.caret_visible &&
+      project_state.surface.focus == FocusTarget::Editor &&
+      context_.text_input.active_surface == TextInputSurface::Editor &&
+      context_.text_input.composition.text.empty();
   frame_state_.terminal_owns_caret = project_state.surface.focus == FocusTarget::Panel &&
                                      context_.text_input.active_surface == TextInputSurface::Terminal;
   // Ownership changes the terminal caret's style (steady outline vs blinking block)
@@ -1086,7 +1097,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                .visible_rows = compare_surface.visible_rows},
             surface_key.value(),
             CompareBracketMatch(compare, setting("editor.brackets.match_highlight.enabled", true)),
-            diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr, units);
+            diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr,
+            focused && compare.right_view_active && prepared_frame_draw_editor_caret_, units);
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;
       }
@@ -1220,6 +1232,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                                 .pane_rect = interaction.result.rect,
                                                 .metrics = interaction.result.metrics,
                                                 .pane_key = surface_key.value(),
+                                                .caret_drawn = focused && prepared_frame_draw_editor_caret_,
                                                 .diagnostics = result_diagnostics,
                                                 .blame = diff_paint.blame.has_value() ? &*diff_paint.blame : nullptr,
                                                 .extra_line_keys = conflict_lines},
@@ -1330,6 +1343,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           // repainted all of it.
           .rows_have_gaps = !paint.view_model.row_gaps.empty(),
           .sticky_lines = paint.view_model.sticky_lines,
+          .caret_drawn = paint.active && prepared_frame_draw_editor_caret_,
           .diagnostics = diagnostics,
           .occurrence_lines = focused && frame_state_.occurrence_viewport == viewport
                                   ? std::span<const std::pair<std::size_t, std::uint64_t>>(
@@ -2078,16 +2092,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     frame_state_.signature_help_rect = signature_rect;
     chrome_unit(signature_rect, signature_hash);  // the same card saying something else repaints too
   }
-  // The editor (and the compare/merge editable panes) paint the caret only while
-  // the editor OWNS the blinking caret -- the condition under which the blink
-  // repaint names the editor (CurrentCaretDirtyRect). Drawing it in another
-  // input's blink phase, with only that input's rect repainted, froze the editor
-  // caret in whatever phase the last editor repaint caught.
-  prepared_frame_draw_editor_caret_ =
-      frame_state_.caret_visible &&
-      project_state.surface.focus == FocusTarget::Editor &&
-      context_.text_input.active_surface == TextInputSurface::Editor &&
-      context_.text_input.composition.text.empty();
   frame_state_.derived_damage.Commit(
       DerivedSurface::Chrome, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); }, DerivedDamage::Coalesce::Apart);
   FrameToken::VisibleLineRange visible_line_range{};

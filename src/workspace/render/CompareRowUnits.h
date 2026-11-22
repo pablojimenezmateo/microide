@@ -37,10 +37,13 @@ std::optional<editor::BracketMatchPair> CompareBracketMatch(CompareTabState& com
 // Appends the surface's row units and the empty stretch below its last row.
 // `surface_key` folds what moves every row (scroll, size, focus, settings).
 // `blame` is the working side's inline blame (none: not shown), folded into the
-// row of each line it annotates.
+// row of each line it annotates. `caret_drawn`: this frame's paint draws the
+// working side's carets (it has the keyboard, the blink is lit); folded into the
+// rows that hold one, so a blink repaints those rows only.
 void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeometry& geometry,
                            std::uint64_t surface_key, const std::optional<editor::BracketMatchPair>& bracket_pair,
-                           const editor::EditorBlameOverlay* blame, std::vector<DerivedDamage::Unit>& units);
+                           const editor::EditorBlameOverlay* blame, bool caret_drawn,
+                           std::vector<DerivedDamage::Unit>& units);
 
 // A merge surface's two source columns, row by row (derived-damage 2.5): each
 // visible wrapped row keyed on its wrap-layout place, the incoming and current

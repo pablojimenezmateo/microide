@@ -46,6 +46,11 @@ struct EditorRowKeyInputs {
   // draws each as a row -- its text and syntax colours, the caret's highlight when
   // the caret is on it, its diagnostics and fold mark -- so its unit keys on them.
   std::span<const std::size_t> sticky_lines;
+  // Whether this frame's paint draws the pane's carets (the pane has the keyboard
+  // and the blink is in its lit phase). Folded into the rows that hold a caret, so
+  // a blink repaints those rows and no other -- not into the rest, whose keys a
+  // blink must leave alone.
+  bool caret_drawn = false;
   std::span<const editor::PublishedDiagnostic> diagnostics;
   // The focused pane's occurrence highlights, one (line, hash) per line, sorted.
   std::span<const std::pair<std::size_t, std::uint64_t>> occurrence_lines;

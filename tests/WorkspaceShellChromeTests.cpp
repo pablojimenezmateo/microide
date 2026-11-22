@@ -892,11 +892,15 @@ void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 2);
 
-  const std::optional<SDL_FRect> caret_rect = shell.CurrentCaretDirtyRect();
-  Expect(caret_rect.has_value(),
-         "focused editors should expose a caret dirty rect for partial redraws");
-  Expect(caret_rect->w > 0.0f && caret_rect->h > 0.0f,
-         "editor caret dirty rects should have a visible size");
+  // An editor's caret is its rows' (EditorRowUnits fold the frame's draw-caret
+  // phase into the rows holding one): a blink names no rect, its wake asks for a
+  // frame. It used to name the whole pane, which every blink then repainted.
+  Expect(!shell.CurrentCaretDirtyRect().has_value(), "a focused editor's blink names no rect of its own");
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  (void)shell.ConsumePendingRenderInvalidation();  // what opening the file asked for
+  const WorkspaceShell::EventResult wake = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  Expect(wake.handled && wake.redraw.frame && !wake.redraw.full && wake.redraw.rects.empty(),
+         "a focused editor's blink wake asks for a frame and names no rect");
 }
 
 void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
@@ -3787,10 +3791,9 @@ void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden);
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
-  const std::optional<SDL_FRect> blink = shell.CurrentCaretDirtyRect();
-  Expect(blink.has_value(), "the focused lower pane should name its caret region");
+  // The blink's wake asks for a frame; prep damages the caret's row.
   WorkspaceShell::RenderInvalidation invalidation;
-  invalidation.rects.push_back(*blink);
+  invalidation.frame = true;
   const auto diff = PaintAndDiffWithFullRepaint(
       shell, canvas, kWidth, kHeight, invalidation,
       [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); });
