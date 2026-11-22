@@ -49,8 +49,9 @@ void TestDerivedDamageRepaintsWhatChanged() {
   auto gone = Commit(damage, {{a, 1}, {b_moved, 3}});
   Expect(gone.size() == 1 && Same(gone[0], c), "a unit that went away damages where it was");
 
-  damage.Reset();
-  Expect(Commit(damage, {{a, 9}}).empty(), "after a reset the next frame paints whole again");
+  Expect(Commit(damage, {}).size() == 2, "a surface that stops showing damages where its units were");
+  auto again = Commit(damage, {{a, 1}});
+  Expect(again.size() == 1 && Same(again[0], a), "and where they appear when it shows again");
 }
 
 // Scattered changes in one surface damage at most two rects (the nearest merged),

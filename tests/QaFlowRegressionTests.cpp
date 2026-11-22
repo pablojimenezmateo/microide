@@ -9,6 +9,7 @@
 #include "TestSupportSdl.h"
 #include "TerminalSessionTestAccess.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -3065,6 +3066,39 @@ void TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel() {
   workspace::RenderInvalidation nothing_announced;
   nothing_announced.rects.push_back(SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f});
   fixture.ExpectFresh(nothing_announced, "a line into the shown channel");
+}
+
+// What the derived surfaces last painted is never forgotten, and need not be: prep
+// commits every frame, a full repaint paints over the state the tables describe,
+// so after full frames at a new size or in another theme the next partial frame
+// still matches a full one. (DerivedDamage::Reset once promised to forget it on a
+// resize; nothing called it, and forgetting would have made the next partial frame
+// damage nothing. The full frame of a lost backbuffer is the Application's, with no
+// test here.)
+void TestPartialFramesStayFreshAfterFullFramesAtANewSize() {
+  FlowFixture fixture("notes.txt", "one\ntwo\nthree\n");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.width = FlowFixture::kWidth - 120;
+  fixture.height = FlowFixture::kHeight - 80;
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "a full frame at the smaller size");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "typing after the resize");
+  fixture.width = FlowFixture::kWidth;
+  fixture.height = FlowFixture::kHeight;
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "a full frame back at the first size");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "Return after the resize back");
+  // A theme change repaints the whole window: no unit keys the theme, so the frame
+  // it queues is what repaints every colour. Painted as queued, that is pinned too.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "toggle-theme"), "the colour theme toggles");
+  const workspace::RenderInvalidation themed = fixture.shell.ConsumePendingRenderInvalidation();
+  const bool whole_window =
+      themed.full || std::any_of(themed.rects.begin(), themed.rects.end(), [&](const SDL_FRect& rect) {
+        return rect.x <= 0.0f && rect.y <= 0.0f && rect.x + rect.w >= static_cast<float>(fixture.width) &&
+               rect.y + rect.h >= static_cast<float>(fixture.height);
+      });
+  Expect(whole_window, "a theme change repaints the whole window");
+  fixture.ExpectFresh(themed, "the frame the theme change queued");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("y")}), "typing after the theme change");
 }
 
 // qa doc-comment-enter: Return in a 99-line file adds the hundredth line, the
@@ -6965,6 +6999,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheOutputRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/AnAppendToAHiddenOutputChannelRepaintsNothingInThePanel",
           TestAnAppendToAHiddenOutputChannelRepaintsNothingInThePanel);
+  AddTest(tests, "QaFlowRegression/PartialFramesStayFreshAfterFullFramesAtANewSize",
+          TestPartialFramesStayFreshAfterFullFramesAtANewSize);
   AddTest(tests, "QaFlowRegression/AGutterThatWidensRepaintsThePaneAboveTheFirstRow",
           TestAGutterThatWidensRepaintsThePaneAboveTheFirstRow);
   AddTest(tests, "QaFlowRegression/SwitchingThePanelFromAPluginSurfaceToOutputRepaintsTheBody",

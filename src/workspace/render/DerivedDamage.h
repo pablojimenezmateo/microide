@@ -105,6 +105,13 @@ class DerivedDamage {
   // units as painted. Before any frame was painted, nothing is damaged: the
   // first frame paints the window whole.
   //
+  // Every surface commits on every prepared frame, showing or not (a hidden one
+  // with no units), so its first commit is the app's first frame. A surface that
+  // skipped Commit while hidden would keep units it no longer paints and damage
+  // nothing when it came back. Nothing forgets what was painted either: a full
+  // repaint (a resize, a theme change, a lost backbuffer) paints over the state
+  // the tables describe, so they stay right across it.
+  //
   // A surface damages at most kSeparateRectsPerSurface rects; past that, the
   // nearest ones merge (RectCollector). Scattered changes (a debugger step rewriting
   // rows apart, occurrence marks across the editor) otherwise add a clip each,
@@ -155,14 +162,6 @@ class DerivedDamage {
     table.painted_once = true;
   }
 
-  // Forgets what was painted: the next frame paints whole anyway (a resize, a
-  // theme change, a backend that lost its contents).
-  void Reset() {
-    for (Surface& table : surfaces_) {
-      table.painted.clear();
-      table.painted_once = false;
-    }
-  }
 
  private:
   // The rects one Commit damages: kept apart up to the cap, their bounding rect
