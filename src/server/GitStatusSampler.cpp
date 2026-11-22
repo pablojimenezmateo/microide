@@ -141,6 +141,16 @@ void GitStatusSampler::Run(std::chrono::milliseconds safety_interval) {
   const util::UniqueFd inotify(::inotify_init1(IN_CLOEXEC | IN_NONBLOCK));
   Watches watches{.inotify = inotify.Get()};
   watches.Update(tracker_.WatchedDirectories());
+  // The baseline was read in the constructor, on the caller's thread, and these
+  // watches only exist now: what changed in between -- `git init` right after the
+  // sampler started -- made no event, and nothing else would sample before the
+  // safety interval (an hour, on a server). Sample once over the armed watches,
+  // as below for a directory watched late (RemoteServer/
+  // TheGitSamplerSleepsUntilTheRepositoryMoves, 1 in 64 under load).
+  Sample();
+  for (int round = 0; round < 4 && watches.Update(tracker_.WatchedDirectories()); ++round) {
+    Sample();
+  }
   const int safety_ms = static_cast<int>(std::max<std::int64_t>(1, safety_interval.count()));
   while (!stopping_.load()) {
     bool stop_ready = false;
