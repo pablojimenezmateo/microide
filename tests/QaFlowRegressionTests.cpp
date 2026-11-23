@@ -10323,6 +10323,35 @@ void TestTheHomePageRepaintsWhenWhatItListsChanges() {
          "the stages show on the home page (the case under test)");
 }
 
+// CI qa-asan (the monkey, seed 2): QA-OVERRUN element=terminal-row -- a row 17
+// tall with its text's 18-tall line box starting a pixel into it. The panel's
+// body was a few pixels too short for its last row, and the row's element was
+// clamped to the body, so the row's own text was a draw outside it. A pane is
+// clipped to its body and its rows keep their true rects.
+void TestATerminalRowCutByAShortPanelStaysInsideItsElement() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("short.txt", "text\n");
+  auto& session = TerminalShowing(fixture, 12, "");
+  std::string screen;
+  for (int row = 0; row < 12; ++row) {
+    screen += "\x1b[4" + std::to_string(1 + row % 6) + "mrow " + std::to_string(row) + " of text\x1b[0m gjpqy";
+    screen += row + 1 < 12 ? "\r\n" : "";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, screen);
+  const workspace::RenderInvalidation full{.full = true};
+  // Every height a dragged divider can leave the panel at, a pixel at a time: the
+  // body's last row fits whole at some and is cut at the others.
+  for (float height = 30.0f; height <= 140.0f; height += 1.0f) {
+    TestAccess::SetBottomPanelHeight(fixture.shell, height);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    fixture.ExpectFresh(full, "the panel " + std::to_string(static_cast<int>(height)) + " tall");
+    TerminalSessionTestAccess::AppendOutput(session, "x");
+    fixture.ExpectFresh(TerminalWake(fixture), "an echo in a panel " + std::to_string(static_cast<int>(height)) + " tall");
+  }
+}
+
 // The names of the card's elements of `kind` ("settings-category", "setting"),
 // as the control channel lists them, with their rects.
 std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
@@ -11193,6 +11222,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalCaretRepaintsWhereItWasAndIs", TestATerminalCaretRepaintsWhereItWasAndIs);
   AddTest(tests, "QaFlowRegression/TheHomePageRepaintsWhenWhatItListsChanges",
           TestTheHomePageRepaintsWhenWhatItListsChanges);
+  AddTest(tests, "QaFlowRegression/ATerminalRowCutByAShortPanelStaysInsideItsElement",
+          TestATerminalRowCutByAShortPanelStaysInsideItsElement);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);
