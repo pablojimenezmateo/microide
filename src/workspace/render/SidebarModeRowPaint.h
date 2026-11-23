@@ -12,26 +12,18 @@
 #include "workspace/state/WorkspaceSidebarState.h"
 
 // The sidebar's mode tab row -- Project / Search / Source Control and the overflow
-// button for the other views -- as a derived-damage surface, and the one place
-// that says which sidebar views derive ALL they show.
+// button for the other views -- as a derived-damage surface, and which surface
+// each view's own content derives its damage on.
 namespace microide::workspace {
 
-// The sidebar views whose every piece on screen derives its damage: the mode row
-// (below) and the view's own surface. For such a view "the sidebar changed" owes
-// a frame, not the sidebar's rect (WorkspaceShell::RequestSidebarRedraw): prep
-// repaints what changed. A view joins by deriving its surface and adding itself
-// here and to SidebarViewSurface; QaFlowRegression/
-// ADerivedSidebarViewCommitsItsSurfacesUnits fails a view named here whose
-// surface lays out no units.
+// The views drawn by the sidebar's shared two-column list (SidebarListPaint.h).
 constexpr bool SidebarViewUsesTheList(SidebarMode mode) {
   return UsesPluginItemSurface(mode) || mode == SidebarMode::Problems || mode == SidebarMode::Tests;
 }
-constexpr bool SidebarViewIsDerived(SidebarMode mode) {
-  return mode == SidebarMode::Tree || mode == SidebarMode::Git || mode == SidebarMode::Search ||
-         SidebarViewUsesTheList(mode);
-}
 
-// The surface a derived view's own content is laid out on.
+// The surface a sidebar view's own content is laid out on (every view is derived:
+// QaFlowRegression/ADerivedSidebarViewCommitsItsSurfacesUnits fails a view whose
+// surface lays out no units).
 constexpr DerivedSurface SidebarViewSurface(SidebarMode mode) {
   return mode == SidebarMode::Tree     ? DerivedSurface::SidebarTree
          : mode == SidebarMode::Git    ? DerivedSurface::GitPanel

@@ -1,4 +1,3 @@
-#include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/ProjectRootPresence.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -281,21 +280,10 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
 }
 
 // "Anything in the window may have changed." What the window paints is derived --
-// the chrome, the panes, the panels, the sidebar's views, the cards and menus --
-// so that owes a frame, and the frame repaints what did change. A sidebar view
-// that is not derived yet keeps the sidebar's rect. This named the window: every
-// click or wheel no handler damaged repainted all of it.
-void WorkspaceShell::RequestWindowRedraw() {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value()) {
-    RequestFullRedraw();
-    return;
-  }
-  RequestPreparedFrame();
-  if (context_.current_project_state.sidebar.visible && !SidebarViewIsDerived(ActiveSidebarMode())) {
-    RequestRedrawRect(layout->sidebar);
-  }
-}
+// the chrome and its style, the panes, the panels, every sidebar view, the cards
+// and menus -- so that owes a frame, and the frame repaints what did change. This
+// named the window: every click or wheel no handler damaged repainted all of it.
+void WorkspaceShell::RequestWindowRedraw() { RequestPreparedFrame(); }
 
 void WorkspaceShell::RequestCursorPresent() {
   // Not damage: nothing in the scene changed, the compositor just has to commit a
@@ -317,35 +305,12 @@ void WorkspaceShell::RequestPreparedFrame() {
   InvalidateCursorKindFingerprint();
 }
 
-void WorkspaceShell::RequestSidebarRedraw() {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value()) {
-    RequestWindowRedraw();
-    return;
-  }
-  if (context_.current_project_state.sidebar.visible) {
-    // A view whose every piece derives its damage (SidebarViewIsDerived: its mode
-    // row and its own surface) owes a frame: prep repaints the rows, buttons and
-    // tabs that changed, where the rect repainted the sidebar for any of them.
-    if (SidebarViewIsDerived(ActiveSidebarMode())) {
-      RequestPreparedFrame();
-      return;
-    }
-    RequestRedrawRect(layout->sidebar);
-    return;
-  }
-  // Hidden, none of the sidebar is on screen. This used to fall back to the WHOLE
-  // WINDOW, so every automatic git refresh with the sidebar closed -- one per
-  // project-change batch while agents write the tree -- was a full frame
-  // (TD-2026-10-15-341). Two things did ride on that fallback, and keep a rect
-  // each: project search shown in the overlay instead of the sidebar, and the
-  // status bar, whose branch and counts are re-derived at frame prep and so need
-  // a frame to run in (the strip is the smallest one that gets it).
-  if (context_.current_project_state.overlay.visible) {
-    RequestOverlayRedraw();
-  }
-  RequestRedrawRect(layout->status_bar);
-}
+// "The sidebar changed." Every view is derived -- its mode row, and its own
+// surface's rows, buttons and scrollbar -- so this owes a frame. With the sidebar
+// hidden the frame still runs what rode on the rect this asked for then: the
+// status bar's branch and counts, re-derived at prep, and project search shown in
+// the overlay.
+void WorkspaceShell::RequestSidebarRedraw() { RequestPreparedFrame(); }
 
 void WorkspaceShell::RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
                                                     SDL_FRect WorkspaceLayout::*first,

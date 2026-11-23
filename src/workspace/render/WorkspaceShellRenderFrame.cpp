@@ -1920,44 +1920,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
          "frame prep moved the keyboard after the surface view models were built");
   chrome_unit(FocusSurfaceRect(layout, project_state.surface.focus),
               static_cast<std::uint64_t>(project_state.surface.focus));
-  // (The tabs' titles and dirty marks are in their strips' units above.)
-  // The sidebar's selected row: activating a tab selects its file in the tree (as
-  // VS Code's explorer follows the active editor) without repainting the tree
-  // (QA monkey, seed 5). Any selection that moved with no repaint of its own
-  // repaints the sidebar here -- and so does a scroll or a rebuilt tree (a watcher
-  // batch, an expansion) that landed between frames: the command fuzzer caught a
-  // frame repainting only the menu bar over a tree that had moved under it.
-  // (The file tree and Source Control are not among them: their rows, buttons and
-  // scrollbars are derived units of their own -- DerivedSurface::SidebarTree and
-  // DerivedSurface::GitPanel, and likewise Search and the shared list
-  // (SidebarViewIsDerived) -- so a selection, a scroll or a rebuilt list repaints
-  // the rows it changed, not the sidebar. The unit keeps its place with no rect.)
-  if (sidebar_vm.visible && !SidebarViewIsDerived(ActiveSidebarMode())) {
-    const SidebarState& sidebar = project_state.sidebar;
-    std::size_t selected = 0;
-    switch (ActiveSidebarMode()) {
-      case SidebarMode::Problems: selected = sidebar.problems.selected_index; break;
-      case SidebarMode::Tests: selected = sidebar.tests.selected_index; break;
-      default:
-        if (UsesPluginItemSurface(ActiveSidebarMode())) {
-          selected = sidebar.plugin.selected_index;
-        }
-        break;
-    }
-    std::uint64_t key = (std::hash<std::string>{}(sidebar.view_id) * 0x9E3779B97F4A7C15ull) ^
-                        (static_cast<std::uint64_t>(selected) + 1);
-    key = key * 0x100000001B3ull ^ static_cast<std::uint64_t>(static_cast<std::uint32_t>(sidebar.scroll_row));
-    // Never 0 (0 means "nothing painted yet") -- without touching bit 0: `key |= 1`
-    // erased any change that lived only there in the last term mixed in, which
-    // made a tree revision going from even to odd, or a one-row scroll from an
-    // even row in any other view, invisible to this check.
-    if (key == 0) {
-      key = 1;
-    }
-    chrome_unit(layout.sidebar, key);
-  } else {
-    chrome_unit(std::nullopt, 0);
-  }
+  // (The tabs' titles and dirty marks are in their strips' units above. Every
+  // sidebar view's selection, scroll and rows are units of its own surface --
+  // SidebarTree, GitPanel, SidebarSearch, SidebarList -- so no unit here repaints
+  // the sidebar for them.)
   // A tab strip mid-slide, one unit per animation slot: one that comes to rest
   // repaints its strip at rest.
   {

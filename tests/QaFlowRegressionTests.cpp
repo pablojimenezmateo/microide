@@ -8809,11 +8809,9 @@ void TestTheSidebarsModeRowRepaintsWhatChangedWithNoDamageRequest() {
   fixture.ExpectFresh(NothingAnnounced(), "and back to the tree");
 }
 
-// "The sidebar changed" owes a frame, not the sidebar's rect, while the view on
-// screen derives all it shows (SidebarViewIsDerived): prep repaints the rows that
-// changed. A view named there must lay units out on its surface -- the predicate
-// cannot claim a view that is not derived -- and a view that is not named keeps
-// its rect.
+// "The sidebar changed" owes a frame, not the sidebar's rect: every view derives
+// all it shows, and prep repaints the rows that changed. So every view must name
+// its surface (SidebarViewSurface) and lay units out on it.
 void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -8821,11 +8819,8 @@ void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
   using workspace::SidebarMode;
   for (const SidebarMode mode : {SidebarMode::Tree, SidebarMode::Search, SidebarMode::Problems, SidebarMode::Git,
                                  SidebarMode::Tests, SidebarMode::Plugin, SidebarMode::Outline}) {
-    if (!workspace::SidebarViewIsDerived(mode)) {
-      Expect(workspace::SidebarViewSurface(mode) == workspace::DerivedSurface::Count,
-             "a view that is not derived names no surface");
-      continue;
-    }
+    Expect(workspace::SidebarViewSurface(mode) != workspace::DerivedSurface::Count,
+           "every sidebar view names the surface it derives its damage on");
     TreeFixture fixture;
     // Show the view: every derived view must be one this test knows how to show.
     switch (mode) {
@@ -8854,7 +8849,7 @@ void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
                "a plugin item view is the shared list's");
         continue;
       default:
-        Expect(false, "SidebarViewIsDerived names a view this test cannot show: teach it how");
+        Expect(false, "a sidebar view this test cannot show: teach it how");
         continue;
     }
     fixture.Paint();
