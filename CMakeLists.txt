@@ -2153,6 +2153,12 @@ if(MICROIDE_PERF_HARNESS_BUILD)
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   set_tests_properties(microide_perf_fixtures_git PROPERTIES FIXTURES_SETUP perf_fixtures)
 
+  # The remote scenarios start a microide-server; each runs in a forked child that
+  # leaves with _exit, so the daemon must be stopped by the scenario itself.
+  add_test(NAME microide_perf_remote_teardown
+           COMMAND python3 tests/perf/check_remote_scenario_teardown.py $<TARGET_FILE:microide_perf>
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
   add_test(NAME microide_perf_tests
            COMMAND microide_perf --smoke --iterations=1
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

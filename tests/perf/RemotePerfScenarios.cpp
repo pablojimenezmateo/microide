@@ -78,24 +78,34 @@ bool Poll(const std::function<bool()>& done, std::chrono::milliseconds timeout) 
 
 // One server for the scenario's process (each scenario runs in its own), with a
 // host root holding the bulk object. Stopped and removed at exit.
+// One per scenario run, on the scenario's stack: the scenario runs in a forked
+// child that leaves with _exit (ScenarioProcessIsolation), so a static's
+// destructor never ran there, and every run left its daemon alive and its tree
+// under /tmp (35 daemons, 2 GB of tmpfs in one day of A/B runs;
+// tests/perf/check_remote_scenario_teardown.py).
 class HostServer {
  public:
-  static HostServer& Get() {
-    static HostServer server;
-    return server;
-  }
+  // The one the running scenario holds.
+  static HostServer& Get() { return *current_; }
+  HostServer(const HostServer&) = delete;
+  HostServer& operator=(const HostServer&) = delete;
   ~HostServer() {
-    (void)platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", socket_dir_.string()},
-                                  platform::SubprocessOptions{.timeout_ms = 10000});
+    current_ = nullptr;
+    if (ok_) {
+      (void)platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", socket_dir_.string()},
+                                    platform::SubprocessOptions{.timeout_ms = 10000});
+    }
     std::error_code ec;
-    std::filesystem::remove_all(base_, ec);
+    if (!base_.empty()) {
+      std::filesystem::remove_all(base_, ec);
+    }
   }
   const std::filesystem::path& root() const { return root_; }
   const std::filesystem::path& socket_dir() const { return socket_dir_; }
   bool ok() const { return ok_; }
 
- private:
   HostServer() {
+    current_ = this;
     std::string pattern = (std::filesystem::temp_directory_path() / "mip-perf.XXXXXX").string();
     std::vector<char> buffer(pattern.begin(), pattern.end());
     buffer.push_back('\0');
@@ -123,6 +133,8 @@ class HostServer {
               .success();
   }
 
+ private:
+  static inline HostServer* current_ = nullptr;
   std::filesystem::path base_;
   std::filesystem::path socket_dir_;
   std::filesystem::path root_;
@@ -243,6 +255,7 @@ bool ServerUp(ScenarioContext& context) {
 }
 
 void RunRemoteFirstPrompt(ScenarioContext& context) {
+  const HostServer server;
   if (!ServerUp(context)) {
     return;
   }
@@ -256,6 +269,7 @@ void RunRemoteFirstPrompt(ScenarioContext& context) {
 }
 
 void RunRemoteEchoUnderBulk(ScenarioContext& context) {
+  const HostServer server;
   if (!ServerUp(context)) {
     return;
   }
@@ -334,6 +348,7 @@ void RunRemoteEchoUnderBulk(ScenarioContext& context) {
 }
 
 void RunRemoteContradictedPrediction(ScenarioContext& context) {
+  const HostServer server;
   if (!ServerUp(context)) {
     return;
   }
@@ -357,6 +372,7 @@ void RunRemoteContradictedPrediction(ScenarioContext& context) {
 }
 
 void RunRemoteReattachThree(ScenarioContext& context) {
+  const HostServer server;
   if (!ServerUp(context)) {
     return;
   }
@@ -393,6 +409,7 @@ void RunRemoteReattachThree(ScenarioContext& context) {
 }
 
 void RunRemoteDeadLink(ScenarioContext& context) {
+  const HostServer server;
   if (!ServerUp(context)) {
     return;
   }
@@ -413,6 +430,7 @@ void RunRemoteDeadLink(ScenarioContext& context) {
 }
 
 void RunRemoteStalledServerInput(ScenarioContext& context) {
+  const HostServer server;
   if (!ServerUp(context)) {
     return;
   }
