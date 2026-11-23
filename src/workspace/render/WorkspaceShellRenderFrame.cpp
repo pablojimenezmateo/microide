@@ -2455,6 +2455,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // monkey, seed 5).
     chrome_unit(hover_rect, 0);
     chrome_unit(tooltip_rect, tooltip_text_hash);
+    // The overlay card, derived (5.3): RenderOverlaySurface draws its view model
+    // and the pointer, so the model is built here -- the same one paint reuses this
+    // frame -- and each piece of the card is a unit keyed on what it shows. A
+    // surface of its own: its rows come and go with the list, and in Chrome they
+    // would shift every unit after them.
+    PrepareOverlayUnits(layout, project_state.overlay.visible);
     // A prompt's buttons under the pointer, lit as paint lights them (PointerOver,
     // which the occluder settled above decides). Fixed slots, kPromptButtonSlots per
     // dialog: the unsaved-changes prompt has three (Save, Discard, Cancel), and two
@@ -2566,6 +2572,93 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
 
 void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int height) {
   (void)PrepareFrameOnce(renderer, width, height);
+}
+
+void WorkspaceShell::PrepareOverlayUnits(const WorkspaceLayout& layout, bool overlay_visible) {
+  std::vector<DerivedDamage::Unit>& units = frame_state_.derived_damage.Begin(DerivedSurface::Overlay);
+  if (overlay_visible) {
+    EnsureClipFrameAndOverlayViewModels(layout);
+    const OverlaySurfaceViewModel& vm = *clip_cached_overlay_vm_;
+    const auto unit = [&](const SDL_FRect& rect, std::uint64_t key) {
+      units.push_back(DerivedDamage::Unit{.rect = rect, .fingerprint = key | 1u});
+    };
+    PaintFingerprint style;
+    style.Add(overview::ThemeMarkerToken(theme_)).Add(text_renderer_.MetricsGeneration());
+    // The overlay's own inputs' caret and selection anchor: they decide the field's
+    // scrolled slice and the selection fill drawn over it, which its text alone
+    // does not (qa edit-replace-matrix: a replace field's select-all cleared under
+    // the same text kept its highlight).
+    if (prepare_cached_text_input_vm_.has_value()) {
+      const TextInputSurfaceViewModel& inputs = *prepare_cached_text_input_vm_;
+      for (const editor::SingleLineEditor* input :
+           {inputs.buffer_search_query, inputs.buffer_search_replace, inputs.commit_picker_query,
+            inputs.quick_pick_query, inputs.command_palette_query, inputs.file_finder_query}) {
+        if (input != nullptr) {
+          style.Add(input->caret()).Add(input->selection_anchor().has_value() ? *input->selection_anchor() + 1 : 0);
+        }
+      }
+      style.Add(static_cast<int>(inputs.current_surface));
+    }
+    if (vm.mode == OverlayMode::BufferSearch || vm.mode == OverlayMode::BufferReplace) {
+      // The find widget (RenderFindWidget): its card and fields, then each button
+      // with its hover, as paint lights it.
+      const OverlayFindWidgetViewModel& fw_vm = vm.find_widget;
+      const FindWidgetLayout& fw = fw_vm.fw;
+      PaintFingerprint card;
+      card.Add(style.value()).Add(fw.widget).Add(fw.search_field).Add(fw.replace_field).Add(fw.count_rect);
+      card.Add(fw_vm.replace_mode).Add(fw_vm.search_focused).Add(fw_vm.replace_focused);
+      card.Add(fw_vm.has_matches).Add(fw_vm.has_query);
+      card.Add(fw_vm.search_display_text).Add(fw_vm.replace_display_text).Add(fw_vm.count_text);
+      unit(fw.widget, card.value());
+      for (std::size_t i = 0; i < fw.toggle_count && i < fw.toggle_buttons.size(); ++i) {
+        unit(fw.toggle_buttons[i], PaintFingerprint()
+                                       .Add(fw_vm.toggles[i].label)
+                                       .Add(fw_vm.toggles[i].active)
+                                       .Add(PointerOver(fw.toggle_buttons[i]))
+                                       .value());
+      }
+      for (const SDL_FRect& button : {fw.prev_button, fw.next_button, fw.close_button, fw.replace_button,
+                                      fw.replace_all_button}) {
+        unit(button, PaintFingerprint().Add(button).Add(PointerOver(button)).Add(fw_vm.has_matches).value());
+      }
+    } else {
+      // The card: its backdrop (when not caret-anchored), frame, title row, query
+      // field, summary and hint, error and empty labels.
+      PaintFingerprint card;
+      card.Add(style.value()).Add(static_cast<int>(vm.mode)).Add(vm.caret_anchored).Add(vm.overlay_rect);
+      card.Add(vm.title).Add(vm.note).Add(vm.note_x).Add(vm.context_label);
+      card.Add(vm.has_query_field).Add(vm.query_row_y).Add(vm.query_display_text);
+      card.Add(vm.current_surface == vm.query_surface);
+      card.Add(vm.summary_line).Add(vm.summary_y).Add(vm.hint).Add(vm.hint_x);
+      card.Add(vm.error_line).Add(vm.error_at_title_row).Add(vm.empty_label);
+      card.Add(vm.list_layout.list_rect);
+      unit(vm.caret_anchored ? vm.overlay_rect : layout.overlay_anchor, card.value());
+      // Each visible row: its labels, whether it is the selection, and the pointer.
+      for (std::size_t row = 0; row < vm.rows.size(); ++row) {
+        const OverlayListRowViewModel& item = vm.rows[row];
+        const SDL_FRect row_rect = ScrollableListRowRect(vm.list_layout, static_cast<int>(row));
+        const bool selected = vm.scroll_row + static_cast<int>(row) == vm.selected_row;
+        unit(row_rect, PaintFingerprint()
+                           .Add(item.primary)
+                           .Add(item.secondary)
+                           .Add(item.secondary_width)
+                           .Add(selected)
+                           .Add(PointerOver(row_rect))
+                           .value());
+      }
+      // The scrollbar: its thumb and whether it is dragged.
+      if (const auto geometry = MakeVerticalScrollbarGeometry(
+              vm.list_layout.list_rect, static_cast<float>(vm.total_rows), vm.list_layout.visible_units,
+              static_cast<float>(vm.scroll_row));
+          geometry.has_value()) {
+        unit(geometry->track, PaintFingerprint()
+                                  .Add(geometry->thumb)
+                                  .Add(context_.interaction_state.drag_target == DragTarget::OverlayScrollbar)
+                                  .value());
+      }
+    }
+  }
+  frame_state_.derived_damage.Commit(DerivedSurface::Overlay, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
 }
 
 void WorkspaceShell::EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& layout) const {

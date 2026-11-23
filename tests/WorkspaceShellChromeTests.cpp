@@ -1057,7 +1057,11 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
   const auto result = shell.HandleEvent(event);
 
   Expect(result.handled, "command palette typing should be handled");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  // The overlay is derived (PrepareOverlayUnits): typing owes a frame, whose prep
+  // repaints the query field and the rows that changed. Never a full repaint.
+  workspace::RenderInvalidation asked = result.redraw;
+  asked.Merge(shell.ConsumePendingRenderInvalidation());
+  Expect(!asked.full && (asked.frame || !asked.rects.empty()),
          "command palette typing should stay on the partial (overlay) redraw path");
   Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == text,
          "command palette typing should append to the palette query");

@@ -1066,6 +1066,8 @@
   void SyncPluginSurfacePreviewClosed();
   void RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                                const editor::SurfaceContent* content, float scroll_y);
+  // The overlay card's derived units, laid out at prep after the pointer occluder.
+  void PrepareOverlayUnits(const WorkspaceLayout& layout, bool overlay_visible);
   void PaintEditorPane(SDL_Renderer* renderer, std::size_t group_index, bool draw_caret);
   void DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
                         const editor::EditorViewMetrics& metrics, std::size_t scroll_line,
@@ -1858,7 +1860,6 @@
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
-  std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   static std::optional<editor::AppliedEditLineSpan> ComputeChangedLineSpan(
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);

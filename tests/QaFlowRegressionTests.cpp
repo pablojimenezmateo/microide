@@ -4288,6 +4288,61 @@ void TestFoldMarksFollowAnEditFrameByFrame() {
   }
 }
 
+// derived-damage 5.3, overlays: the command palette's card, each visible row and
+// its scrollbar are units (PrepareOverlayUnits), so the palette's own changes owe
+// a frame. They named the card, or the window when it closed. Here it opens,
+// filters, has rows lit under the pointer and the selection moved, and closes,
+// each painted as the app paints it; a row lit by the pointer repaints rows, not
+// the card.
+void TestTheCommandPaletteRepaintsWhatChangedFromAFrame() {
+  FlowFixture fixture("notes.txt", "one\n");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT)}),
+                      "the command palette opens");
+  const SDL_FRect card = TestAccess::ActiveOverlayRect(fixture.shell);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("sp")}), "the palette filtered");
+  for (const float at : {0.55f, 0.65f, 0.75f}) {
+    const workspace::RenderInvalidation hover =
+        DispatchEvents(fixture.shell, {MouseMotionEvent(card.x + card.w * 0.5f, card.y + card.h * at)});
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, hover);
+    float area = 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      SDL_FRect overlap{};
+      if (SDL_GetRectIntersectionFloat(&rect, &card, &overlap)) {
+        area += overlap.w * overlap.h;
+      }
+    }
+    Expect(!damage.full && area < card.w * card.h * 0.4f,
+           "a row lit under the pointer repaints rows, not the card (" + std::to_string(area / (card.w * card.h)) +
+               " of it)");
+    fixture.ExpectFresh(damage, "a palette row under the pointer");
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "the selection moved down");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "the palette closed");
+}
+
+// qa find-goto-edges, edit-replace-matrix: the in-file find widget's fields are
+// in its overlay units (PrepareOverlayUnits); typing a query, moving between
+// matches and editing the replace field each owe a frame, and each frame matches
+// a full one.
+void TestTheFindWidgetRepaintsItsFieldsFromAFrame() {
+  FlowFixture fixture("notes.txt", "alpha beta alpha\ngamma alpha delta\nalpha\n");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)}), "the find widget opens");
+  for (const char* typed : {"a", "l", "p"}) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(typed)}), std::string("typed ") + typed);
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "the next match");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_BACKSPACE)}), "a character erased");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_H, SDL_KMOD_CTRL)}), "replace shown");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("Z")}), "typed into the replace field");
+  // A selection that goes with the text and the caret unchanged (qa
+  // edit-replace-matrix): the field's selection fill is in the overlay's key.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_A, SDL_KMOD_CTRL)}),
+                      "the replace field selected whole");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)}),
+                      "the selection cleared, the caret where it was");
+}
+
 // derived-damage 5.4: a still frame damages nothing. In each of the shell's main
 // states, a second prepared frame with nothing changed must name no rect: a unit
 // whose key folds something that drifts frame to frame (a time, an address that
@@ -10761,6 +10816,9 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
           TestAHoverCardThatSaysSomethingElseRepaints);
   AddTest(tests, "QaFlowRegression/AStillFrameDamagesNothing", TestAStillFrameDamagesNothing);
+  AddTest(tests, "QaFlowRegression/TheFindWidgetRepaintsItsFieldsFromAFrame", TestTheFindWidgetRepaintsItsFieldsFromAFrame);
+  AddTest(tests, "QaFlowRegression/TheCommandPaletteRepaintsWhatChangedFromAFrame",
+          TestTheCommandPaletteRepaintsWhatChangedFromAFrame);
   AddTest(tests, "QaFlowRegression/FoldMarksFollowAnEditFrameByFrame", TestFoldMarksFollowAnEditFrameByFrame);
   AddTest(tests, "QaFlowRegression/APromptsChangesRepaintItFromAFrame", TestAPromptsChangesRepaintItFromAFrame);
   AddTest(tests, "QaFlowRegression/EveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer",

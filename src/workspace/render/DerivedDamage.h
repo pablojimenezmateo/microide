@@ -59,6 +59,9 @@ enum class DerivedSurface : std::uint8_t {
   MenuSubmenu,
   MenuOverflowPopup,
   ContextMenu,
+  // The overlay card (palette, file finder, pickers, completion) or the in-file
+  // find widget: the card, then a unit per visible row, then its scrollbar.
+  Overlay,
   // The Settings / Help & About card (SettingsCardPaint.h): its backdrop, its
   // chrome, the scope tooltip, the font picker, then a unit per rail and value row.
   SettingsCard,

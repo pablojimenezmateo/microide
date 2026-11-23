@@ -541,19 +541,13 @@ void WorkspaceShell::RequestBottomPanelContentRedraw() {
 }
 
 void WorkspaceShell::RequestOverlayRedraw() {
-  // Settings and Help & About are derived (SettingsCardPaint.h): the card's
-  // chrome, each rail row and each value row is a unit, so a key, a click or a
-  // filter edit owes a frame. They named the card and the region it dims --
-  // every row of it, and the editor under its backdrop, for a hover.
-  if (settings_overlay_service_.Visible()) {
-    RequestPreparedFrame();
-    return;
-  }
-  if (const auto rect = CurrentOverlayRedrawRect(); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestWindowRedraw();
+  // Every overlay is derived: Settings and Help & About (SettingsCardPaint.h: the
+  // card's chrome, each rail and value row), and the others (PrepareOverlayUnits:
+  // the card, each visible row and the scrollbar, or the find widget's fields and
+  // buttons), with the backdrop they dim the window with a Chrome unit. So an
+  // overlay opening, filtering, scrolling, lit or closing owes a frame; these
+  // named the card and the region it dims, or the window when the card had gone.
+  RequestPreparedFrame();
 }
 
 // The prompts are derived: each dialog is a Chrome unit keyed on all it paints,
@@ -722,18 +716,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
     return std::nullopt;
   }
   return BottomPanelContentRect(*layout);
-}
-
-std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value()) {
-    return std::nullopt;
-  }
-  // (Settings and Help & About are derived, and ask for a frame: RequestOverlayRedraw.)
-  if (!context_.current_project_state.overlay.visible) {
-    return std::nullopt;
-  }
-  return ComputeOverlayRect(layout->overlay_anchor);
 }
 
 std::optional<editor::AppliedEditLineSpan> WorkspaceShell::ComputeChangedLineSpan(
