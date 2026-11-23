@@ -488,6 +488,9 @@
     shell.OpenDiscardAllGitSidebarPrompt();
   }
 
+  static WorkspaceShell::PromptSurfaceState& CurrentPromptSurface(WorkspaceShell& shell) {
+    return shell.context_.prompts.surface;
+  }
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
   // As the dirty prompt does after its Save / Discard choice.
   static void ConfirmPromptSurfaceSavingDirtyBuffers(WorkspaceShell& shell) {

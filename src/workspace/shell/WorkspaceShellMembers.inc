@@ -1859,7 +1859,6 @@
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
-  std::optional<SDL_FRect> CurrentPromptRedrawRect() const;
   static std::optional<editor::AppliedEditLineSpan> ComputeChangedLineSpan(
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);

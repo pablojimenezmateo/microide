@@ -4215,6 +4215,53 @@ void TestAHoverCardThatSaysSomethingElseRepaints() {
   fixture.ExpectFresh(frame, "the hover card's fuller answer, the same size");
 }
 
+// derived-damage 5.3, prompts: a prompt's dialog is a unit keyed on all it paints,
+// so its own changes owe a frame. Before, RequestPromptRedraw named the card (and
+// the whole window as the prompt opened or closed), and the card's unit keyed only
+// its message, detail and chosen button: the input's text, a button under the
+// pointer and the title changed in it with no key moving.
+void TestAPromptsChangesRepaintItFromAFrame() {
+  FlowFixture fixture("notes.txt", "one\n");
+  TestAccess::PrepareRenamePrompt(fixture.shell, fixture.file, "notes.txt");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the rename prompt open");
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  auto& prompt = TestAccess::CurrentPromptSurface(fixture.shell);
+  prompt.input.SetText("renamed-notes.txt");
+  fixture.ExpectFresh(frame, "the prompt's input text changed with only a frame owed");
+  const SDL_FRect dialog = workspace::ComputePromptSurfaceRect(TestAccess::CurrentLayout(fixture.shell).full);
+  const std::vector<SDL_FRect> buttons = workspace::ComputePromptSurfaceButtonRects(dialog, prompt.button_count);
+  Expect(buttons.size() == 2, "the prompt has two buttons");
+  if (buttons.size() != 2) {
+    return;
+  }
+  TestAccess::SetMousePositionForTest(fixture.shell, buttons[1].x + buttons[1].w * 0.5f,
+                                      buttons[1].y + buttons[1].h * 0.5f);
+  fixture.ExpectFresh(frame, "the pointer resting on the prompt's second button");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "typing into the prompt");
+}
+
+// qa tab-inactive-close: the unsaved-changes prompt has THREE buttons, and the
+// pointer resting on its Cancel was not lit: the buttons' hover units had two
+// slots per dialog. Each button is hovered here with only a frame owed.
+void TestEveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer() {
+  FlowFixture fixture("notes.txt", "one\n");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("x")});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  Expect(TestAccess::DirtyPromptVisible(fixture.shell), "closing the modified tab asks first");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the unsaved-changes prompt open");
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  const auto buttons =
+      workspace::ComputeDirtyPromptButtonRects(workspace::ComputeDirtyPromptRect(TestAccess::CurrentLayout(fixture.shell).full));
+  const char* names[] = {"Save", "Discard", "Cancel"};
+  for (std::size_t i = 0; i < buttons.size(); ++i) {
+    TestAccess::SetMousePositionForTest(fixture.shell, buttons[i].x + buttons[i].w * 0.5f,
+                                        buttons[i].y + buttons[i].h * 0.5f);
+    fixture.ExpectFresh(frame, std::string("the pointer resting on ") + names[i]);
+  }
+}
+
 // derived-damage 5.4: a still frame damages nothing. In each of the shell's main
 // states, a second prepared frame with nothing changed must name no rect: a unit
 // whose key folds something that drifts frame to frame (a time, an address that
@@ -9911,6 +9958,9 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
           TestAHoverCardThatSaysSomethingElseRepaints);
   AddTest(tests, "QaFlowRegression/AStillFrameDamagesNothing", TestAStillFrameDamagesNothing);
+  AddTest(tests, "QaFlowRegression/APromptsChangesRepaintItFromAFrame", TestAPromptsChangesRepaintItFromAFrame);
+  AddTest(tests, "QaFlowRegression/EveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer",
+          TestEveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer);
   AddTest(tests, "QaFlowRegression/EditorChangesRepaintTheirRowsNotThePane",
           TestEditorChangesRepaintTheirRowsNotThePane);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalContextMenuRowRepaintsWhole",

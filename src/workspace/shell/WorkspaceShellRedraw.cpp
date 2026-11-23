@@ -529,13 +529,11 @@ void WorkspaceShell::RequestOverlayRedraw() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::RequestPromptRedraw() {
-  if (const auto rect = CurrentPromptRedrawRect(); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestWindowRedraw();
-}
+// The prompts are derived: each dialog is a Chrome unit keyed on all it paints,
+// the backdrop that dims the window under it is another, and its caret a third.
+// A prompt's change owes a frame; it used to name its card, or the whole window
+// when it opened or closed (the backdrop's unit repaints the window then anyway).
+void WorkspaceShell::RequestPromptRedraw() { RequestPreparedFrame(); }
 
 void WorkspaceShell::QueueEditorHoverRefresh() {
   // A card pinned to the caret (Show Hover) refreshes with no pointer at all.
@@ -720,22 +718,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
     return std::nullopt;
   }
   return ComputeOverlayRect(layout->overlay_anchor);
-}
-
-std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
-  const auto window_rect = CurrentWindowRect();
-  if (!window_rect.has_value()) {
-    return std::nullopt;
-  }
-
-  std::optional<SDL_FRect> rect;
-  if (context_.prompts.dirty_visible) {
-    rect = ComputeDirtyPromptRect(*window_rect);
-  }
-  if (context_.prompts.surface_visible) {
-    rect = UnionOptionalRects(rect, ComputePromptSurfaceRect(*window_rect));
-  }
-  return rect;
 }
 
 std::optional<editor::AppliedEditLineSpan> WorkspaceShell::ComputeChangedLineSpan(

@@ -1516,21 +1516,37 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // the tab it closes, looked up when it paints, so a focus that moved under it
   // renamed it with nothing damaged, and the message kept the old name outside
   // whatever else was repainted (soak 6d33d9fa57bc).
+  // Each dialog keys on all it paints (RenderPromptSurface / RenderDirtyPromptSurface):
+  // its title, message and detail, the input field's text with the caret and
+  // selection that pick its scrolled slice, and which button is chosen -- so a
+  // prompt's own changes owe a frame, not a rect. (Its buttons' hover is keyed with
+  // the other hover state, after the pointer occluder settles.)
   {
-    const std::hash<std::string_view> text_hash;
-    chrome_unit(context_.prompts.dirty_visible ? std::optional<SDL_FRect>(ComputeDirtyPromptRect(layout.full))
-                                               : std::nullopt,
-                context_.prompts.dirty_visible
-                    ? text_hash(DirtyPromptMessage()) ^
-                          static_cast<std::uint64_t>(context_.prompts.dirty.selected_action)
-                    : 0);
-    chrome_unit(context_.prompts.surface_visible
-                    ? std::optional<SDL_FRect>(ComputePromptSurfaceRect(layout.full))
-                    : std::nullopt,
-                context_.prompts.surface_visible
-                    ? (text_hash(PromptSurfaceMessage()) * 0x9E3779B97F4A7C15ull) ^ text_hash(PromptSurfaceDetail()) ^
-                          static_cast<std::uint64_t>(context_.prompts.surface.selected_button)
-                    : 0);
+    PaintFingerprint dirty;
+    std::optional<SDL_FRect> dirty_rect;
+    if (context_.prompts.dirty_visible) {
+      dirty_rect = ComputeDirtyPromptRect(layout.full);
+      dirty.Add(std::string_view(DirtyPromptTitle())).Add(std::string_view(DirtyPromptMessage()));
+      dirty.Add(context_.prompts.dirty.selected_action);
+    }
+    chrome_unit(dirty_rect, dirty.value());
+    PaintFingerprint surface;
+    std::optional<SDL_FRect> surface_rect;
+    if (context_.prompts.surface_visible) {
+      const PromptSurfaceState& prompt = context_.prompts.surface;
+      surface_rect = ComputePromptSurfaceRect(layout.full);
+      surface.Add(std::string_view(PromptSurfaceTitle())).Add(std::string_view(PromptSurfaceMessage()));
+      surface.Add(std::string_view(PromptSurfaceDetail())).Add(static_cast<int>(prompt.kind));
+      surface.Add(prompt.selected_button).Add(prompt.button_count);
+      for (const std::string_view label : PromptSurfaceActionLabels()) {
+        surface.Add(label);
+      }
+      if (prompt.kind == PromptSurfaceState::Kind::TextInput) {
+        surface.Add(std::string_view(prompt.input.text())).Add(prompt.input.caret());
+        surface.Add(prompt.input.selection_anchor().has_value() ? *prompt.input.selection_anchor() + 1 : 0);
+      }
+    }
+    chrome_unit(surface_rect, surface.value());
   }
   // (A compare tab's scroll is in its rows' surface key: CompareRowUnits.)
   {
@@ -2304,6 +2320,34 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // monkey, seed 5).
     chrome_unit(hover_rect, 0);
     chrome_unit(tooltip_rect, tooltip_text_hash);
+    // A prompt's buttons under the pointer, lit as paint lights them (PointerOver,
+    // which the occluder settled above decides). Fixed slots, kPromptButtonSlots per
+    // dialog: the unsaved-changes prompt has three (Save, Discard, Cancel), and two
+    // slots left its Cancel unlit under a pointer (qa tab-inactive-close).
+    {
+      constexpr std::size_t kPromptButtonSlots = 4;
+      std::array<std::optional<SDL_FRect>, 2 * kPromptButtonSlots> buttons{};
+      static_assert(std::tuple_size_v<decltype(DirtyPromptActionLabels())> <= kPromptButtonSlots &&
+                    std::tuple_size_v<decltype(PromptSurfaceActionLabels())> <= kPromptButtonSlots);
+      // Paint draws min(rects, labels) buttons, so the slots take as many.
+      const auto take = [&](std::size_t first, const auto& rects, std::size_t labels) {
+        const std::size_t drawn = std::min({rects.size(), labels, kPromptButtonSlots});
+        for (std::size_t i = 0; i < drawn; ++i) {
+          buttons[first + i] = rects[i];
+        }
+      };
+      if (context_.prompts.dirty_visible) {
+        take(0, ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(layout.full)), DirtyPromptActionLabels().size());
+      }
+      if (context_.prompts.surface_visible) {
+        take(kPromptButtonSlots,
+             ComputePromptSurfaceButtonRects(ComputePromptSurfaceRect(layout.full), context_.prompts.surface.button_count),
+             PromptSurfaceActionLabels().size());
+      }
+      for (const std::optional<SDL_FRect>& button : buttons) {
+        chrome_unit(button, button.has_value() && PointerOver(*button) ? 1u : 2u);
+      }
+    }
     // The editor hover card goes when its target does -- the pointer leaving for
     // the tab strip cleared the blame card's target and repainted only the strip
     // (QA monkey, seed 7). Laid out once here; its paint reads this layout.
