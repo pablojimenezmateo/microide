@@ -6824,6 +6824,64 @@ void TestLeavingTheCommitSubjectFieldRepaintsItsCaret() {
                "a click lower in the sidebar");
 }
 
+// Soak 6334a6235e8b (QA-OVERRUN element=git-body, ui.scale 0.75): a commit body
+// line wider than its field paints truncated to the field, but its selection's
+// fill was sized by the WHOLE selected text and ran past the field's right edge,
+// where the field's repaint does not reach. The selection stays inside the text
+// area the line is drawn in.
+void TestACommitBodySelectionStaysInsideItsField() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "notes.txt", "changed\n");
+  RequireGitCommandSuccess(root, {"add", "notes.txt"}, "git add notes.txt");
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open its project");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the git view should list the change");
+  Expect(TestAccess::ExecuteCommandLine(shell, "git-commit"), "the commit form opens");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto pin = PinCaretOf(shell);
+  pin();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  std::optional<SDL_FRect> body;
+  const util::JsonValue ui = TestAccess::ControlUi(shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString() == "field:git/body") {
+      const auto& r = entry["rect"].AsArray();
+      body = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                       static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    }
+  }
+  Expect(body.has_value(), "the ui query should name the commit Body field");
+  if (!body) {
+    return;
+  }
+  const auto expect_fresh = [&](const workspace::RenderInvalidation& redraw, const std::string& what) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin);
+    Expect(diff.identical(), what + " should paint what a full repaint paints; " + DescribePixelDiff(diff));
+  };
+  const float x = body->x + 10.0f;
+  const float y = body->y + 8.0f;
+  expect_fresh(DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+               "clicking into the Body field");
+  expect_fresh(DispatchEvents(shell, {TextInputEvent("a body line far wider than the field it is typed into, "
+                                                     "and wider again, and again, until it runs well past")}),
+               "typing a line wider than the field");
+  expect_fresh(DispatchEvents(shell, {KeyDownEvent(SDLK_A, SDL_KMOD_CTRL)}), "selecting the whole body");
+}
+
 // TD-2026-10-16-346: the pointer moving from a panel tab's body onto its own
 // close button lights the glyph; frame prep's hover tracker named the tab's whole
 // rect for both, so the move changed nothing it could see and no frame repainted
@@ -8988,6 +9046,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAKeyInAMenuUnderARestingPointerRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/LeavingTheCommitSubjectFieldRepaintsItsCaret",
           TestLeavingTheCommitSubjectFieldRepaintsItsCaret);
+  AddTest(tests, "QaFlowRegression/ACommitBodySelectionStaysInsideItsField",
+          TestACommitBodySelectionStaysInsideItsField);
   AddTest(tests, "QaFlowRegression/MovingOntoAPanelTabsCloseButtonRepaintsIt",
           TestMovingOntoAPanelTabsCloseButtonRepaintsIt);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",

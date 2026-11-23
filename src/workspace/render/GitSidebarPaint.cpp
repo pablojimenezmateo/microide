@@ -145,10 +145,14 @@ void LayOutCommitDraft(PreparedFrameState::GitPanelPaint& head, const GitPanelIn
           const std::size_t to =
               index == selection->end.line ? std::min(selection->end.column, text.size()) : text.size();
           if (from < to && from <= text.size()) {
-            const float width = tr.MeasureWidth(text.substr(from, to - from));
-            if (width > 0.0f) {
-              selected = MakeRect(field.text_x + tr.MeasureWidth(text.substr(0, from)), row_y - 1.0f, width,
-                                  line_height);
+            // Within the text area the line is drawn in: the line is truncated to
+            // it, and a selection measured over the whole text ran past the field's
+            // edge, outside its repaint (soak 6334a6235e8b).
+            const float left = field.text_x + tr.MeasureWidth(text.substr(0, from));
+            const float right = std::min(left + tr.MeasureWidth(text.substr(from, to - from)),
+                                         field.text_x + field.text_width);
+            if (right > left) {
+              selected = MakeRect(left, row_y - 1.0f, right - left, line_height);
             }
           }
         }
