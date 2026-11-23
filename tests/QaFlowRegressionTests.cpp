@@ -8990,6 +8990,63 @@ void TestTheDebugToolbarFollowsItsSessionFromAFrame() {
   Expect(toolbar_buttons() == 0, "no toolbar without a session");
 }
 
+// A debug session's callbacks change the debug dock's models, and the dock is a
+// derived surface: they owe a frame. They named the dock's rect -- with the dock
+// closed, the whole window. The debuggee's output is one of them (it goes to its
+// console, and asks on behalf of the dock): every line a program printed while
+// the dock was closed repainted the window.
+void TestADebugSessionsCallbacksRepaintNoWindowWhileTheDockIsClosed() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "evaluate"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  const auto pump = [&]() { TestAccess::ConsumeDapCallbacks(fixture.shell); };
+  Expect(WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the mock adapter should stop on configurationDone");
+  for (int round = 0; round < 20; ++round) {
+    pump();  // the stop's stack and variables
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  // The stop opened the dock; the user closes it and the session stays stopped.
+  TestAccess::SetDebugPaneVisible(fixture.shell, false);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "stopped, the debug dock closed");
+  const float window = static_cast<float>(fixture.width) * static_cast<float>(fixture.height);
+
+  // An expression evaluated in the console: the adapter prints a line (an output
+  // event) and answers.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-repl"), "debug-repl should open its prompt");
+  // (The prompt's own opening and closing are not the session's: they are
+  // painted and dropped before the adapter's answer is taken.)
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("set print elements 200"), KeyDownEvent(SDLK_RETURN)});
+  fixture.ExpectFresh(full, "the expression sent");
+  workspace::RenderInvalidation asked;
+  for (int round = 0; round < 40; ++round) {
+    pump();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    asked.Merge(fixture.shell.ConsumePendingRenderInvalidation());
+  }
+  Expect(!TestAccess::CurrentProjectState(fixture.shell).debug_pane.visible, "the dock stays closed");
+  float largest = 0.0f;
+  for (const SDL_FRect& rect : asked.rects) {
+    largest = std::max(largest, rect.w * rect.h);
+  }
+  Expect(asked.frame, "the session's callbacks owe a frame");
+  Expect(!asked.full && largest < window * 0.5f,
+         "and name no window-sized rect while the dock is closed: the largest is " +
+             std::to_string(largest / window) + " of the window (" + std::to_string(asked.rects.size()) + " rects)");
+  fixture.ExpectFresh(asked, "an evaluate and the output it printed, the dock closed");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -9662,6 +9719,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAMenuOpeningSwitchingAndClosingRepaintsItsBarItems);
   AddTest(tests, "QaFlowRegression/TheDebugToolbarFollowsItsSessionFromAFrame",
           TestTheDebugToolbarFollowsItsSessionFromAFrame);
+  AddTest(tests, "QaFlowRegression/ADebugSessionsCallbacksRepaintNoWindowWhileTheDockIsClosed",
+          TestADebugSessionsCallbacksRepaintNoWindowWhileTheDockIsClosed);
   AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
           TestARemoteProjectsStageRepaintsItsTabFromAFrame);
   AddTest(tests, "QaFlowRegression/AMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame",

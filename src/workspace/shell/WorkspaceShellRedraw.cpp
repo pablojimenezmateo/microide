@@ -498,17 +498,13 @@ void WorkspaceShell::RequestBottomPanelRedraw() {
 }
 
 void WorkspaceShell::RequestDebugPaneRedraw() {
-  // The debug surfaces (Call Stack / Variables / Watch / Breakpoints) render in the
-  // right-side dock (layout.right_pane), not the bottom panel. DAP callbacks deliver
-  // variable/stack data asynchronously, so each must invalidate the dock it actually
-  // paints into; targeting the bottom panel here would leave the right pane showing a
-  // stale "Loading…" until some unrelated redraw repainted the window.
-  if (const auto layout = CurrentWorkspaceLayout();
-      layout.has_value() && context_.current_project_state.debug_pane.visible) {
-    RequestRedrawRect(layout->right_pane);
-    return;
-  }
-  RequestWindowRedraw();
+  // The debug surfaces (Call Stack / Variables / Watch / Breakpoints) are the
+  // right-side dock, a derived surface (DerivedSurface::DebugPane): a DAP callback
+  // that changed one of its models owes a frame, and frame prep repaints the rows
+  // that changed. This named the dock's rect -- and, with the dock hidden, the
+  // whole window: every stop, step, variables and stack reply of a session
+  // repainted the window while the pane was closed.
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
