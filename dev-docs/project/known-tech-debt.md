@@ -16,6 +16,69 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-23-455 — after a slow stretch, a remote bulk transfer stays at its window floor's rate. [OPEN]
+
+A link that is slow for a while (a congested stretch) drives the bulk window down
+to its floor, 64 KiB, and the transfer then stays at ~1.4 MB/s however fast the
+link becomes: 12.5 MB/s in the reproduction, a ninth of it, for good. The floor
+equals `RemoteFrameTransport::kMaxBulkChunkBytes`, so only one frame is in flight
+there; the bandwidth sample (the gap between two frames' acks) then spans a whole
+round trip and reads window / RTT, and the rule `bw x (base RTT + kQueueAllowance)
+- one chunk` lands below the floor again. An absorbing state, reached by any dip
+of the estimate deep enough, not only by a real slow stretch.
+
+- **Reproduction:** `RemoteFrameTransport/BulkWindowClimbsBackFromItsFloor` (a
+  0.5 MB/s stretch, then the relay at 12.5 MB/s; fails 3 of 3, window 65536,
+  1.4 MB/s) with `DelayRelay::SetBytesPerSecond`: in
+  `build/ec-out/chunk-ab/chunk-32k-and-floor-test.patch` on the dev PC.
+- **Tried, 2026-11-23:** bulk frames of 32 KiB (`kMaxBulkChunkBytes` halved, and
+  `ProcessTable`'s own 64 KiB cut of process output pointed at it), so two frames
+  fit the floor. Sender-side only, no wire change. Under load (40 interleaved
+  pairs): the floor test failed 9 of 40 instead of 40 of 40, and
+  `BulkWindowSettlesAtTheBandwidthDelayProduct` failed 9 of 40 instead of 1 --
+  twice the frames per burst of bunched acks feed TD-2026-11-23-454 twice the
+  samples. Parked.
+- **Rejected:** raising the floor to 128 KiB: twice the bulk queued ahead of a
+  keystroke on a slow link (256 ms instead of 131 ms at 0.5 MB/s).
+- **Needs:** TD-2026-11-23-454 first; then two frames at the floor (the 32 KiB
+  cut) should hold.
+
+### TD-2026-11-23-454 — the bulk bandwidth estimator reads bunched acks as a faster link. [OPEN]
+
+`RemoteFrameTransport::HandleAck` measures bandwidth as the bytes between two acks
+over the time between them, smoothed 1/8. Acks that arrive bunched -- a congested
+return path, a peer or relay that woke late -- come microseconds apart, and a
+window's worth of them reads the link at many times its rate: 1.7x to 1160x on a
+12.5 MB/s link under load, 35-56 GB/s after a 150 ms ack stall. The window then
+jumps to its 1 MiB cap: more bulk in flight than the link holds, queued ahead of
+keystrokes. It is the remaining cause of the loaded-box flake of
+`RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct` (the relay's
+own share was fixed in f74b4266d).
+
+- **Reproduction:** `RemoteFrameTransport/BulkBandwidthIgnoresCompressedAcks`
+  (`DelayRelay::SetClientStalled` holds the acks for 150 ms mid-transfer, then
+  releases them) fails every run: `build/ec-out/bulk-ab/estimator2-full.patch` on the dev PC.
+- **Tried, 2026-11-23**, each A/B'd interleaved under load against the current
+  estimator (`build/ec-out/bulk-ab/NOTES.md`, `ab.txt`, `ab2.txt`):
+  1. A delivery rate over a whole flight (BBR's sample): a window-limited flow
+     then measures window / RTT, and `BulkWindowFillsALongLink` took 24 s, not 4.
+  2. The longer of the ack span and the send span, over at least 4 ms: every
+     late wake of the sender lowered a sample; median bandwidth 79 % of the link
+     against 105 %, throughput 74 % against 90 %.
+  3. The send span only when the acks came more than 2x closer than the sends:
+     compression gone (0 windows over 137 % against 9 of 60), median bandwidth
+     96.7 % against 100.2 %, but one run collapsed to 10 % of the link: with a
+     standing queue at the bottleneck a late sender spreads its sends while the
+     acks stay at link pace, the rule misfires, and the window falls into
+     TD-2026-11-23-455.
+- **Why the sender cannot tell:** from its side, bunched acks and a queue that
+  smooths late sends look alike. The signal is the receiver's own arrival
+  spacing (its receive-side rate), as TCP timestamps and QUIC's ack delay carry.
+- **Needs a decision:** that is a wire change -- an Ack's payload is a strict 8
+  bytes (`ReadFrames` closes on anything else), so an old peer would drop the
+  link. Wants the user's call on the format and on whether client and server
+  always upgrade together.
+
 ### TD-2026-11-19-453 — a data loss found and two findings read to the bottom of their evidence. [OPEN]
 
 Left by the 2026-11-19 bug-hunting pass (commits bbb153be3 onwards). None has a
