@@ -4262,6 +4262,29 @@ void TestEveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer() {
   }
 }
 
+// Soak 8e206b603320: two editor groups, newlines and a tab typed into a file of
+// foldable blocks, and the gutter kept fold marks on lines that no longer opened a
+// block. A row keyed its fold mark from the folding model at the time of its key,
+// which can resolve its ranges after the view model paint draws from was built:
+// the key ran a frame ahead of what was painted, and when the view model caught up
+// nothing moved. Rows key the view model's own marks now; every frame is checked.
+void TestFoldMarksFollowAnEditFrameByFrame() {
+  std::string text;
+  for (int block = 0; block < 12; ++block) {
+    text += "void f" + std::to_string(block) + "() {\n  int a = " + std::to_string(block) + ";\n  a += 1;\n}\n\n";
+  }
+  FlowFixture fixture("blocks.c", text);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "the editor splits");
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "two groups");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(11, 0);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the caret in the third block");
+  for (const char* typed : {"\n", "\n", "\n", "\t", "{", "\n", "}"}) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(typed)}),
+                        std::string("typed ") + (typed[0] == '\n' ? "a newline" : typed));
+  }
+}
+
 // derived-damage 5.4: a still frame damages nothing. In each of the shell's main
 // states, a second prepared frame with nothing changed must name no rect: a unit
 // whose key folds something that drifts frame to frame (a time, an address that
@@ -10169,6 +10192,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
           TestAHoverCardThatSaysSomethingElseRepaints);
   AddTest(tests, "QaFlowRegression/AStillFrameDamagesNothing", TestAStillFrameDamagesNothing);
+  AddTest(tests, "QaFlowRegression/FoldMarksFollowAnEditFrameByFrame", TestFoldMarksFollowAnEditFrameByFrame);
   AddTest(tests, "QaFlowRegression/APromptsChangesRepaintItFromAFrame", TestAPromptsChangesRepaintItFromAFrame);
   AddTest(tests, "QaFlowRegression/EveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer",
           TestEveryButtonOfTheUnsavedChangesPromptLightsUnderThePointer);

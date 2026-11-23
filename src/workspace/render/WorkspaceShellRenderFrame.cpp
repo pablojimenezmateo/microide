@@ -1441,6 +1441,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                               ? frame_state_.bracket_pair
                               : std::nullopt,
           .folds = folds,
+          .fold_marks = paint.view_model.fold_gutter_marks,
           .active_search_match = focused ? ActiveBufferSearchMatch() : std::nullopt,
           .blame = paint.blame,
       };
@@ -1471,6 +1472,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
               .Add(ruler)
               .Add(project_state.diagnostics_store.revision())
               .Add(viewport->visual_line_count())
+              // The lane places every mark by VisualRowForLine, so a fold that moves
+              // rows moves marks with no count changing (EditorOverviewSignature keys
+              // it for the same reason). Here, not in the pane key: an edit moves the
+              // fold model's revision, and the rows must not all repaint for it.
+              .Add(viewport->folding_revision())
               .Add(overview::ThemeMarkerToken(theme_));
           if (focused && find_shown) {
             bar.Add(buffer_search.matches_revision).Add(buffer_search.selected_index).Add(buffer_search.matches.size());

@@ -64,6 +64,8 @@ struct EditorRowKeyInputs {
   std::span<const std::pair<std::size_t, std::uint64_t>> occurrence_lines;
   std::optional<editor::BracketMatchPair> bracket_pair;
   const editor::FoldingModel* folds = nullptr;
+  // The fold marks paint draws, from the pane's view model (sorted by visual row).
+  std::span<const editor::FoldGutterMark> fold_marks;
   std::optional<editor::SelectionRange> active_search_match;
   const editor::EditorBlameOverlay* blame = nullptr;
   // Whatever else a surface draws on a line of this viewport, one (line, hash) per

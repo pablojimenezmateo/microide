@@ -138,6 +138,7 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
   std::uint64_t line_key = 0;
   std::size_t line_key_line = 0;
   bool line_key_valid = false;
+  std::size_t fold_mark = 0;  // into inputs.fold_marks, sorted by visual row
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual = scroll + row;
     if (visual >= visual_count) {
@@ -162,9 +163,15 @@ void AppendEditorRowUnits(const EditorRowKeyInputs& inputs, std::vector<std::uin
     key = Mix(key, line_key);
     // Line numbers right-align to the widest one: a row's gutter text moves when
     // the document gains a digit, which the gutter width (in the pane key) tracks.
-    if (meta.visual_start == 0 && inputs.folds != nullptr) {
-      const bool opens = inputs.folds->FoldStartingAt(meta.line_index).has_value();
-      key = Mix(key, opens ? (inputs.folds->IsCollapsedAtOpener(meta.line_index) ? 3u : 2u) : 1u);
+    // Its fold mark, as the view model paint draws holds it -- not the folding
+    // model now: the model can resolve its ranges between the view model's build
+    // and this key, and a key a frame ahead of what was painted kept the old mark
+    // when the next frame's model caught up with no key moving (soak 8e206b603320).
+    while (fold_mark < inputs.fold_marks.size() && inputs.fold_marks[fold_mark].visual_row_index < visual) {
+      ++fold_mark;
+    }
+    if (fold_mark < inputs.fold_marks.size() && inputs.fold_marks[fold_mark].visual_row_index == visual) {
+      key = Mix(key, inputs.fold_marks[fold_mark].collapsed ? 3u : 2u);
     }
     row_keys.push_back(key);
     rows.push_back(RowRef{.line = meta.line_index, .row = row});
