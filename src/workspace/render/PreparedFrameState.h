@@ -530,6 +530,24 @@ struct PreparedFrameState {
   };
   TerminalGridPaint terminal_grid;
 
+  // ---- the Settings / Help & About card (derived damage) ----
+  // Its view model, built once at prep (PrepareSettingsCardFrame), and what the
+  // frame decided about it: the rows lit under the pointer, the scrollbars being
+  // dragged, the scope chip's tooltip. RenderSettingsOverlay draws only this.
+  struct SettingsCardPaint {
+    SettingsOverlayViewModel vm;  // `!vm.visible`: no card this frame
+    SDL_FRect backdrop{};         // the region it dims
+    int hovered_category = -1;    // index into vm.categories; -1: none
+    int hovered_row = -1;         // index into vm.rows; -1: none
+    bool scrollbar_active = false;
+    bool category_scrollbar_active = false;
+    bool picker_scrollbar_active = false;
+    bool tooltip_visible = false;  // the scope chip's help, over the rows
+    SDL_FRect tooltip_rect{};
+    std::vector<std::string> tooltip_lines;
+  };
+  SettingsCardPaint settings_card;
+
   // ---- the debug pane (derived-damage 3.1, clip-discipline stage 3) ----
   // Its mode tabs, rows, empty hint and scrollbar, laid out at prep
   // (PrepareDebugPaneFrame) from the four surfaces' models; PaintDebugPaneBody

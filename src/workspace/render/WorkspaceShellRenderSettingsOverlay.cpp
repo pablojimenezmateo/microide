@@ -106,11 +106,14 @@ void RenderHelpAboutRows(SDL_Renderer* renderer, const SettingsOverlayViewModel&
 
 }  // namespace
 
-void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
-                                           const WorkspaceLayout& layout) const {
-  const SettingsOverlayViewModel vm =
-      RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
-                                                            text_renderer_);
+// The card as frame prep settled it (PrepareSettingsCardFrame): its view model
+// was built there, once, with the rows the pointer lights and the scrollbars a
+// drag holds -- this draws the snapshot its units were keyed from and reads
+// nothing live. It used to build the view model in every paint and ask the
+// pointer per row.
+void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer) const {
+  const PreparedFrameState::SettingsCardPaint& card = frame_state_.settings_card;
+  const SettingsOverlayViewModel& vm = card.vm;
   if (!vm.visible) {
     return;
   }
@@ -120,7 +123,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   // stayed at full brightness behind them and neither read as modal at all. They
   // sit inside `editor_area` like the five quick-open surfaces, so they dim the
   // same region those do.
-  DrawFilledRect(renderer, layout.overlay_anchor, theme_.overlay_backdrop);
+  DrawFilledRect(renderer, card.backdrop, theme_.overlay_backdrop);
   DrawFilledRect(renderer, vm.rect, theme_.surface_background);
   DrawRect(renderer, vm.rect, theme_.border);
   DrawFilledRect(renderer, vm.header_rect, theme_.chrome_background);
@@ -178,8 +181,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   }
 
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
-    RenderHelpAboutRows(renderer, vm, text_renderer_, theme_,
-                        context_.interaction_state.drag_target == DragTarget::SettingsScrollbar);
+    RenderHelpAboutRows(renderer, vm, text_renderer_, theme_, card.scrollbar_active);
     return;
   }
 
@@ -190,13 +192,14 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                  theme_.border);
   {
     const bool pane_focused = vm.focused_pane == SettingsPane::Categories;
-    for (const SettingsCategoryViewModel& cat : vm.categories) {
+    for (std::size_t index = 0; index < vm.categories.size(); ++index) {
+      const SettingsCategoryViewModel& cat = vm.categories[index];
       if (!SettingsRowShownIn(vm.left_pane_rect, cat.rect)) {
         continue;
       }
       // Hover lifts the row under the pointer, as it does in every other list in
       // the shell. The keyboard selection keeps its stronger fill and focus ring.
-      const bool hovered = !cat.selected && PointerOver(cat.rect);
+      const bool hovered = static_cast<int>(index) == card.hovered_category;
       const SDL_Color background = cat.selected  ? theme_.selection_strong
                                    : hovered     ? theme_.row_highlight
                                                  : theme_.surface_background;
@@ -211,9 +214,8 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                   TruncateLabelView(cat.label, cat.rect.w - 24.0f));
     }
     if (vm.category_scrollbar.has_value()) {
-      DrawScrollbar(
-          renderer, theme_, vm.category_scrollbar->track, vm.category_scrollbar->thumb,
-          context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar);
+      DrawScrollbar(renderer, theme_, vm.category_scrollbar->track, vm.category_scrollbar->thumb,
+                    card.category_scrollbar_active);
     }
   }
 
@@ -241,10 +243,6 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
 
   // --- Right pane: value rows ---
   const bool values_focused = vm.focused_pane == SettingsPane::Values;
-  // Scope-chip hover tooltip, captured during the row loop and drawn last so it
-  // overlays following rows and the scrollbar.
-  std::string_view hovered_scope_help;
-  SDL_FRect hovered_scope_rect{};
   // Clear the whole rows area first so switching to a category with fewer rows (e.g.
   // the single-row "Plugins" pane) does not leave the previous category's text behind.
   DrawFilledRect(renderer, vm.right_pane_rect, theme_.surface_background);
@@ -254,7 +252,8 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                        static_cast<int>(std::floor(vm.right_pane_rect.y)),
                                        static_cast<int>(std::ceil(vm.right_pane_rect.w)),
                                        static_cast<int>(std::ceil(vm.right_pane_rect.h))});
-  for (const SettingsRowViewModel& row : vm.rows) {
+  for (std::size_t row_index = 0; row_index < vm.rows.size(); ++row_index) {
+    const SettingsRowViewModel& row = vm.rows[row_index];
     if (!SettingsRowShownIn(vm.right_pane_rect, row.row_rect)) {
       continue;
     }
@@ -268,7 +267,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
           TruncateLabelView(row.group_subheader, row.row_rect.w - 24.0f));
     }
 
-    const bool hovered = !row.selected && PointerOver(row.row_rect);
+    const bool hovered = static_cast<int>(row_index) == card.hovered_row;
     const SDL_Color background = row.selected ? theme_.selection_strong
                                  : hovered    ? theme_.row_highlight
                                               : theme_.surface_background;
@@ -334,10 +333,6 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       DrawCenteredTextOn(text_renderer_, renderer, row.scope_rect, scope_color,
                          theme_.chrome_background,
                          TruncateLabelView(row.scope_text, row.scope_rect.w - 8.0f));
-      if (!row.scope_help.empty() && PointerOver(row.scope_rect)) {
-        hovered_scope_help = row.scope_help;
-        hovered_scope_rect = row.scope_rect;
-      }
     }
 
     switch (control.kind) {
@@ -398,25 +393,12 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   rows_clip.reset();
 
   if (vm.scrollbar.has_value()) {
-    const bool dragging =
-        context_.interaction_state.drag_target == DragTarget::SettingsScrollbar;
-    DrawScrollbar(renderer, theme_, vm.scrollbar->track, vm.scrollbar->thumb, dragging);
+    DrawScrollbar(renderer, theme_, vm.scrollbar->track, vm.scrollbar->thumb, card.scrollbar_active);
   }
 
-  if (!hovered_scope_help.empty()) {
-    const auto tooltip = BuildWrappedTooltipLayout(text_renderer_, hovered_scope_help,
-                                                   std::max(240.0f, vm.rect.w * 0.45f));
-    // Prefer below the chip; place above when below would overflow the overlay.
-    const float below_y = hovered_scope_rect.y + hovered_scope_rect.h + 6.0f;
-    const float above_y = hovered_scope_rect.y - 6.0f - tooltip.rect.h;
-    const float y = (below_y + tooltip.rect.h <= vm.rect.y + vm.rect.h - 6.0f || above_y < vm.rect.y)
-                        ? below_y
-                        : above_y;
-    const float min_x = vm.rect.x + 6.0f;
-    const float x = std::clamp(hovered_scope_rect.x, min_x,
-                               std::max(min_x, vm.rect.x + vm.rect.w - tooltip.rect.w - 6.0f));
-    DrawWrappedTooltip(text_renderer_, renderer, theme_,
-                       MakeRect(x, y, tooltip.rect.w, tooltip.rect.h), tooltip.lines);
+  // The scope chip's help, drawn after the rows and the scrollbar it lies over.
+  if (card.tooltip_visible) {
+    DrawWrappedTooltip(text_renderer_, renderer, theme_, card.tooltip_rect, card.tooltip_lines);
   }
 
   // Font-picker dropdown (drawn last so it overlays following rows).
@@ -443,7 +425,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     }
     if (picker.scrollbar.has_value()) {
       DrawScrollbar(renderer, theme_, picker.scrollbar->track, picker.scrollbar->thumb,
-                    context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar);
+                    card.picker_scrollbar_active);
     }
   }
 }

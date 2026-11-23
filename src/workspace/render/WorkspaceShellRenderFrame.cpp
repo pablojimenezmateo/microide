@@ -12,6 +12,7 @@
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/MenuPopupPaint.h"
+#include "workspace/render/SettingsCardPaint.h"
 #include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
@@ -2402,6 +2403,28 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       chrome_unit(button.rect, (static_cast<std::uint64_t>(button.id) << 8) | (PointerOver(button.rect) ? 2u : 0u) |
                                    (expanded ? 4u : 0u) | 1u);
     }
+  }
+  // The Settings / Help card: its view model built here, once (every paint of the
+  // card built it), and each thing it shows a unit -- the rows lit as paint lights
+  // them, by PointerOver, so a pointer that leaves a row for a toast over the card
+  // un-lights it with no request (soak 3f2fdebb5bd6).
+  {
+    const DragTarget drag = context_.interaction_state.drag_target;
+    PrepareSettingsCardFrame(
+        frame_state_,
+        SettingsCardInputs{
+            .renderer = renderer,
+            .theme = &theme_,
+            .text_renderer = &text_renderer_,
+            .vm = RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
+                                                                        text_renderer_),
+            .backdrop = layout.overlay_anchor,
+            .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+            .scrollbar_dragged = drag == DragTarget::SettingsScrollbar,
+            .category_scrollbar_dragged = drag == DragTarget::SettingsCategoryScrollbar,
+            .picker_scrollbar_dragged = drag == DragTarget::SettingsPickerScrollbar,
+            .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+        });
   }
   // The element painted hovered and the tooltip card, as this frame paints them.
   // Pointer motion damages its own hover changes; this catches the ones nothing

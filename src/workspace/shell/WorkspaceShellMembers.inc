@@ -1668,7 +1668,7 @@
   void OpenSettingsOverlay();
   void OpenHelpAboutOverlay();
   void CloseSettingsOverlay();
-  void RenderSettingsOverlay(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderSettingsOverlay(SDL_Renderer* renderer) const;
   bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void StepSetting(std::string_view id, bool forward);
   // Inline String-value editing in the Settings overlay.

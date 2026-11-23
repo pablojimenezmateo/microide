@@ -541,6 +541,14 @@ void WorkspaceShell::RequestBottomPanelContentRedraw() {
 }
 
 void WorkspaceShell::RequestOverlayRedraw() {
+  // Settings and Help & About are derived (SettingsCardPaint.h): the card's
+  // chrome, each rail row and each value row is a unit, so a key, a click or a
+  // filter edit owes a frame. They named the card and the region it dims --
+  // every row of it, and the editor under its backdrop, for a hover.
+  if (settings_overlay_service_.Visible()) {
+    RequestPreparedFrame();
+    return;
+  }
   if (const auto rect = CurrentOverlayRedrawRect(); rect.has_value()) {
     RequestRedrawRect(*rect);
     return;
@@ -721,18 +729,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   if (!layout.has_value()) {
     return std::nullopt;
   }
-  // Settings and Help/About share this request path, but they are a different
-  // surface from `overlay`, so the check below missed them and all ~17 of their
-  // navigation/typing call sites fell through to RequestWindowRedraw — every
-  // keystroke in the Settings filter repainted the sidebar, both tab strips and
-  // the terminal. They occupy the overlay anchor (the backdrop they dim) and the
-  // card centred on it -- not `editor_area`, which a maximized panel leaves
-  // empty: every click and key in Settings over a maximized terminal repainted
-  // nothing (QA monkey, seed 2).
-  if (settings_overlay_service_.Visible()) {
-    return UnionOptionalRects(layout->overlay_anchor,
-                              ComputeSettingsOverlaySurfaceRect(layout->overlay_anchor, layout->full));
-  }
+  // (Settings and Help & About are derived, and ask for a frame: RequestOverlayRedraw.)
   if (!context_.current_project_state.overlay.visible) {
     return std::nullopt;
   }

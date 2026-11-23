@@ -211,7 +211,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::SettingsOverlay");
-    RenderSettingsOverlay(renderer, layout);
+    RenderSettingsOverlay(renderer);
   }
 
   {

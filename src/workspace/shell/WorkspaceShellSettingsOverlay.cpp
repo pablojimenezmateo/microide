@@ -860,11 +860,10 @@ void WorkspaceShell::OpenHelpAboutOverlay() {
 }
 
 void WorkspaceShell::CloseSettingsOverlay() {
-  // The region Settings covered (its card and the backdrop it dimmed), taken while
-  // it is still up: after Close, an overlay repaint resolves to whatever overlay is
-  // left -- the find widget -- and the area Settings covered stayed on screen
-  // (found by the QA monkey).
-  const std::optional<SDL_FRect> covered = CurrentOverlayRedrawRect();
+  // The card and the backdrop it dimmed are units (SettingsCardPaint.h): closing
+  // owes a frame, and that frame repaints where they were. (It named the region
+  // they covered, taken before the close, and then whatever overlay was left --
+  // or, with none, the whole window.)
   settings_overlay_service_.Close();
   if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
       context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
@@ -872,10 +871,7 @@ void WorkspaceShell::CloseSettingsOverlay() {
     context_.interaction_state.drag_target = DragTarget::None;
   }
   InvalidateCursorKindFingerprint();
-  if (covered.has_value()) {
-    RequestRedrawRect(*covered);
-  }
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,

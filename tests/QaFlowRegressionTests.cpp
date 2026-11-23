@@ -9730,6 +9730,178 @@ void TestThePanelHeaderPaintsTheTitlesItPrepared() {
   fixture.ExpectFresh(NothingAnnounced(), "the next frame, with the new title");
 }
 
+// The names of the card's elements of `kind` ("settings-category", "setting"),
+// as the control channel lists them, with their rects.
+std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
+  std::vector<std::pair<std::string, SDL_FRect>> found;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const std::string prefix = std::string(kind) + ":";
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string& name = entry["name"].AsString();
+    if (name.starts_with(prefix)) {
+      const auto& r = entry["rect"].AsArray();
+      found.emplace_back(name, SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                                         static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())});
+    }
+  }
+  return found;
+}
+
+// Soak 3f2fdebb5bd6: a row of the Settings rail stayed lit after the pointer left
+// it for a notification toast over the card. The toast takes the motion before
+// the card's handler sees it, so nothing asked for the row; and paint lights a
+// row by PointerOver, which knows the toast covers it. The card is derived: each
+// row is a unit keyed on whether it is lit, decided as paint decides it.
+void TestAPointerLeavingASettingsRowForAToastUnlightsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in its tab");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "settings"), "settings should open the card");
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Warning,
+                               "No completions available");
+  fixture.ExpectFresh(full, "Settings open, a toast at the bottom right");
+  const SDL_FRect toast = TestAccess::NotificationToastRect(fixture.shell, 0);
+  const auto unlit_by_toast = [&](std::string_view kind) {
+    // A row that is not the selected one (the first) and that the toast leaves alone.
+    const auto rows = SettingsCardElements(fixture, kind);
+    Expect(rows.size() >= 2, "the card lists its " + std::string(kind) + " rows: " + std::to_string(rows.size()));
+    for (std::size_t index = 1; index < rows.size(); ++index) {
+      const SDL_FRect& rect = rows[index].second;
+      const SDL_FPoint point{rect.x + 10.0f, rect.y + rect.h * 0.5f};
+      if (workspace::Contains(toast, point.x, point.y)) {
+        continue;
+      }
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(point.x, point.y)}),
+                          "the pointer lit " + rows[index].first);
+      fixture.ExpectFresh(
+          DispatchEvents(fixture.shell, {MouseMotionEvent(toast.x + toast.w - 4.0f, toast.y + toast.h * 0.5f)}),
+          "the pointer left " + rows[index].first + " for the toast");
+      return;
+    }
+    Expect(false, "a " + std::string(kind) + " row the toast leaves uncovered (the case under test)");
+  };
+  unlit_by_toast("settings-category");
+  unlit_by_toast("setting");
+}
+
+// The Settings card is derived: opening it, its keys, its filter, a hover, its
+// values and closing it each owe a frame and name no rect, and the frame repaints
+// what changed -- a lit row is a row's worth of the card, not the card and the
+// region it dims.
+void TestTheSettingsCardRepaintsWhatChangedFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "one\ntwo\n");
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the file in its tab");
+  const auto frame_only = [&](const workspace::RenderInvalidation& asked, const std::string& what) {
+    Expect(asked.frame && !asked.full && asked.rects.empty(),
+           what + " owes a frame and names no rect (full=" + std::to_string(asked.full) +
+               " rects=" + std::to_string(asked.rects.size()) + ")");
+    fixture.ExpectFresh(asked, what);
+  };
+  const auto key = [&](SDL_Keycode code, const std::string& what) {
+    frame_only(DispatchEvents(fixture.shell, {KeyDownEvent(code)}), what);
+  };
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "settings"), "settings should open the card");
+  frame_only(fixture.shell.ConsumePendingRenderInvalidation(), "Settings opening");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::SettingsCard) > 6,
+         "the card lays out its chrome and its rows");
+
+  // The filter: typed, shortened, cleared.
+  for (const char* text : {"t", "a", "b"}) {
+    frame_only(DispatchEvents(fixture.shell, {TextInputEvent(text)}), std::string("the filter typed: ") + text);
+  }
+  key(SDLK_BACKSPACE, "the filter shortened");
+  key(SDLK_BACKSPACE, "the filter shortened again");
+  key(SDLK_BACKSPACE, "the filter cleared");
+  // The keyboard through the panes and down their rows.
+  key(SDLK_TAB, "Tab to the rail");
+  key(SDLK_DOWN, "Down the rail");
+  key(SDLK_DOWN, "Down the rail again");
+  key(SDLK_UP, "Up the rail");
+  key(SDLK_UP, "Up the rail to the first category");
+  key(SDLK_TAB, "Tab to the values");
+  key(SDLK_DOWN, "Down the values");
+  key(SDLK_DOWN, "Down the values again");
+  key(SDLK_UP, "Up the values");
+  {
+    // The selection moving between two rows is those rows' to repaint.
+    const SDL_FRect anchor = TestAccess::CurrentLayout(fixture.shell).overlay_anchor;
+    const float moved = DamagedShareOf(fixture, anchor, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}));
+    Expect(moved > 0.0f && moved < 0.5f,
+           "the selection moving a row repaints its rows, not the card: " + std::to_string(moved));
+  }
+
+  // The pointer along the rail and the values: a row lit is its own to repaint.
+  // (Back on the first category, which has rows to spare.)
+  if (const auto rail_rows = SettingsCardElements(fixture, "settings-category"); !rail_rows.empty()) {
+    fixture.ExpectFresh(fixture.Click(rail_rows.front().second), "a click on the first category");
+  }
+  const SDL_FRect card = TestAccess::CurrentLayout(fixture.shell).overlay_anchor;
+  const auto hover_share = [&](std::string_view kind) {
+    const auto rows = SettingsCardElements(fixture, kind);
+    Expect(rows.size() >= 2, "the card lists its " + std::string(kind) + " rows: " + std::to_string(rows.size()));
+    float worst = 0.0f;
+    for (std::size_t index = 0; index < rows.size() && index < 5; ++index) {
+      const SDL_FRect& rect = rows[index].second;
+      const workspace::RenderInvalidation asked =
+          DispatchEvents(fixture.shell, {MouseMotionEvent(rect.x + 10.0f, rect.y + rect.h * 0.5f)});
+      Expect(!asked.full && asked.rects.empty(), "a hover in the card names no rect: " + rows[index].first);
+      worst = std::max(worst, DamagedShareOf(fixture, card, asked));
+    }
+    for (std::size_t index = 0; index < rows.size() && index < 5; ++index) {
+      const SDL_FRect& rect = rows[index].second;
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(rect.x + 10.0f, rect.y + rect.h * 0.5f)}),
+                          "the pointer onto " + rows[index].first);
+    }
+    return worst;
+  };
+  const float rail = hover_share("settings-category");
+  Expect(rail < 0.2f, "a lit rail row repaints its rows, not the card: " + std::to_string(rail));
+  const float values = hover_share("setting");
+  Expect(values < 0.4f, "a lit value row repaints its rows, not the card: " + std::to_string(values));
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(4.0f, 4.0f)}), "the pointer off the card");
+
+  // A category picked with the pointer, and the wheel over its values.
+  const auto categories = SettingsCardElements(fixture, "settings-category");
+  if (categories.size() >= 3) {
+    fixture.ExpectFresh(fixture.Click(categories[2].second), "a click on a category");
+    fixture.ExpectFresh(fixture.Click(categories[1].second), "a click on another");
+  }
+  const auto settings = SettingsCardElements(fixture, "setting");
+  if (!settings.empty()) {
+    SDL_Event wheel{};
+    wheel.type = SDL_EVENT_MOUSE_WHEEL;
+    wheel.wheel.mouse_x = settings.front().second.x + 20.0f;
+    wheel.wheel.mouse_y = settings.front().second.y + 10.0f;
+    wheel.wheel.y = -1.0f;
+    wheel.wheel.integer_y = -1;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {wheel}), "the wheel down the values");
+    wheel.wheel.y = 1.0f;
+    wheel.wheel.integer_y = 1;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {wheel}), "the wheel back up");
+  }
+  key(SDLK_ESCAPE, "Escape closing Settings");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::SettingsCard) == 0,
+         "the closed card lays out nothing");
+
+  // Help & About: the same card around a list.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "about"), "about should open Help");
+  frame_only(fixture.shell.ConsumePendingRenderInvalidation(), "Help opening");
+  for (const char* text : {"s", "a", "v"}) {
+    frame_only(DispatchEvents(fixture.shell, {TextInputEvent(text)}), std::string("Help filtered: ") + text);
+  }
+  key(SDLK_BACKSPACE, "Help's filter shortened");
+  key(SDLK_DOWN, "Down Help's list");
+  key(SDLK_PAGEDOWN, "a page down Help's list");
+  key(SDLK_ESCAPE, "Escape closing Help");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -10414,6 +10586,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAMenuRowTooNarrowForItsShortcutDrawsInsideItsRow);
   AddTest(tests, "QaFlowRegression/ThePanelHeaderPaintsTheTitlesItPrepared",
           TestThePanelHeaderPaintsTheTitlesItPrepared);
+  AddTest(tests, "QaFlowRegression/APointerLeavingASettingsRowForAToastUnlightsIt",
+          TestAPointerLeavingASettingsRowForAToastUnlightsIt);
+  AddTest(tests, "QaFlowRegression/TheSettingsCardRepaintsWhatChangedFromAFrame",
+          TestTheSettingsCardRepaintsWhatChangedFromAFrame);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);

@@ -59,6 +59,9 @@ enum class DerivedSurface : std::uint8_t {
   MenuSubmenu,
   MenuOverflowPopup,
   ContextMenu,
+  // The Settings / Help & About card (SettingsCardPaint.h): its backdrop, its
+  // chrome, the scope tooltip, the font picker, then a unit per rail and value row.
+  SettingsCard,
   Count,
 };
 
