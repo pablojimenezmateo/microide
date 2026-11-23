@@ -943,7 +943,9 @@ void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
          "updating a virtual document should refresh any open tab backed by that URI");
   const auto redraw = shell.ConsumePendingRenderInvalidation();
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  Expect(AnyRectIntersects(redraw.rects, layout.editor_surface),
+  // The editor's rows are derived units keyed on what they show, so the refreshed
+  // content owes a frame (prep damages the rows that changed).
+  Expect(redraw.frame || AnyRectIntersects(redraw.rects, layout.editor_surface),
          "virtual document updates should redraw the editor surface");
 }
 

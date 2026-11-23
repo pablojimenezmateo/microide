@@ -2578,6 +2578,33 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // monkey, seed 5).
     chrome_unit(hover_rect, 0);
     chrome_unit(tooltip_rect, tooltip_text_hash);
+    // The editor's banner strip (RenderActiveWorkspaceSurface): keyed on what its
+    // message and buttons are built from -- the banner's kind, file and reason. With these and
+    // the panes, the compare and merge surfaces, the find widget, the cards and the
+    // debug toolbar derived, nothing in the editor area needs a rect asked for it.
+    {
+      const EditorBannerState* banner = ActiveEditorBannerForTab(project_state);
+      const EditorGroupRectsLayout banner_rects = ComputeEditorGroupRectsForState(layout);
+      const SDL_FRect strip =
+          banner != nullptr ? ActiveEditorBannerStripRect(project_state, banner_rects) : SDL_FRect{};
+      const bool shown = banner != nullptr && strip.h > 0.0f;
+      // The buttons sit inside the strip and follow its kind; a button lit under
+      // the pointer is the hovered-element unit's (HoveredInteractiveRect).
+      PaintFingerprint key;
+      if (shown) {
+        key.Add(static_cast<int>(banner->kind))
+            .Add(std::string_view(banner->path.native()))
+            .Add(std::string_view(banner->reason))
+            .Add(!ActiveTabIsCompare() && !ActiveTabIsMerge());
+      }
+      chrome_unit(shown ? std::optional<SDL_FRect>(strip) : std::nullopt, key.value());
+    }
+    // A tab dragged over a pane's body: the drop region it tints (RenderChrome).
+    {
+      const TabDragState& drag = context_.interaction_state.tab_drag;
+      chrome_unit(drag.dragging && drag.body_drop() ? std::optional<SDL_FRect>(drag.body_drop_rect) : std::nullopt,
+                  1u);
+    }
     // The overlay card, derived (5.3): RenderOverlaySurface draws its view model
     // and the pointer, so the model is built here -- the same one paint reuses this
     // frame -- and each piece of the card is a unit keyed on what it shows. A

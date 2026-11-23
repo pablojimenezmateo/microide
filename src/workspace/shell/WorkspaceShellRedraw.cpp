@@ -426,13 +426,13 @@ void WorkspaceShell::RequestTabStripRedraw() {
 // The whole editor surface, for what is drawn over the editor panes and is not
 // a derived surface (the change banner, the debug toolbar's buttons, a card's
 // hover). The panes' own content needs no rect: RequestPreparedFrame.
-void WorkspaceShell::RequestEditorSurfaceRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-    RequestRedrawRect(layout->editor_surface);
-    return;
-  }
-  RequestWindowRedraw();
-}
+// Everything the editor area paints is derived: each pane's rows (EditorRowUnits),
+// a compare's and a merge's rows and bars, the find widget and the completion card
+// (DerivedSurface::Overlay), the hover and signature cards, the debug toolbar, the
+// external-change banner and its buttons, the split dividers and a tab drag's drop
+// region (Chrome units). So "the editor area changed" owes a frame, and the frame
+// repaints the parts that did; this named the whole area.
+void WorkspaceShell::RequestEditorSurfaceRedraw() { RequestPreparedFrame(); }
 
 // An edit was applied to the active editable surface (an editor, a diff's
 // working side, a merge result): everything that holds coordinates into its text

@@ -878,6 +878,42 @@ void TestBannerReloadRepaintsTheCleanTab() {
          "Reload should take the disk's text");
 }
 
+// derived-damage 5.3: the editor's banner strip and its buttons are units keyed on
+// what they show, so a banner raised, reworded or hovered repaints with only a
+// frame owed -- no request names the editor area any more.
+void TestABannerRepaintsFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("disk.txt", "one\n");
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  workspace::SetEditorBanner(TestAccess::CurrentProjectState(fixture.shell),
+                             workspace::EditorBannerState::Kind::ExternalChange, fixture.file, "changed on disk");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.ExpectFresh(frame, "a banner raised with no request");
+  const auto reload = fixture.ElementRect("button:banner/Reload");
+  Expect(reload.has_value(), "the banner should name its Reload button");
+  if (!reload) {
+    return;
+  }
+  TestAccess::SetMousePositionForTest(fixture.shell, reload->x + reload->w * 0.5f, reload->y + reload->h * 0.5f);
+  fixture.ExpectFresh(frame, "the pointer resting on Reload");
+  TestAccess::SetMousePositionForTest(fixture.shell, reload->x + reload->w * 0.5f, reload->y + reload->h + 40.0f);
+  fixture.ExpectFresh(frame, "the pointer gone from Reload");
+  // A failed open's banner says why (it shows on a tab whose open failed); the same
+  // banner saying something else repaints.
+  TestAccess::CurrentProjectState(fixture.shell).focused_group().active_tab().editor_state->content =
+      workspace::TabEntry::EditorTabState::Content::Failed;
+  workspace::SetEditorBanner(TestAccess::CurrentProjectState(fixture.shell),
+                             workspace::EditorBannerState::Kind::OpenFailed, fixture.file, "permission denied");
+  fixture.ExpectFresh(frame, "the banner turned into a failed open's");
+  workspace::SetEditorBanner(TestAccess::CurrentProjectState(fixture.shell),
+                             workspace::EditorBannerState::Kind::OpenFailed, fixture.file,
+                             "the file is being written by another process");
+  fixture.ExpectFresh(frame, "the failed open's reason reworded with no request");
+}
+
 // QA monkey (qa-asan, seed 3, step 255): a tab strip's overflow chip ("<6") lit
 // under the pointer at paint time, but the hover probe motion damages by listed
 // only the strip's tabs, so the pointer leaving the chip repainted nothing and an
@@ -10976,6 +11012,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPartialFramesStayFreshAfterFullFramesAtANewSize);
   AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
           TestRepublishedTextStylesAndGutterMarksRepaint);
+  AddTest(tests, "QaFlowRegression/ABannerRepaintsFromAFrame", TestABannerRepaintsFromAFrame);
   AddTest(tests, "QaFlowRegression/ATabActivatedWithNoRequestRepaintsItsStrip",
           TestATabActivatedWithNoRequestRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",

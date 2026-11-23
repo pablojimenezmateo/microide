@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -93,7 +94,8 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
                               SoftwareCanvas& canvas,
                               int width,
                               int height,
-                              const workspace::RenderInvalidation& redraw) {
+                              const workspace::RenderInvalidation& redraw,
+                              std::vector<SDL_FRect>* painted_rects = nullptr) {
   if (redraw.full) {
     shell.Render(canvas.renderer(), width, height);
     return;
@@ -115,6 +117,18 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
   }
   std::vector<SDL_FRect> rects(redraw.rects.begin(), redraw.rects.end());
   rects.insert(rects.end(), prepared.rects.begin(), prepared.rects.end());
+  // MQA_TEST_DUMP: the damage preparing the frame derived, beside the rects the
+  // test's ExpectFresh prints for the request -- which unit repainted what.
+  if (std::getenv("MQA_TEST_DUMP") != nullptr) {
+    for (const SDL_FRect& r : prepared.rects) {
+      std::fprintf(stderr, "derived: rect %.0f,%.0f %.0fx%.0f\n", r.x, r.y, r.w, r.h);
+    }
+  }
+  // `painted_rects` collects what was repainted, derived damage included: a test
+  // asking "did this pane repaint" gets the answer the frame gave, not the request.
+  if (painted_rects != nullptr) {
+    painted_rects->insert(painted_rects->end(), rects.begin(), rects.end());
+  }
   for (const SDL_FRect& rect : rects) {
     const SDL_Rect clip = InflateClipRect(rect, shell.PartialRedrawClipPadding(), width, height);
     if (clip.w <= 0 || clip.h <= 0) {
