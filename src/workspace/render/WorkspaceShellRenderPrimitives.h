@@ -1282,4 +1282,22 @@ inline SDL_FRect PathDragGhostRect(const PathDragState& drag, const render::Text
   return MakeRect(drag.pointer_x + 14.0f, drag.pointer_y + 10.0f, width, height);
 }
 
+// Where the custom title bar draws the window title, `title_width` wide: centred
+// in the menu bar, and only when it fits between the last visible menu and the
+// window buttons (which menus show depends on the bar's width). One answer for
+// prep's unit and for paint (RenderWindowChrome).
+template <typename MenuItems, typename WindowButtons>
+std::optional<SDL_FRect> WindowTitleRect(const SDL_FRect& menu_bar, const MenuItems& menu_items,
+                                         const WindowButtons& window_buttons, float title_width) {
+  const float left_limit = menu_items.empty() ? menu_bar.x + 12.0f
+                                              : menu_items.back().rect.x + menu_items.back().rect.w + 16.0f;
+  const float right_limit =
+      window_buttons.empty() ? menu_bar.x + menu_bar.w - 12.0f : window_buttons.front().rect.x - 16.0f;
+  const float title_x = std::floor(menu_bar.x + (menu_bar.w - title_width) * 0.5f);
+  if (title_x < left_limit || title_x + title_width > right_limit) {
+    return std::nullopt;
+  }
+  return MakeRect(title_x, menu_bar.y, title_width, menu_bar.h);
+}
+
 }  // namespace microide::workspace::detail

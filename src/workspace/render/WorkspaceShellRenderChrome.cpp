@@ -91,20 +91,11 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
   if (CurrentWindowChromeState().custom_enabled) {
     const std::string_view title = frame_state_.window_title;
-    const float title_width = text_renderer_.MeasureWidth(title);
-    const float left_limit =
-        visible_menu_items.empty()
-            ? layout.menu_bar.x + 12.0f
-            : visible_menu_items.back().rect.x + visible_menu_items.back().rect.w + 16.0f;
-    const float right_limit =
-        window_buttons.empty() ? layout.menu_bar.x + layout.menu_bar.w - 12.0f
-                               : window_buttons.front().rect.x - 16.0f;
-    const float title_x =
-        std::floor(layout.menu_bar.x + (layout.menu_bar.w - title_width) * 0.5f);
-    if (title_x >= left_limit && title_x + title_width <= right_limit) {
-      DrawVCenteredTextOn(text_renderer_, renderer,
-                          MakeRect(title_x, layout.menu_bar.y, title_width, layout.menu_bar.h),
-                          0.0f, theme_.chrome_text_secondary, theme_.chrome_background, title);
+    if (const auto title_rect =
+            WindowTitleRect(layout.menu_bar, visible_menu_items, window_buttons, text_renderer_.MeasureWidth(title));
+        title_rect.has_value()) {
+      DrawVCenteredTextOn(text_renderer_, renderer, *title_rect, 0.0f, theme_.chrome_text_secondary,
+                          theme_.chrome_background, title);
     }
   }
 

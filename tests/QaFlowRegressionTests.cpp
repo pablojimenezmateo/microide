@@ -1999,6 +1999,30 @@ void TestClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips() {
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after that");
 }
 
+// QA monkey (layout profile, 1.25): a text field draws no caret in a window
+// without the keyboard focus. The window losing it under a goto-line prompt
+// changed neither the blink's phase nor the caret's rect, and once that event owed
+// a frame, not the window, nothing repainted the field: its caret stayed on.
+void TestThePromptsCaretGoesWhenTheWindowLosesTheFocus() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  TestAccess::OpenPromptSurfaceForTest(fixture.shell, workspace::PromptSurfaceState::Action::GoToLine,
+                                       workspace::PromptSurfaceState::Kind::TextInput, fixture.root, "");
+  fixture.ExpectFresh(full, "the goto-line prompt");
+  Expect(TestAccess::CurrentTextInputSurface(fixture.shell) == workspace::TextInputSurface::PromptInput,
+         "the prompt holds the keyboard");
+  SDL_Event lost{};
+  lost.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {lost}), "the window losing the focus");
+  SDL_Event gained{};
+  gained.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {gained}), "the window taking it back");
+}
+
 // QA tree-drag, tree-dotdot-folder: a tree row dragged over a pane tints the pane
 // (or the half an edge drop carves) and carries a ghost of its name, both drawn
 // by the window chrome's pass and both units of their own. Once the motion owed a
@@ -11391,6 +11415,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
           TestRepublishedTextStylesAndGutterMarksRepaint);
   AddTest(tests, "QaFlowRegression/ABannerRepaintsFromAFrame", TestABannerRepaintsFromAFrame);
+  AddTest(tests, "QaFlowRegression/ThePromptsCaretGoesWhenTheWindowLosesTheFocus",
+          TestThePromptsCaretGoesWhenTheWindowLosesTheFocus);
   AddTest(tests, "QaFlowRegression/ATreeDragsPreviewAndGhostRepaintFromAFrame",
           TestATreeDragsPreviewAndGhostRepaintFromAFrame);
   AddTest(tests, "QaFlowRegression/ATabActivatedWithNoRequestRepaintsItsStrip",

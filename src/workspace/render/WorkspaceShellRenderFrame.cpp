@@ -777,9 +777,20 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         SDL_SetWindowTitle(dialog_window_, frame_state_.window_title.c_str());
       }
     }
-    // The custom title bar draws the title; the bar's items, chevron and window
-    // buttons are units of their own, below.
-    inputs = util::Fnv1aByte(inputs, CurrentWindowChromeState().custom_enabled ? 1u : 0u);
+    // The custom title bar draws the title, where it fits between the menus shown
+    // and the window buttons -- which menus show follows the bar's width, so a
+    // title that fits again (the compact layout's menus collapsing) repaints whole
+    // (QA menu-keyboard at 1.25). The bar's items, chevron and window buttons are
+    // units of their own, below.
+    const bool custom = CurrentWindowChromeState().custom_enabled;
+    inputs = util::Fnv1aByte(inputs, custom ? 1u : 0u);
+    if (custom) {
+      const auto title_rect =
+          WindowTitleRect(layout.menu_bar, ComputeVisibleMenuBarItems(layout.menu_bar),
+                          ComputeVisibleWindowControlButtons(layout.menu_bar),
+                          text_renderer_.MeasureWidth(frame_state_.window_title));
+      inputs = MixRowKey(inputs, title_rect.has_value() ? static_cast<std::uint64_t>(title_rect->x) + 1 : 0);
+    }
     chrome_unit(layout.menu_bar, inputs);
   }
   frame_state_.caret_visible = CaretVisibleNow();
@@ -833,7 +844,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // caret region the last frame painted and the one it paints now. Each such
   // transition used to need its own damage request, and several had none: a menu
   // opened over a focused terminal left its caret on screen (QA redraw verifier).
-  chrome_unit(frame_state_.caret_visible ? CurrentCaretDirtyRect() : std::nullopt, 0);
+  // Keyed on the window's focus too: a text field draws no caret in an unfocused
+  // window (RenderActiveTextInputCaret), so the window losing the focus under a
+  // prompt -- blink phase and rect unchanged -- left the prompt's caret on screen
+  // once that event owed a frame and no longer named the window (QA monkey,
+  // layout profile at 1.25).
+  chrome_unit(frame_state_.caret_visible ? CurrentCaretDirtyRect() : std::nullopt,
+              context_.interaction_state.window_has_input_focus ? 1u : 2u);
   // Each editor pane's metrics and viewport size, and the active pane's inline
   // blame overlay -- here, before anything below (or between frames) resolves a
   // point against the pane. A size change can clamp a pane's scroll, which the
