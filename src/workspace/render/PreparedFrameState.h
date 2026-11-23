@@ -452,6 +452,10 @@ struct PreparedFrameState {
     bool visible = false;
     SDL_FRect header{};
     std::vector<PanelTabPaint> tabs;
+    // The tabs' titles and badges, owned: their views are into this, not into the
+    // strip service's memo, which is rebuilt in place under a prepared frame when
+    // a terminal's title changes (PrepareBottomPanelHeaderFrame). Capacity kept.
+    std::string text;
     std::string_view label;  // what the header says when it has no tabs
     PanelButtonPaint overflow_left;
     PanelButtonPaint overflow_right;
@@ -463,7 +467,8 @@ struct PreparedFrameState {
     SDL_FRect divider{};
     bool divider_active = false;
     // A tab being dragged: the feedback draws over the strip from the visible
-    // tabs (the panel view model's list, alive for the frame).
+    // tabs, copied for the frame (`drag_tabs` is null or points at the copy).
+    std::vector<VisibleStripTab> drag_tabs_storage;
     const std::vector<VisibleStripTab>* drag_tabs = nullptr;
     bool dragging = false;
     std::size_t drag_source = 0;

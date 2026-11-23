@@ -93,6 +93,7 @@ SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
 void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelHeaderInputs& inputs) {
   PreparedFrameState::PanelHeaderPaint& header = frame.panel_header;
   header.tabs.clear();
+  header.text.clear();
   header.visible = false;
   header.drag_tabs = nullptr;
   header.dragging = false;
@@ -127,6 +128,23 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     const bool still = !panel.tab_drag.active && !panel.tab_drag.sliding;
     const std::vector<VisibleStripTab>& tabs =
         panel.tabs != nullptr ? *panel.tabs : TabStripService::EmptyVisibleTabs();
+    // The header owns the text it paints. `tabs` is the strip service's memo,
+    // rebuilt in place by whoever next asks for the tabs once a title has
+    // changed -- and a shell sets its title on its reader thread, so that can be
+    // frame prep's own tooltip probe, after this. A view into the memo then
+    // painted bytes this frame never fingerprinted (soak d47fa58ca7f5), freed
+    // ones for a title past the small-string size. Reserved whole first: the
+    // views below are into `header.text`, which must not grow under them.
+    std::size_t text_size = 0;
+    for (const VisibleStripTab& tab : tabs) {
+      text_size += tab.display_title.size() + tab.badge_text.size() + tab.secondary_title.size();
+    }
+    header.text.reserve(text_size);
+    const auto own = [&header](std::string_view text) {
+      const std::size_t at = header.text.size();
+      header.text.append(text);
+      return std::string_view(header.text).substr(at, text.size());
+    };
     for (const VisibleStripTab& tab : tabs) {
       if (panel.tab_drag.active && tab.index == panel.tab_drag.source_index) {
         continue;  // lifted; drawn as the floating ghost
@@ -141,10 +159,10 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
       const PreparedFrameState::PanelTabPaint& painted = header.tabs.emplace_back(PreparedFrameState::PanelTabPaint{
           .rect = rect,
           .close_rect = close_rect,
-          .title = tab.display_title,
-          .badge_text = tab.badge_text,
+          .title = own(tab.display_title),
+          .badge_text = own(tab.badge_text),
           .badge_color = tab.badge_color,
-          .secondary_title = tab.secondary_title,
+          .secondary_title = own(tab.secondary_title),
           .remote_state = tab.remote_state,
           .show_badge = tab.show_badge,
           .active = tab.active,
@@ -173,7 +191,9 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     header.maximized = inputs.layout->panel_maximized;
     button(header.maximize, inputs.maximize_rect, header.maximized ? 1 : 0);
     if (panel.tab_drag.active) {
-      header.drag_tabs = &tabs;
+      // A copy, for the same reason: the feedback draws the lifted tab from it.
+      header.drag_tabs_storage = tabs;
+      header.drag_tabs = &header.drag_tabs_storage;
       header.dragging = true;
       header.drag_source = panel.tab_drag.source_index;
       header.drag_pointer_x = panel.tab_drag.pointer_x;

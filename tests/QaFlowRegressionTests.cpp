@@ -9688,6 +9688,48 @@ void TestAMenuRowTooNarrowForItsShortcutDrawsInsideItsRow() {
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the diff's menu");
 }
 
+// Soak d47fa58ca7f5 (the remote cell): a frame painted three terminal tabs'
+// titles as garbage, and not as the frame before had. A tab's title in the
+// prepared header was a view into the strip service's memo, and the memo is
+// rebuilt in place by whoever next asks for the tabs once a title has changed --
+// a shell sets its title on its reader thread, and frame prep's own tooltip
+// probe asks after the header is prepared. The paint then read the rewritten
+// bytes (freed ones, for a title past the small-string size) under a
+// fingerprint taken from the old title, so nothing was damaged for it. The
+// header owns the text it paints.
+void TestThePanelHeaderPaintsTheTitlesItPrepared() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("titles.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, 4, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a terminal titled bash");
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  SDL_Surface* painted = SDL_DuplicateSurface(fixture.canvas.surface());
+  Expect(painted != nullptr, "the painted frame should copy");
+
+  // The next frame is prepared; then the title changes and something asks for
+  // the tabs (a control query here, as the tooltip probe does) before it paints.
+  fixture.PinCaret();
+  const auto token = fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TerminalSessionTestAccess::SetLaunchLabel(session, "a title a good deal longer than bash was");
+  (void)TestAccess::ControlUi(fixture.shell);
+  fixture.shell.RenderClip(token, fixture.canvas.renderer(), fixture.width, fixture.height);
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  const render::PixelDiffResult diff = DiffSurfaces(painted, fixture.canvas.surface());
+  SDL_DestroySurface(painted);
+  Expect(diff.identical(), "a frame paints the titles it prepared; " + DescribePixelDiff(diff));
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  // The frame after it shows the new title, from no request at all.
+  fixture.ExpectFresh(NothingAnnounced(), "the next frame, with the new title");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -10370,6 +10412,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheDebugDockOpensAndClosesFromAFrame", TestTheDebugDockOpensAndClosesFromAFrame);
   AddTest(tests, "QaFlowRegression/AMenuRowTooNarrowForItsShortcutDrawsInsideItsRow",
           TestAMenuRowTooNarrowForItsShortcutDrawsInsideItsRow);
+  AddTest(tests, "QaFlowRegression/ThePanelHeaderPaintsTheTitlesItPrepared",
+          TestThePanelHeaderPaintsTheTitlesItPrepared);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);
