@@ -1859,7 +1859,6 @@
                                                            std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
-  std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   static std::optional<editor::AppliedEditLineSpan> ComputeChangedLineSpan(
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);

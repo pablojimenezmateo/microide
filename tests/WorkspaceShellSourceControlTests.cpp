@@ -1,4 +1,6 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
+#include "support/RetainedRedraw.h"
 
 #include "editor/TextBuffer.h"
 #include "project/GitCompareService.h"
@@ -328,6 +330,10 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
   Expect(row_rect.w > 0.0f && row_rect.h > 0.0f,
          "git sidebar selection fixture should expose a clickable row rect");
 
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
   SDL_Event event{};
   event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
   event.button.button = SDL_BUTTON_LEFT;
@@ -335,11 +341,16 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
   event.button.y = row_rect.y + row_rect.h * 0.5f;
   const auto result = shell.HandleEvent(event);
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  // What the frame repaints: the click's request plus what preparing it derives
+  // (the git panel's rows are units, the selection among them).
+  microide::workspace::RenderInvalidation requested = result.redraw;
+  requested.Merge(shell.ConsumePendingRenderInvalidation());
+  const auto damage = FrameDamage(shell, canvas, 1280, 720, requested);
 
   Expect(result.handled, "clicking a git sidebar entry should be handled");
-  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+  Expect(!damage.full && !damage.rects.empty(),
          "opening a git sidebar entry should stay on a partial redraw path");
-  Expect(AnyRectIntersects(result.redraw.rects, layout.sidebar),
+  Expect(AnyRectIntersects(damage.rects, layout.sidebar),
          "opening a git sidebar entry should also invalidate the sidebar selection state");
   Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == std::filesystem::path(entries[1].path).lexically_normal(),
          "clicking a git sidebar entry should open the selected comparison target");

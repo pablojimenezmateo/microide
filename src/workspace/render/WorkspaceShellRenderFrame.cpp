@@ -20,6 +20,8 @@
 #include "workspace/render/HoverCardLimits.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
+#include <cstring>
+#include <type_traits>
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -348,6 +350,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   util::AddPerformanceCounter(util::PerfCounterId::FramePrepareCalls);
+  // Plugin rasters decoded since the last frame become textures here, before any
+  // unit is keyed: the units that draw a surface key on the cache's residency, so
+  // the image replacing its "Rendering…" placeholder repaints, and paint only
+  // looks textures up. (Paint uploaded them, after the units were keyed.)
+  surface_texture_cache_.Upload(renderer);
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ConsumePendingResults");
     ConsumePendingProjectOpenDialogResult();
@@ -550,6 +557,24 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const auto chrome_unit = [&chrome](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
     chrome.push_back({rect.value_or(SDL_FRect{}), key});
   };
+  // The style everything is painted in: the theme's colours, every text
+  // renderer's metrics and the UI scale. A unit over the whole window keyed on
+  // it, so a colorscheme, theme, font or scale change repaints every pixel from
+  // the frame it owes -- no other unit has to fold the style into its key, and no
+  // request site has to remember that a restyle is a whole-window change.
+  {
+    static_assert(std::has_unique_object_representations_v<render::Theme>,
+                  "the theme is hashed by its bytes: no padding, no pointers");
+    std::uint64_t style = MixRowKeyBytes(0x57u, reinterpret_cast<const char*>(&theme_), sizeof theme_);
+    style = MixRowKey(style, text_renderer_.MetricsGeneration());
+    style = MixRowKey(style, editor_text_renderer_.MetricsGeneration());
+    style = MixRowKey(style, terminal_text_renderer_.MetricsGeneration());
+    std::uint32_t scale_bits = 0;
+    const float scale = UiScale();
+    std::memcpy(&scale_bits, &scale, sizeof scale_bits);
+    style = MixRowKey(style, scale_bits);
+    chrome_unit(MakeRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)), style);
+  }
   for (const SDL_FRect& region : {layout.sidebar, layout.bottom_panel, layout.editor_surface, layout.right_pane,
                                   layout.status_bar, layout.tab_strip}) {
     chrome_unit(region, 0);  // a region that appears, vanishes or moves: rect-only
@@ -572,8 +597,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       shows = MixRowKey(MixRowKey(shows, reinterpret_cast<std::uintptr_t>(tab)),
                         tab != nullptr ? tab->layout_revision : 0);
     } else if (panel.content == PanelContentKind::PluginSurface) {
+      // A plugin's surface paints whole (RenderPluginSurfaceInto): keyed on which
+      // surface, what it holds (any publish moves the store's revision), where it
+      // is scrolled, its scrollbar's grab, and the images it draws landing.
       shows = MixRowKeyBytes(MixRowKeyBytes(shows, panel.surface_owner.data(), panel.surface_owner.size()),
                              panel.surface_id.data(), panel.surface_id.size());
+      const auto* presentation = project_state.plugin_presentation_if_present();
+      shows = MixRowKey(shows, presentation != nullptr ? presentation->surfaces.revision() : 0);
+      shows = MixRowKey(shows, static_cast<std::uint64_t>(static_cast<std::int64_t>(panel.surface_scroll_y)));
+      shows = MixRowKey(shows, context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar ? 1u : 0u);
+      shows = MixRowKey(shows, surface_texture_cache_.residency_generation());
     }
     chrome_unit(panel.content != PanelContentKind::None && layout.bottom_panel.h > 0.0f
                     ? std::optional<SDL_FRect>(BottomPanelContentRect(layout))
@@ -1485,6 +1518,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             } else if (const auto* raster = std::get_if<editor::RasterHandle>(&surface.body)) {
               pane_key.Add(raster->content_hash);
             }
+            // An image it draws (a raster, a display list's image op) replaces its
+            // placeholder when its decode lands.
+            pane_key.Add(surface_texture_cache_.residency_generation());
           }
           if (content.ghost_text != nullptr) {
             for (const std::string& line : content.ghost_text->below_lines) {
@@ -2598,6 +2634,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             .Add(!ActiveTabIsCompare() && !ActiveTabIsMerge());
       }
       chrome_unit(shown ? std::optional<SDL_FRect>(strip) : std::nullopt, key.value());
+    }
+    // A tree drag: the drop preview it tints and the ghost riding the pointer
+    // (RenderWindowChrome). The preview's tint is translucent over what is under
+    // it, so its region repaints whole when it moves or goes.
+    {
+      const PathDragState& drag = context_.interaction_state.path_drag;
+      const bool previewing = drag.dragging && drag.target != PathDragState::Target::None;
+      chrome_unit(previewing ? std::optional<SDL_FRect>(drag.drop_rect) : std::nullopt, 1u);
+      chrome_unit(drag.dragging ? std::optional<SDL_FRect>(PathDragGhostRect(drag, text_renderer_)) : std::nullopt,
+                  drag.dragging ? MixRowKeyBytes(1u, drag.label.data(), drag.label.size()) : 0u);
     }
     // A tab dragged over a pane's body: the drop region it tints (RenderChrome).
     {

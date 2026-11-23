@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 
+#include "TestSupportSdl.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 
@@ -4895,7 +4896,9 @@ void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
   // Settle the async git refresh so the retained (rendered twice) and reference
   // (rendered once) shells capture the same deterministic git sidebar state.
   WorkspaceShellTestAccess::SettleGitSidebarRefresh(retained_shell);
-  const auto redraw = retained_shell.ConsumePendingRenderInvalidation();
+  // What the frame repaints: the request plus what preparing it derives.
+  const auto redraw = FrameDamage(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+                                  retained_shell.ConsumePendingRenderInvalidation());
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
   Expect(!redraw.full && !redraw.rects.empty(),
          "switching sidebar modes without geometry changes should stay on partial redraws");
@@ -4956,7 +4959,9 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
 
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(retained_shell, beta),
          "tab redraw regression fixture should open a second file");
-  const auto redraw = retained_shell.ConsumePendingRenderInvalidation();
+  // What the frame repaints: the request plus what preparing it derives.
+  const auto redraw = FrameDamage(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+                                  retained_shell.ConsumePendingRenderInvalidation());
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
   Expect(!redraw.full && !redraw.rects.empty(),
          "opening a file in a new tab should stay on partial redraws");
@@ -5017,7 +5022,8 @@ void TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender()
 
   Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
          "compare-gate redraw fixture should open a second editor tab");
-  const auto redraw = shell.ConsumePendingRenderInvalidation();
+  const auto redraw =
+      FrameDamage(shell, canvas, kCanvasWidth, kCanvasHeight, shell.ConsumePendingRenderInvalidation());
   Expect(!redraw.full && !redraw.rects.empty(),
          "compare-gate redraw fixture should produce a partial redraw");
 
@@ -6142,11 +6148,19 @@ void TestColorschemeChangeRequestsRepaint() {
     });
   };
 
+  // What the frame repaints, not what was asked: the style is a whole-window unit
+  // (PrepareFrameOnce), so the change owes a frame and the frame damages it all.
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(static_cast<int>(kWindowWidth), static_cast<int>(kWindowHeight));
+  shell.Render(canvas.renderer(), static_cast<int>(kWindowWidth), static_cast<int>(kWindowHeight));
+  const auto frame_damage = [&]() {
+    return FrameDamage(shell, canvas, static_cast<int>(kWindowWidth), static_cast<int>(kWindowHeight),
+                       shell.ConsumePendingRenderInvalidation());
+  };
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "colorscheme light"),
          "the colorscheme command should run");
-  Expect(repaints_whole_window(shell.ConsumePendingRenderInvalidation()),
-         "selecting a colorscheme must repaint the whole window");
+  Expect(repaints_whole_window(frame_damage()), "selecting a colorscheme must repaint the whole window");
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") ==
              std::optional<std::string>("light"),
          "the colorscheme command should activate the requested theme");
@@ -6155,8 +6169,7 @@ void TestColorschemeChangeRequestsRepaint() {
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "toggle-theme"),
          "the toggle-theme command should run");
-  Expect(repaints_whole_window(shell.ConsumePendingRenderInvalidation()),
-         "toggling the theme must repaint the whole window");
+  Expect(repaints_whole_window(frame_damage()), "toggling the theme must repaint the whole window");
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") !=
              std::optional<std::string>("light"),
          "toggle-theme should switch away from the light theme");
@@ -6433,7 +6446,7 @@ void TestWorkspaceShellSidebarShowUnderAMaximizedPanelShowsIt() {
 
   (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show src/scheduler.cpp");
   const workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
-  Expect(redraw.full || !redraw.rects.empty(), "showing the sidebar asks for a frame");
+  Expect(redraw.full || redraw.frame || !redraw.rects.empty(), "showing the sidebar asks for a frame");
   shell.Render(canvas.renderer(), 1280, 720);
   const auto& state = WorkspaceShellTestAccess::CurrentProjectState(shell);
   Expect(!state.panel.maximized, "the panel gives the sidebar its room back");
@@ -6547,7 +6560,7 @@ void TestWorkspaceShellSaveUnderAMaximizedPanelClearsTheTitleMark() {
              shell, WorkspaceShellTestAccess::CurrentProjectState(shell).focused_group().active_tab_index),
          "the buffer saves");
   const workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
-  Expect(redraw.full || !redraw.rects.empty(), "the save asks for a frame");
+  Expect(redraw.full || redraw.frame || !redraw.rects.empty(), "the save asks for a frame");
   shell.Render(canvas.renderer(), 1280, 720);
   const std::string after = WorkspaceShellTestAccess::ControlUi(shell)["windowTitle"].AsString();
   Expect(after.starts_with("README.md"), "the saved buffer's title has no unsaved mark: " + after);
@@ -6570,7 +6583,7 @@ void TestWorkspaceShellNewTabUnderAMaximizedPanelRetitlesTheWindow() {
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "a new untitled tab opens");
   const workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
-  Expect(redraw.full || !redraw.rects.empty(), "the activation asks for a frame");
+  Expect(redraw.full || redraw.frame || !redraw.rects.empty(), "the activation asks for a frame");
   shell.Render(canvas.renderer(), 1280, 720);
   const std::string title = WorkspaceShellTestAccess::ControlUi(shell)["windowTitle"].AsString();
   Expect(title.starts_with("Untitled-1"), "the window title names the new tab: " + title);

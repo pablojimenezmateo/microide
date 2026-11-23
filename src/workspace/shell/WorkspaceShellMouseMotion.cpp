@@ -325,59 +325,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // meant every motion event first ran the whole hover pipeline — two tooltip
   // resolutions, two interactive-rect hit tests, the sidebar/status/floating
   // probes — for hover state that a drag cannot change, and then asked for a
-  // FULL-WINDOW repaint. Nothing outside the dragged strip moves, so the damage
-  // is that strip (padded for the ghost's drop shadow).
+  // FULL-WINDOW repaint. What a drag moves is derived: each strip keys on the
+  // drag, its slide and its ghost (the shadow stays inside the strip), the region
+  // a body drop tints is a unit, and so is the tooltip the drag hides. So a
+  // motion the drag handled owes a frame.
   if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
-    // The tab tooltip that was up when the gesture started is hidden for the whole
-    // drag (HoveredTooltip refuses while dragging), so the frame that starts the
-    // drag has to damage where it was or its card is left painted on the strip.
-    const bool was_dragging = context_.interaction_state.tab_drag.dragging;
-    const std::optional<HoverTooltip> tooltip_before =
-        was_dragging ? std::nullopt : HoveredTooltip(layout);
-    // Where the drag-to-split overlay was painted last frame. It is a pane-sized
-    // region rather than a strip, so it has to be damaged from BOTH sides of the
-    // update or the previous highlight stays on screen after the zone changes.
-    const bool body_drop_before = context_.interaction_state.tab_drag.body_drop();
-    const SDL_FRect body_drop_rect_before = context_.interaction_state.tab_drag.body_drop_rect;
     const bool handled = HandleTabMouseMotion(event, layout);
     if (handled) {
-      EnsureRedraw(mark, [this]() {
-        // The ghost paints a 1px-right / 2px-down drop shadow, so its damage runs
-        // a couple of pixels past the strip it belongs to.
-        constexpr float kGhostShadowPaddingPx = 3.0f;
-        const TabDragState& drag = context_.interaction_state.tab_drag;
-        const auto damage_strip = [this](std::size_t group_index) {
-          const auto strip =
-              TabStripRectForKind(context_.interaction_state.tab_drag.kind, group_index);
-          if (!strip.has_value()) {
-            RequestWindowRedraw();
-            return;
-          }
-          RequestRedrawRect(MakeRect(strip->x, strip->y, strip->w + kGhostShadowPaddingPx,
-                                     strip->h + kGhostShadowPaddingPx));
-        };
-        damage_strip(drag.source_group_index);
-        // A drag across a split moves tabs in BOTH strips — the source closes its
-        // gap while the destination opens one — so damaging only the source leaves
-        // the destination's slide painted from the previous frame.
-        if (drag.cross_group()) {
-          damage_strip(drag.target_group_index);
-        }
-      });
-      // Unconditional, not EnsureRedraw-gated: the strip damage above is a
-      // different region, so "something is already queued" says nothing about
-      // whether the overlay's own pane region is covered.
-      if (body_drop_before) {
-        RequestRedrawRect(body_drop_rect_before);
-      }
-      if (context_.interaction_state.tab_drag.body_drop()) {
-        RequestRedrawRect(context_.interaction_state.tab_drag.body_drop_rect);
-      }
-      if (!was_dragging && context_.interaction_state.tab_drag.dragging &&
-          tooltip_before.has_value()) {
-        const SDL_FRect& card = tooltip_before->rect;
-        RequestRedrawRect(MakeRect(card.x - 1.0f, card.y - 1.0f, card.w + 2.0f, card.h + 2.0f));
-      }
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     return handled;
   }

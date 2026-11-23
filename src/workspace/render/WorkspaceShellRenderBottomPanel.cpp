@@ -675,9 +675,6 @@ void WorkspaceShell::RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_F
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
-  // Make any freshly decoded rasters available before we look them up.
-  surface_texture_cache_.Upload(renderer);
-
   constexpr float kPad = kPluginSurfacePreviewPadding;
   if (content == nullptr || !content->has_body()) {
     return;

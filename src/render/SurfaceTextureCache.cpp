@@ -235,6 +235,7 @@ void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
                    static_cast<std::size_t>(decoded.height) * 4;
     lru_.push_front(decoded.hash);
     lru_pos_[decoded.hash] = lru_.begin();
+    ++residency_generation_;
   }
   EvictToBudget();
 }
@@ -299,6 +300,7 @@ void SurfaceTextureCache::EvictToBudget() {
       vram_bytes_ -= static_cast<std::size_t>(it->second.width) *
                      static_cast<std::size_t>(it->second.height) * 4;
       entries_.erase(it);
+      ++residency_generation_;
     }
     // An evicted hash may be re-requested later; drop any stale marker so it can.
     in_flight_or_failed_.erase(victim);
@@ -310,6 +312,9 @@ void SurfaceTextureCache::Clear() {
     if (entry.texture != nullptr) {
       SDL_DestroyTexture(entry.texture);
     }
+  }
+  if (!entries_.empty()) {
+    ++residency_generation_;
   }
   entries_.clear();
   lru_.clear();

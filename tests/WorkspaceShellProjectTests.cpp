@@ -413,8 +413,10 @@ void TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges() {
   Expect(WorkspaceShellTestAccess::TreeEntries(shell).size() > rows_before,
          "the click expanded the directory");
   const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
-  Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
-         "expanding a directory repaints the whole sidebar, cursor change or not");
+  // The tree's rows are derived units: a frame owed repaints the rows the expansion
+  // moved. What must not happen is the cursor change standing in for the request.
+  Expect(result.handled && (result.redraw.full || result.redraw.frame || AnyRectCovers(result.redraw.rects, sidebar)),
+         "expanding a directory repaints the sidebar, cursor change or not");
 }
 
 // A tree row dragged (TD-2026-10-24-386), VS Code's explorer drags: onto a pane's
@@ -2310,7 +2312,7 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
          "ui-scale should execute with a parsed numeric scale");
   Expect(std::fabs(shell.UiScale() - 1.25f) < 0.001f,
          "ui-scale should apply the parsed scale");
-  Expect(ui_scale_submit.redraw.full || !ui_scale_submit.redraw.rects.empty(),
+  Expect(ui_scale_submit.redraw.full || ui_scale_submit.redraw.frame || !ui_scale_submit.redraw.rects.empty(),
          "ui-scale command should request an immediate redraw");
 
   Expect(ExecuteCommand(shell, "soft-tabs on"),
@@ -2679,7 +2681,7 @@ void TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "project should open from welcome state");
   const auto redraw = shell.ConsumePendingRenderInvalidation();
-  Expect(redraw.full || !redraw.rects.empty(),
+  Expect(redraw.full || redraw.frame || !redraw.rects.empty(),
          "opening a project from welcome should invalidate cached layout and request redraw");
 }
 

@@ -3180,10 +3180,14 @@ void TestPartialFramesStayFreshAfterFullFramesAtANewSize() {
   fixture.height = FlowFixture::kHeight;
   fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "a full frame back at the first size");
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "Return after the resize back");
-  // A theme change repaints the whole window: no unit keys the theme, so the frame
-  // it queues is what repaints every colour. Painted as queued, that is pinned too.
+  // A theme change repaints the whole window: the style is a whole-window unit, so
+  // the frame the change owes damages every pixel. Painted as derived, that is
+  // pinned too.
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "toggle-theme"), "the colour theme toggles");
-  const workspace::RenderInvalidation themed = fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.PinCaret();
+  const workspace::RenderInvalidation themed = FrameDamage(fixture.shell, fixture.canvas, fixture.width,
+                                                           fixture.height,
+                                                           fixture.shell.ConsumePendingRenderInvalidation());
   const bool whole_window =
       themed.full || std::any_of(themed.rects.begin(), themed.rects.end(), [&](const SDL_FRect& rect) {
         return rect.x <= 0.0f && rect.y <= 0.0f && rect.x + rect.w >= static_cast<float>(fixture.width) &&

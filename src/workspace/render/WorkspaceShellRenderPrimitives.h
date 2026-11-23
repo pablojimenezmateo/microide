@@ -1273,4 +1273,13 @@ inline void DrawMenuRow(const render::TextRenderer& text_renderer,
   }
 }
 
+// A tree drag's ghost: the dragged name riding beside the pointer. One rect for
+// prep's unit and for paint (RenderWindowChrome).
+inline constexpr float kPathDragGhostPaddingPx = 8.0f;
+inline SDL_FRect PathDragGhostRect(const PathDragState& drag, const render::TextRenderer& text_renderer) {
+  const float height = text_renderer.LineHeight() + 6.0f;
+  const float width = std::min(280.0f, text_renderer.MeasureWidth(drag.label) + 2.0f * kPathDragGhostPaddingPx);
+  return MakeRect(drag.pointer_x + 14.0f, drag.pointer_y + 10.0f, width, height);
+}
+
 }  // namespace microide::workspace::detail

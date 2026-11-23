@@ -108,6 +108,12 @@ class SurfaceTextureCache {
   // still held (uploaded, or taken and awaiting its upload).
   std::optional<RasterSize> DecodedSize(std::uint64_t hash) const;
 
+  // Shell thread. Advances whenever a texture becomes resident or stops being one
+  // (an upload, an eviction, a Clear): what a Lookup answers changed, so whatever
+  // draws a surface -- an image or its "Rendering…" placeholder -- may draw
+  // something else. Frame prep keys the units that draw surfaces on it.
+  std::uint64_t residency_generation() const { return residency_generation_; }
+
   std::size_t cached_count() const { return entries_.size(); }
   std::size_t vram_bytes() const { return vram_bytes_; }
   // Diagnostic: number of retained permanent-failure markers. Bounded by
@@ -183,6 +189,7 @@ class SurfaceTextureCache {
   std::shared_ptr<DecodeSink> sink_;
   std::size_t vram_budget_bytes_;
   std::size_t vram_bytes_ = 0;
+  std::uint64_t residency_generation_ = 0;
 
   // Sizes TakeDecodedSizes handed out whose decode Upload has not consumed yet, so
   // DecodedSize can answer between the two. Erased as Upload takes each decode,

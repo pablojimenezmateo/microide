@@ -1,7 +1,9 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 
 #include "editor/PluginSurfaceStore.h"
 #include "render/SurfaceTextureCache.h"
+#include "support/RetainedRedraw.h"
 #include "support/TinyPng.h"
 #include "util/Waker.h"
 #include "workspace/PluginRasterSize.h"
@@ -302,6 +304,58 @@ void TestDecodedRasterIsLaidOutAtItsOwnSize() {
          "a republish of a decoded image takes its size before reaching the store");
 }
 
+// derived-damage: the panel's body is a unit keyed on what its surface holds, and
+// an image replacing its "Rendering…" placeholder changes neither the surface nor
+// (when the plugin declared the right size) its layout -- only which textures are
+// resident. The decode's wake owes a frame; the body repaints because its key
+// follows the texture cache's residency. A raster that declared its size keyed
+// nothing that moved, and kept its placeholder.
+void TestADecodedRasterReplacesItsPlaceholderFromAFrame() {
+  EnsureDummySdlVideoInitialized();
+  constexpr int kWidth = 900;
+  constexpr int kHeight = 700;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  render::SurfaceTextureCache& cache = WorkspaceShellTestAccess::RasterCache(shell);
+  const Uint32 channel = SDL_RegisterEvents(1);
+  cache.SetWakeChannel(channel);
+  std::atomic<int> wakes{0};
+  util::SetWakePusherForTesting([&wakes, channel](util::WakeChannel pushed) {
+    if (pushed == channel) {
+      wakes.fetch_add(1);
+    }
+    return true;
+  });
+
+  constexpr std::uint64_t kHash = 4712;
+  SurfaceContent content;
+  content.body = RasterHandle{.content_hash = kHash, .width = kTinyPngWidth, .height = kTinyPngHeight};
+  content.intrinsic_width = static_cast<float>(kTinyPngWidth);
+  content.intrinsic_height = static_cast<float>(kTinyPngHeight);
+  ShowPreviewPanel(shell, std::move(content));
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  // The placeholder on screen, then the decode.
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  cache.Request(kHash, render::SurfaceTextureCache::RasterFormat::Png, TinyPng(), kTinyPngWidth,
+                kTinyPngHeight);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (wakes.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  util::SetWakePusherForTesting(nullptr);
+  Expect(wakes.load() == 1, "the decode should wake the loop");
+
+  SDL_Event wake{};
+  wake.type = channel;
+  workspace::RenderInvalidation redraw = shell.HandleEvent(wake).redraw;
+  redraw.Merge(shell.ConsumePendingRenderInvalidation());
+  Expect(redraw.HasAnyRedraw(), "the decode's wake owes a frame");
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw);
+  Expect(diff.identical(), "the decoded image should replace its placeholder; " + DescribePixelDiff(diff));
+}
+
 }  // namespace
 
 void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
@@ -317,6 +371,8 @@ void RegisterPluginSurfacePreviewTests(std::vector<TestCase>& tests) {
           TestHitRegionClickDispatchesCommand);
   AddTest(tests, "PluginSurfacePreview/ScrollbarDragScrollsPreview",
           TestScrollbarDragScrollsPreview);
+  AddTest(tests, "PluginSurfacePreview/ADecodedRasterReplacesItsPlaceholderFromAFrame",
+          TestADecodedRasterReplacesItsPlaceholderFromAFrame);
   AddTest(tests, "PluginSurfacePreview/DecodedRasterIsLaidOutAtItsOwnSize",
           TestDecodedRasterIsLaidOutAtItsOwnSize);
 }

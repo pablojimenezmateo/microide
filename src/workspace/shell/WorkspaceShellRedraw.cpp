@@ -280,11 +280,20 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   QueueEditorHoverRefresh();
 }
 
+// "Anything in the window may have changed." What the window paints is derived --
+// the chrome, the panes, the panels, the sidebar's views, the cards and menus --
+// so that owes a frame, and the frame repaints what did change. A sidebar view
+// that is not derived yet keeps the sidebar's rect. This named the window: every
+// click or wheel no handler damaged repainted all of it.
 void WorkspaceShell::RequestWindowRedraw() {
-  if (const auto window_rect = CurrentWindowRect(); window_rect.has_value()) {
-    RequestRedrawRect(*window_rect);
-  } else {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
     RequestFullRedraw();
+    return;
+  }
+  RequestPreparedFrame();
+  if (context_.current_project_state.sidebar.visible && !SidebarViewIsDerived(ActiveSidebarMode())) {
+    RequestRedrawRect(layout->sidebar);
   }
 }
 
@@ -358,80 +367,22 @@ void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
                                  &WorkspaceLayout::content);
 }
 
-void WorkspaceShell::RequestBreadcrumbRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-    RequestRedrawRect(layout->breadcrumb);
-    return;
-  }
-  RequestWindowRedraw();
-}
+// The tab strips and breadcrumb bands of every pane are Chrome units keyed on what
+// they paint -- each tab shown, its title, dirty mark and badge, the hovered tab,
+// the overflow chevrons, the slide and a drag's ghost -- and the window title the
+// active tab names is the menu bar's. A change to any of them owes a frame; these
+// named the top strip (or each row of strips in a split, or the menu bar under a
+// maximized panel), and a strip they missed kept its old tabs.
+void WorkspaceShell::RequestBreadcrumbRedraw() { RequestPreparedFrame(); }
 
-void WorkspaceShell::RequestTabStripRedraw() {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value()) {
-    RequestWindowRedraw();
-    return;
-  }
-  // Under a maximized panel the editor area -- every strip with it -- has no area,
-  // and a dropped request prepares no frame. But what a strip shows (the active
-  // tab, its dirty mark) is also the window title, composed in frame prep and drawn
-  // in the menu bar, which is on screen: activating a tab or saving one left the
-  // title naming the old tab or still marked unsaved, in the taskbar too (QA
-  // monkey, seeds 61 and 83 at 600 steps). Then the title is the damage.
-  //
-  // The test is the strip's own area, not the editor surface's: a window only a
-  // few rows tall at a large scale (640x480 at 3x, 160 units) leaves the strip
-  // and breadcrumb on screen above an editor surface of no height, and closing
-  // its last tab repainted the title and not the strip (soak ee7ad7b12a7e).
-  const auto has_area = [](const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; };
-  // `layout.tab_strip` is the TOP row's strip only. A pane below the top row
-  // synthesizes its own strip inside the editor area, so dirtying the top band
-  // alone left a lower pane's titles painting stale -- a tab going dirty down
-  // there repainted nothing. Only the split case pays for the tree walk.
-  if (!context_.current_project_state.editor_split.is_split()) {
-    RequestRedrawRect(has_area(layout->tab_strip) ? layout->tab_strip : layout->menu_bar);
-    return;
-  }
-  // One rect per ROW of strips, spanning the gaps between them: the strips of
-  // side-by-side panes stop short of the divider between them, but what a strip
-  // paints does not -- a dragged tab's floating ghost crosses from one pane's
-  // strip into the next, and repainting only the strips left a sliver of it in
-  // the gap after the drop (QA flow wb-editor-groups).
-  util::InlineVector<SDL_FRect, kMaxEditorGroups> rows;
-  for (const EditorGroupRects& group : ComputeEditorGroupRectsForState(*layout).groups) {
-    const SDL_FRect& strip = group.tab_strip;
-    if (!has_area(strip)) {
-      continue;
-    }
-    auto row = std::find_if(rows.begin(), rows.end(), [&](const SDL_FRect& r) {
-      return r.y == strip.y && r.h == strip.h;
-    });
-    if (row == rows.end()) {
-      rows.push_back(strip);
-      continue;
-    }
-    const float left = std::min(row->x, strip.x);
-    const float right = std::max(row->x + row->w, strip.x + strip.w);
-    row->x = left;
-    row->w = right - left;
-  }
-  if (rows.empty()) {
-    RequestRedrawRect(layout->menu_bar);
-  }
-  for (const SDL_FRect& row : rows) {
-    RequestRedrawRect(row);
-  }
-}
+void WorkspaceShell::RequestTabStripRedraw() { RequestPreparedFrame(); }
 
-// The whole editor surface, for what is drawn over the editor panes and is not
-// a derived surface (the change banner, the debug toolbar's buttons, a card's
-// hover). The panes' own content needs no rect: RequestPreparedFrame.
 // Everything the editor area paints is derived: each pane's rows (EditorRowUnits),
 // a compare's and a merge's rows and bars, the find widget and the completion card
 // (DerivedSurface::Overlay), the hover and signature cards, the debug toolbar, the
-// external-change banner and its buttons, the split dividers and a tab drag's drop
-// region (Chrome units). So "the editor area changed" owes a frame, and the frame
-// repaints the parts that did; this named the whole area.
+// banner strip, the split dividers and a tab drag's drop region (Chrome units). So
+// "the editor area changed" owes a frame, and the frame repaints the parts that
+// did; this named the whole area.
 void WorkspaceShell::RequestEditorSurfaceRedraw() { RequestPreparedFrame(); }
 
 // An edit was applied to the active editable surface (an editor, a diff's
@@ -470,14 +421,12 @@ void WorkspaceShell::NoteActiveEditableEdit() {
   (void)debug_service_.ShiftBreakpointsForViewportEdit(*viewport);
 }
 
+// The active tab changed: its strip, its breadcrumb, its pane and the tree's row
+// for its file are all derived, so this owes one frame. (The parameter asked for
+// the sidebar's rect; it is unused and goes with its callers' arguments.)
 void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
-  RequestBreadcrumbRedraw();
-  RequestTabStripRedraw();
-  RequestEditorSurfaceRedraw();
-  // The tree's row for the activated tab's file is a derived unit: selecting it
-  // repaints it with the frame these requests already owe. (The parameter asked
-  // for the sidebar's rect; it is unused and goes with its callers' arguments.)
   (void)include_tree_sidebar;
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
@@ -494,18 +443,11 @@ void WorkspaceShell::RequestBottomPanelRedraw() {
   // header's tabs and buttons, an output channel's rows, the terminal's chrome,
   // each pane's rows (a unit each: PrepareTerminalGridFrame), its find bar, and
   // the body itself when another kind of content or another terminal tab takes
-  // it (the chrome's body unit). So the
-  // change owes a frame. It named the panel's rect -- for every chunk of terminal
+  // it, or a plugin's surface changing (the chrome's body unit). So the change
+  // owes a frame. It named the panel's rect -- for every chunk of terminal
   // output, whichever tab was in front -- and, with the panel closed, the WHOLE
   // WINDOW (as the hidden sidebar's fallback did, TD-2026-10-15-341): nothing of
   // a closed panel is on screen, and the regions it takes or leaves are units.
-  //
-  // One kind of content is not derived yet and keeps its rect: a plugin's surface.
-  if (const auto layout = CurrentWorkspaceLayout();
-      layout.has_value() && context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
-    RequestRedrawRect(layout->bottom_panel);
-    return;
-  }
   RequestPreparedFrame();
 }
 
@@ -530,13 +472,8 @@ void WorkspaceShell::RequestBottomPanelContentRedraw() {
   // its find bar. All of it is derived -- the grid's rows, the find bar, the
   // caret, an output channel's rows -- so it owes a frame. It named the body's
   // rect: every key typed into a terminal repainted all its rows, then the echo
-  // repainted them again. A plugin's surface is not derived and keeps the rect.
-  if (context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
-    if (const auto rect = CurrentBottomPanelContentRedrawRect(); rect.has_value()) {
-      RequestRedrawRect(*rect);
-      return;
-    }
-  }
+  // repainted them again. A plugin's surface is the body's unit, keyed on what
+  // it holds, its scroll and its images.
   RequestPreparedFrame();
 }
 
@@ -708,14 +645,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
       metrics.first_line_y +
           static_cast<float>(clipped_start - visible_start_row) * metrics.line_height,
       pane_rect.w, static_cast<float>(clipped_end - clipped_start) * metrics.line_height));
-}
-
-std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() const {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !BottomPanelVisible()) {
-    return std::nullopt;
-  }
-  return BottomPanelContentRect(*layout);
 }
 
 std::optional<editor::AppliedEditLineSpan> WorkspaceShell::ComputeChangedLineSpan(

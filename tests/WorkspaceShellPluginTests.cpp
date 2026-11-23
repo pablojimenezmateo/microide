@@ -309,7 +309,7 @@ return ide.plugin({
   Expect(updated_counter != updated_items.end(),
          "status item updates should be reflected in the live breadcrumb row");
   const auto redraw = shell.ConsumePendingRenderInvalidation();
-  Expect(redraw.full || !redraw.rects.empty(),
+  Expect(redraw.full || redraw.frame || !redraw.rects.empty(),
          "status updates should request a visible redraw");
   {
     // An item that changes width while hovered, then loses the pointer, leaves no
@@ -342,8 +342,10 @@ return ide.plugin({
     (void)shell.ConsumePendingRenderInvalidation();
   }
   // ...of the item itself: it lives in the breadcrumb row, and the update repainted
-  // the menu bar (QA plugins-ui: the item kept its old text and progress).
-  if (updated_counter != updated_items.end() && !redraw.full) {
+  // the menu bar (QA plugins-ui: the item kept its old text and progress). A frame
+  // owed with no rect is the breadcrumb band's unit, keyed on the items: the
+  // freshness steps above are what show it repaints.
+  if (updated_counter != updated_items.end() && !redraw.full && !redraw.rects.empty()) {
     const SDL_FRect item = updated_counter->rect;
     bool covered = false;
     for (const SDL_FRect& rect : redraw.rects) {
