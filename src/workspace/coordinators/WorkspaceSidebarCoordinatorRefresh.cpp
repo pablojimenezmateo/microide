@@ -195,12 +195,16 @@ void SidebarCoordinator::RefreshGit() {
       operations_.consume_git_refresh_snapshot != nullptr &&
       operations_.consume_git_refresh_snapshot(&snapshot);
   if (!has_snapshot) {
-    if (!state_.sidebar.git.refreshing && state_.sidebar.visible &&
-        ActiveSidebarMode() == SidebarMode::Git &&
-        operations_.request_git_refresh != nullptr) {
-      operations_.request_git_refresh();
+    // Nothing landed: only the git view, which may have just started a refresh,
+    // has anything to show for it. With another view in front this repainted
+    // that view for nothing (QaFlowRegression/
+    // AGitWakeWithProblemsInFrontRepaintsNothingInTheSidebar).
+    if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+      if (!state_.sidebar.git.refreshing && operations_.request_git_refresh != nullptr) {
+        operations_.request_git_refresh();
+      }
+      operations_.request_sidebar_redraw();
     }
-    operations_.request_sidebar_redraw();
     return;
   }
   ApplyGitSnapshotKeepingSelection(std::move(snapshot), previous);

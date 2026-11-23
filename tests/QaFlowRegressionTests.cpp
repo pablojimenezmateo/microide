@@ -8470,6 +8470,34 @@ void TestTheFileTreeFollowsItsScrollAndARefresh() {
   fixture.ExpectFresh(NothingAnnounced(), "a file appeared and the tree refreshed");
 }
 
+// A git wake with no snapshot -- a paced refresh's timer, a compare picker's
+// answer -- changed nothing on screen, and it asked to repaint the whole sidebar
+// whatever the sidebar showed: with Problems in front, every such wake repainted
+// Problems. The other refreshers ask only while their view is on screen.
+void TestAGitWakeWithProblemsInFrontRepaintsNothingInTheSidebar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  TreeFixture fixture(/*files_per_folder=*/0);
+  InitializeGitRepo(fixture.root);
+  CommitAll(fixture.root, "base", "base");
+  WriteFile(fixture.root / "notes.txt", "changed\n");
+  TestAccess::ShowGitSidebar(fixture.shell);
+  Expect(WaitForGitSidebarEntryCount(fixture.shell, 1), "the git view lists the change");
+  TestAccess::ShowProblemsSidebar(fixture.shell);
+  fixture.Paint();
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TestAccess::ConsumeGitSidebarRefresh(fixture.shell);  // nothing pending: a wake with no snapshot
+  const workspace::RenderInvalidation asked = fixture.shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(fixture.shell).sidebar;
+  bool touches = asked.full;
+  for (const SDL_FRect& rect : asked.rects) {
+    SDL_FRect inside{};
+    touches = touches || SDL_GetRectIntersectionFloat(&rect, &sidebar, &inside);
+  }
+  Expect(!touches, "a git wake with Problems in front asks for none of the sidebar");
+}
+
 // The Source Control view's rows, head and scrollbar are derived units
 // (DerivedSurface::GitPanel), so its selection and scroll repaint the rows they
 // change. The Chrome unit over the WHOLE sidebar, keyed on the selection and the
@@ -9736,6 +9764,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheFileTreesRowsRepaintWhatChangedWithNoDamageRequest",
           TestTheFileTreesRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheFileTreeFollowsItsScrollAndARefresh", TestTheFileTreeFollowsItsScrollAndARefresh);
+  AddTest(tests, "QaFlowRegression/AGitWakeWithProblemsInFrontRepaintsNothingInTheSidebar",
+          TestAGitWakeWithProblemsInFrontRepaintsNothingInTheSidebar);
   AddTest(tests, "QaFlowRegression/TheGitViewsSelectionAndScrollRepaintTheirRows",
           TestTheGitViewsSelectionAndScrollRepaintTheirRows);
   AddTest(tests, "QaFlowRegression/APromptCaretBlinkAtScaleThreeLeavesNoColumn",
