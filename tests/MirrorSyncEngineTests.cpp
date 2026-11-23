@@ -873,6 +873,37 @@ void TestMirrorARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind() {
   std::filesystem::permissions(session.host / "unreadable.txt.renamed", std::filesystem::perms::owner_all);
 }
 
+// Soak 0cc274626767: Replace on Host over a file the host cannot read wrote the
+// user's bytes with the old file's mode -- none -- so the host still could not
+// read it and never listed it. The mirror held it as made-here-only, and when the
+// host deleted it the mirror kept it: the two settled apart.
+void TestMirrorReplaceOnHostOfAnUnreadableFileLeavesItReadable() {
+  MirrorSession session;
+  WriteFile(session.host / "unreadable.txt", "host\n");
+  std::filesystem::permissions(session.host / "unreadable.txt", std::filesystem::perms::none);
+  if (::access((session.host / "unreadable.txt").c_str(), R_OK) == 0) {
+    return;  // running as root: nothing is unreadable
+  }
+  session.Connect();
+  session.Sync();
+  WriteFile(session.Tree("unreadable.txt"), "mine\n");
+  session.engine->NotifyLocalWrite("unreadable.txt");
+  session.engine->Flush();
+  Expect(session.engine->status().blocked == 1, "the save is refused: the host cannot read the file");
+  session.engine->ResolveConflict("unreadable.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
+  session.engine->Flush();
+  Expect(::access((session.host / "unreadable.txt").c_str(), R_OK | W_OK) == 0 &&
+             ReadFile(session.host / "unreadable.txt") == "mine\n",
+         "Replace on Host leaves the user's file there, readable");
+  session.Sync();
+  Expect(session.engine->StateOf("unreadable.txt") == remote::MirrorSyncEngine::ContentState::Current,
+         "and the host lists it");
+  std::filesystem::remove(session.host / "unreadable.txt");
+  session.Sync();
+  Expect(!std::filesystem::exists(session.Tree("unreadable.txt")),
+         "the host deleting it deletes it here too");
+}
+
 // Nothing is settled automatically; the user's choice is: keep mine (the one
 // unconditional write) or take the host's.
 void TestMirrorResolvesConflictsTheUsersWay() {
@@ -1827,6 +1858,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorASaveTheHostRefusesIsBlockedNotUnsent);
   AddTest(tests, "MirrorSyncEngine/ARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind",
           TestMirrorARefusedSaveWhoseHostFileIsRenamedAwayIsNotLeftBehind);
+  AddTest(tests, "MirrorSyncEngine/ReplaceOnHostOfAnUnreadableFileLeavesItReadable",
+          TestMirrorReplaceOnHostOfAnUnreadableFileLeavesItReadable);
   AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/ACrashBeforeTheJournalLosesNothing", TestMirrorACrashBeforeTheJournalLosesNothing);

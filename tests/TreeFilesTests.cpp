@@ -89,6 +89,11 @@ void TestTreeFilesARefusedPathIsBlockedAndReplaceTakesALinksPlace() {
         root, "locked.txt", "x", Precondition::Of(util::HashContent("base")), std::nullopt);
     Expect(unreadable.status == FileOpResult::Status::Error && unreadable.blocked,
            "an update of a file the host cannot read is blocked: " + unreadable.error);
+    const FileOpResult over_unreadable =
+        project::remote::WriteTreeFile(root, "locked.txt", "mine", Precondition::Replacing(), std::nullopt);
+    Expect(over_unreadable.ok() && ::access((root / "locked.txt").c_str(), R_OK | W_OK) == 0 &&
+               ReadFile(root / "locked.txt") == "mine",
+           "replace leaves the file it puts there readable: " + over_unreadable.error);
     std::filesystem::permissions(root / "locked.txt", std::filesystem::perms::owner_all);
   }
 }

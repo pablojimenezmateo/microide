@@ -372,6 +372,12 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     if (::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
         S_ISREG(info.st_mode)) {
       final_mode = info.st_mode & 07777;
+      if (expect.kind == Precondition::Kind::Replace) {
+        // What refused the save gives way to the user's file, an unreadable mode
+        // too: kept, the host could not read the file it was just given, never
+        // listed it, and the mirror held it as its own (soak 0cc274626767).
+        final_mode |= S_IRUSR | S_IWUSR;
+      }
     }
   }
   const std::string temp = TempName(parent->name);
