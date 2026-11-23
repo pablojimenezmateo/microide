@@ -1248,8 +1248,16 @@ inline void DrawMenuRow(const render::TextRenderer& text_renderer,
     DrawCheckGlyph(renderer, MakeRect(rect.x + 8.0f, rect.y + 3.0f, 10.0f, rect.h - 6.0f),
                    enabled ? theme.accent : theme.text_disabled);
   }
-  const float accelerator_width =
-      accelerator.empty() ? 0.0f : text_renderer.MeasureWidth(accelerator);
+  float accelerator_width = accelerator.empty() ? 0.0f : text_renderer.MeasureWidth(accelerator);
+  // A popup is as wide as its widest label and shortcut, except when it breaks
+  // into columns in a window too narrow for them: a row squeezed below its
+  // content shows its label and no shortcut. The shortcut is placed from the
+  // row's right edge, so one wider than the row started left of it -- over the
+  // column before, or off the popup (soak 3ff704b0c337, a diff's menu at 3x).
+  if (accelerator_width > 0.0f && rect.w - 42.0f - accelerator_width < text_renderer.MeasureWidth(label)) {
+    accelerator = {};
+    accelerator_width = 0.0f;
+  }
   const float label_width = std::max(0.0f, rect.w - 42.0f - accelerator_width);
   // Ephemeral view: consumed by this call, and the accelerator drawn below is a
   // separate borrowed view that does not touch the truncation scratch. An open menu

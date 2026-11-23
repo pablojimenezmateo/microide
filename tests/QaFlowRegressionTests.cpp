@@ -9647,6 +9647,47 @@ void TestTerminalRowsRepaintAtFractionalScales() {
   }
 }
 
+// Soak 3ff704b0c337 (QA-OVERRUN element=menu-row, zoomed to 3x): a context menu
+// too tall for the window breaks into columns, and when the window is too narrow
+// for them the columns are squeezed below their content's width. A row then drew
+// its shortcut right-aligned from an edge the shortcut was wider than: 41 px to
+// the left of its own row, over the column before it or off the popup. A row too
+// narrow for its label and its shortcut shows its label.
+void TestAMenuRowTooNarrowForItsShortcutDrawsInsideItsRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  // A 1280x720 window zoomed to 3x lays out 427x240.
+  FlowFixture fixture("left.py", "one\ntwo\nthree\n", 427, 240);
+  const std::filesystem::path right = fixture.temp_dir.path() / "right.py";
+  WriteFile(right, "one\n2\nthree\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "compare-files " + fixture.file.string() + " " + right.string()),
+         "compare-files should open a diff");
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a diff in a window at 3x");
+  const auto right_click = [&](float x, float y, const std::string& what) {
+    SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+    SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+    down.button.button = SDL_BUTTON_RIGHT;
+    up.button.button = SDL_BUTTON_RIGHT;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), down}), what);
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {up}), what + ", the button released");
+  };
+  // The diff's menu, where the soak's pointer was: too tall for the window, so in
+  // columns, and the window too narrow for the columns.
+  right_click(365.0f, 117.0f, "a right press opened the diff's menu at 3x");
+  Expect(TestAccess::AnyMenuPopupOpen(fixture.shell), "the diff's menu is open");
+  // Along its rows, so each paints lit as well.
+  const SDL_FRect window = TestAccess::CurrentLayout(fixture.shell).full;
+  for (float y = window.y + 30.0f; y < window.y + window.h; y += 20.0f) {
+    for (float x = window.x + 30.0f; x < window.x + window.w; x += 110.0f) {
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}), "the pointer over the menu at 3x");
+    }
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "Escape closed the diff's menu");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -10327,6 +10368,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalsOutputRepaintsItsPaneNotThePanel",
           TestATerminalsOutputRepaintsItsPaneNotThePanel);
   AddTest(tests, "QaFlowRegression/TheDebugDockOpensAndClosesFromAFrame", TestTheDebugDockOpensAndClosesFromAFrame);
+  AddTest(tests, "QaFlowRegression/AMenuRowTooNarrowForItsShortcutDrawsInsideItsRow",
+          TestAMenuRowTooNarrowForItsShortcutDrawsInsideItsRow);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);
