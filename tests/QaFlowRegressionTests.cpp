@@ -9231,6 +9231,73 @@ void TestTheBottomPanelsBodyRepaintsWhenOtherContentTakesIt() {
   fixture.ExpectFresh(NothingAnnounced(), "the panel opened on its terminal");
 }
 
+// A terminal's output repaints the pane it landed in -- frame prep repaints a pane
+// whose snapshot is new -- and nothing when its tab is not the one on screen.
+// Every update of any session repainted the panel's whole rect, header and all,
+// whatever the panel was showing.
+void TestATerminalsOutputRepaintsItsPaneNotThePanel() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("panel.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term-split"), "term-split should split the terminal");
+  Expect(TestAccess::TerminalPaneCount(fixture.shell) == 2, "the terminal should have two panes");
+  for (std::size_t pane = 0; pane < 2; ++pane) {
+    auto& session = TestAccess::TerminalPaneSession(fixture.shell, pane);
+    TerminalSessionTestAccess::Reset(session, 8, 40);
+    TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  }
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a terminal tab of two panes");
+  const SDL_FRect panel = TestAccess::CurrentLayout(fixture.shell).bottom_panel;
+  // What the session's update repaints of the panel (the canvas is left whole).
+  const auto panel_share = [&](const workspace::RenderInvalidation& asked) {
+    fixture.PinCaret();
+    const workspace::RenderInvalidation damage =
+        FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, asked);
+    float covered = damage.full ? panel.w * panel.h : 0.0f;
+    for (const SDL_FRect& rect : damage.rects) {
+      SDL_FRect inside{};
+      if (SDL_GetRectIntersectionFloat(&rect, &panel, &inside)) {
+        covered += inside.w * inside.h;
+      }
+    }
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    return covered / (panel.w * panel.h);
+  };
+  const auto update = [&]() {
+    TestAccess::ConsumeTerminalSessionUpdates(fixture.shell);  // the wake's handler
+    return fixture.shell.ConsumePendingRenderInvalidation();
+  };
+
+  // Output in one pane of two.
+  TerminalSessionTestAccess::AppendOutput(TestAccess::TerminalPaneSession(fixture.shell, 0), "ls\r\none two three\r\n");
+  fixture.ExpectFresh(update(), "output in the first pane");
+  TerminalSessionTestAccess::AppendOutput(TestAccess::TerminalPaneSession(fixture.shell, 1), "make\r\n");
+  const float one_pane = panel_share(update());
+  Expect(one_pane > 0.0f && one_pane < 0.7f,
+         "output in one pane repaints that pane, not the panel: " + std::to_string(one_pane) + " of it");
+
+  // An update with nothing new on screen (a wake for a session that printed
+  // nothing visible): nothing repaints.
+  const float nothing = panel_share(update());
+  Expect(nothing == 0.0f, "an update that changed nothing repaints nothing: " + std::to_string(nothing));
+
+  // An output channel in front: the terminal's output is not on screen.
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.front", 3);
+  fixture.ExpectFresh(NothingAnnounced(), "an output channel in front");
+  TerminalSessionTestAccess::AppendOutput(TestAccess::TerminalPaneSession(fixture.shell, 0), "behind\r\n");
+  const float behind = panel_share(update());
+  Expect(behind == 0.0f, "a terminal's output behind another content repaints nothing: " + std::to_string(behind));
+  // The terminal in front again shows it.
+  TestAccess::CurrentProjectState(fixture.shell).panel.content = WorkspaceShell::PanelContentKind::Terminal;
+  fixture.ExpectFresh(NothingAnnounced(), "the terminal in front again, with what it printed meanwhile");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -9908,6 +9975,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AClosedBottomPanelAsksForNoWindow", TestAClosedBottomPanelAsksForNoWindow);
   AddTest(tests, "QaFlowRegression/TheBottomPanelsBodyRepaintsWhenOtherContentTakesIt",
           TestTheBottomPanelsBodyRepaintsWhenOtherContentTakesIt);
+  AddTest(tests, "QaFlowRegression/ATerminalsOutputRepaintsItsPaneNotThePanel",
+          TestATerminalsOutputRepaintsItsPaneNotThePanel);
   AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
           TestARemoteProjectsStageRepaintsItsTabFromAFrame);
   AddTest(tests, "QaFlowRegression/AMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame",

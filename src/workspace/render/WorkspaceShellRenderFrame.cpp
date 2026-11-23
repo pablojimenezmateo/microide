@@ -564,8 +564,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       const TerminalTabState* tab = project_state.active_terminal_tab_index < project_state.terminal_tabs.size()
                                         ? project_state.terminal_tabs[project_state.active_terminal_tab_index].get()
                                         : nullptr;
-      shows = MixRowKey(MixRowKey(shows, reinterpret_cast<std::uintptr_t>(tab)),
-                        tab != nullptr ? tab->layout_revision : 0);
+      // (And which pane has the keyboard: the find bar's highlights are that
+      // pane's, and nothing else says they moved.)
+      shows = MixRowKey(MixRowKey(MixRowKey(shows, reinterpret_cast<std::uintptr_t>(tab)),
+                                  tab != nullptr ? tab->layout_revision : 0),
+                        tab != nullptr ? tab->active_pane : 0);
     } else if (panel.content == PanelContentKind::PluginSurface) {
       shows = MixRowKeyBytes(MixRowKeyBytes(shows, panel.surface_owner.data(), panel.surface_owner.size()),
                              panel.surface_id.data(), panel.surface_id.size());

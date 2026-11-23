@@ -645,13 +645,15 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       RequestAutomaticGitSidebarRefresh();
     }
   }
-  if (BottomPanelVisible() != panel_visible_before ||
-      context_.current_project_state.terminal_tabs.size() != tab_count_before) {
-    if (BottomPanelVisible() != panel_visible_before) {
-      NoteLayoutInputsChanged();
-    }
-    RequestWindowRedraw();
-  } else if (panel_visible_before) {
+  // What a session's update changes on screen is derived: a pane's rows (its new
+  // snapshot), a tab's title or badge (the header's units), the panel opening or
+  // closing and the tabs there are (the chrome's regions, the body's unit). A
+  // frame, when the panel was or is shown. (An update repainted the panel's whole
+  // rect, and one that changed the tabs or the panel's visibility the window.)
+  if (BottomPanelVisible() != panel_visible_before) {
+    NoteLayoutInputsChanged();
+  }
+  if (panel_visible_before || BottomPanelVisible()) {
     RequestBottomPanelRedraw();
   } else if (badge_changed) {
     // The panel is hidden, so there is no strip to repaint; the badge shows the

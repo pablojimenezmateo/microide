@@ -490,15 +490,22 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
 }
 
 void WorkspaceShell::RequestBottomPanelRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
+  // "The bottom panel changed." What it shows is derived, whoever changed it: its
+  // header's tabs and buttons, an output channel's rows, the terminal's chrome,
+  // each pane's rows (frame prep repaints a pane whose snapshot is new:
+  // PrepareTerminalPanesForFrame), and the body itself when another kind of
+  // content or another terminal tab takes it (the chrome's body unit). So the
+  // change owes a frame. It named the panel's rect -- for every chunk of terminal
+  // output, whichever tab was in front -- and, with the panel closed, the WHOLE
+  // WINDOW (as the hidden sidebar's fallback did, TD-2026-10-15-341): nothing of
+  // a closed panel is on screen, and the regions it takes or leaves are units.
+  //
+  // One kind of content is not derived yet and keeps its rect: a plugin's surface.
+  if (const auto layout = CurrentWorkspaceLayout();
+      layout.has_value() && context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
     RequestRedrawRect(layout->bottom_panel);
     return;
   }
-  // Hidden, none of the panel is on screen, and what a caller changed that IS on
-  // screen is derived: the regions a panel leaves or takes (the chrome's region
-  // units; the layout follows its inputs by itself), the status bar. A frame.
-  // This was the WHOLE WINDOW, for whatever touched a closed panel -- as the
-  // hidden sidebar's fallback was (TD-2026-10-15-341).
   RequestPreparedFrame();
 }
 
