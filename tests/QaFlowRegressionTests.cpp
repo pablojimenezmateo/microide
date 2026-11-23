@@ -4343,6 +4343,45 @@ void TestTheFindWidgetRepaintsItsFieldsFromAFrame() {
                       "the selection cleared, the caret where it was");
 }
 
+// derived-damage 5.3, the shared sidebar list (Problems, Tests, Outline, plugin
+// items): its rows, placeholder and scrollbar are units (PrepareSidebarListFrame),
+// so the Problems view repaints from a frame when diagnostics land, when the
+// pointer rests on a row and when the selection steps, and a row's change repaints
+// rows, not the sidebar.
+void TestTheProblemsListRepaintsItsRowsFromAFrame() {
+  FlowFixture fixture("notes.txt", "alpha\nbeta\ngamma\ndelta\n");
+  TestAccess::ShowProblemsSidebar(fixture.shell);
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the Problems view, empty");
+  std::vector<editor::Diagnostic> diagnostics;
+  for (std::size_t line = 0; line < 3; ++line) {
+    diagnostics.push_back(editor::Diagnostic{
+        .range = editor::SelectionRange{.start = {.line = line, .column = 0}, .end = {.line = line, .column = 3}},
+        .severity = editor::DiagnosticSeverity::Warning,
+        .message = "warning " + std::to_string(line)});
+  }
+  Expect(TestAccess::SetDiagnosticsForTest(fixture.shell, fixture.file, std::move(diagnostics)), "published");
+  (void)TestAccess::RefreshProblemsSidebar(fixture.shell);
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  fixture.ExpectFresh(frame, "three problems landed with only a frame owed");
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(fixture.shell).sidebar;
+  const SDL_FRect row = TestAccess::ProblemsSidebarRowRect(fixture.shell, 2);
+  TestAccess::SetMousePositionForTest(fixture.shell, row.x + row.w * 0.5f, row.y + row.h * 0.5f);
+  const workspace::RenderInvalidation hover =
+      FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, frame);
+  float area = 0.0f;
+  for (const SDL_FRect& rect : hover.rects) {
+    SDL_FRect overlap{};
+    if (SDL_GetRectIntersectionFloat(&rect, &sidebar, &overlap)) {
+      area += overlap.w * overlap.h;
+    }
+  }
+  Expect(!hover.full && area < sidebar.w * sidebar.h * 0.2f, "a row under the pointer repaints rows, not the sidebar");
+  fixture.ExpectFresh(hover, "the pointer resting on the third problem");
+  TestAccess::SetFocusSidebar(fixture.shell);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "the selection stepped down");
+}
+
 // derived-damage 5.4: a still frame damages nothing. In each of the shell's main
 // states, a second prepared frame with nothing changed must name no rect: a unit
 // whose key folds something that drifts frame to frame (a time, an address that
@@ -8756,6 +8795,21 @@ void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
       case SidebarMode::Git:
         TestAccess::ShowGitSidebar(fixture.shell);
         break;
+      case SidebarMode::Problems:
+        TestAccess::ShowProblemsSidebar(fixture.shell);
+        break;
+      case SidebarMode::Tests:
+        TestAccess::ShowTestsSidebar(fixture.shell);
+        break;
+      case SidebarMode::Outline:
+        Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-show outline"), "the outline view shows");
+        break;
+      case SidebarMode::Plugin:
+        // A plugin's item view needs a loaded plugin; it is drawn by the same list
+        // surface as Outline, which is shown above, so check it names that one.
+        Expect(workspace::SidebarViewSurface(mode) == workspace::SidebarViewSurface(SidebarMode::Outline),
+               "a plugin item view is the shared list's");
+        continue;
       default:
         Expect(false, "SidebarViewIsDerived names a view this test cannot show: teach it how");
         continue;
@@ -10927,6 +10981,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
           TestAHoverCardThatSaysSomethingElseRepaints);
   AddTest(tests, "QaFlowRegression/AStillFrameDamagesNothing", TestAStillFrameDamagesNothing);
+  AddTest(tests, "QaFlowRegression/TheProblemsListRepaintsItsRowsFromAFrame",
+          TestTheProblemsListRepaintsItsRowsFromAFrame);
   AddTest(tests, "QaFlowRegression/TheFindWidgetRepaintsItsFieldsFromAFrame", TestTheFindWidgetRepaintsItsFieldsFromAFrame);
   AddTest(tests, "QaFlowRegression/TheCommandPaletteRepaintsWhatChangedFromAFrame",
           TestTheCommandPaletteRepaintsWhatChangedFromAFrame);

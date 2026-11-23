@@ -3,6 +3,7 @@
 #include "workspace/OpenDocumentWatch.h"
 #include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/BottomPanelOutputPaint.h"
+#include "workspace/render/SidebarListPaint.h"
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
 #include "workspace/render/BottomPanelTerminalGridPaint.h"
 #include "workspace/render/NotificationToastPaint.h"
@@ -2419,6 +2420,65 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
     PrepareTreeSidebarFrame(frame_state_, inputs);
+  }
+  // The shared two-column list (Problems, Tests, Outline, plugin items), the same
+  // way: its placeholder, scrollbar and each visible row are units, the row's hover
+  // decided here, so a republish, a run's status or a resting pointer repaints the
+  // rows it changed and nothing asks the sidebar for its rect.
+  {
+    const SidebarMode mode = sidebar_vm.mode;
+    const bool list_visible = sidebar_vm.visible && SidebarViewUsesTheList(mode);
+    ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+    const auto& problems = project_state.sidebar.problems;
+    const auto& tests = project_state.sidebar.tests;
+    const auto& plugin = project_state.sidebar.plugin;
+    SidebarListInputs inputs{
+        .renderer = renderer,
+        .visible = list_visible,
+        .sidebar = layout.sidebar,
+        .theme = &theme_,
+        .text_renderer = &text_renderer_,
+        .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    if (list_visible) {
+      if (mode == SidebarMode::Problems) {
+        inputs.row_count = problems.entries.size();
+        inputs.selected_index = problems.selected_index;
+        inputs.list = ComputeProblemsSidebarListLayout(layout.sidebar, inputs.row_count);
+        inputs.row_at = [&problems](std::size_t i) {
+          return SidebarListRow{problems.entries[i].primary_label, problems.entries[i].detail_label};
+        };
+        if (problems.entries.empty()) {
+          inputs.placeholder = "No problems detected in this project.";
+        }
+      } else if (mode == SidebarMode::Tests) {
+        inputs.row_count = tests.entries.size();
+        inputs.selected_index = tests.selected_index;
+        inputs.list = ComputeTestsSidebarListLayout(layout.sidebar, inputs.row_count);
+        inputs.row_at = [&tests](std::size_t i) {
+          return SidebarListRow{tests.entries[i].label, tests.entries[i].detail_label};
+        };
+        if (!tests.error.empty()) {
+          inputs.placeholder = tests.error;
+          inputs.placeholder_is_error = true;
+        } else if (tests.entries.empty()) {
+          inputs.placeholder = tests.running ? "Discovering tests\xE2\x80\xA6" : "No tests discovered \xE2\x80\x94 run Discover Tests.";
+        }
+      } else {
+        inputs.row_count = plugin.items.size();
+        inputs.selected_index = plugin.selected_index;
+        inputs.list = ComputePluginSidebarListLayout(layout.sidebar, inputs.row_count);
+        inputs.row_at = [&plugin](std::size_t i) {
+          const auto& item = plugin.items[i];
+          return SidebarListRow{item.label, item.detail, item.depth, item.collapsible, item.collapsed};
+        };
+        inputs.placeholder = plugin.placeholder;
+        inputs.placeholder_is_error = plugin.placeholder_is_error;
+      }
+      inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::SidebarScrollbar;
+    }
+    PrepareSidebarListFrame(frame_state_, inputs);
   }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's

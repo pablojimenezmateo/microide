@@ -46,6 +46,8 @@ enum class DerivedSurface : std::uint8_t {
   GitPanel,
   // The sidebar's file tree: its header buttons, visible rows and scrollbar.
   SidebarTree,
+  // The sidebar's shared two-column list: Problems, Tests, Outline, plugin items.
+  SidebarList,
   // The sidebar's mode tab row, shared by every sidebar view.
   SidebarModeRow,
   // The window's chrome a frame decides as a whole: its regions, the caret, the

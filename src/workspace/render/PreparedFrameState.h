@@ -608,6 +608,34 @@ struct PreparedFrameState {
     std::optional<PanelScrollbarPaint> scrollbar;
   };
   TreeSidebarPaint tree_sidebar;
+  // ---- the sidebar's shared two-column list (derived-damage 5.3) ----
+  // Problems, Tests, Outline and the plugin item views: laid out by
+  // PrepareSidebarListFrame; PaintSidebarList draws only this. The visible rows'
+  // labels and the placeholder are copied into `text` (capacity kept).
+  struct SidebarListRowPaint {
+    SDL_FRect rect{};
+    float label_x = 0.0f;
+    float tree_x = 0.0f;
+    bool chevron = false;
+    bool collapsed = false;
+    bool selected = false;
+    bool emphasized = false;  // selected or under the pointer
+    std::size_t primary_at = 0;
+    std::size_t primary_length = 0;
+    std::size_t secondary_at = 0;
+    std::size_t secondary_length = 0;
+  };
+  struct SidebarListPaint {
+    bool visible = false;
+    std::vector<SidebarListRowPaint> rows;
+    std::string text;
+    SDL_FRect placeholder_box{};
+    std::size_t placeholder_at = 0;
+    std::size_t placeholder_length = 0;
+    bool placeholder_is_error = false;
+    std::optional<PanelScrollbarPaint> scrollbar;
+  };
+  SidebarListPaint sidebar_list;
   // ---- the Source Control panel's head (derived-damage 4.1, clip-discipline 4.1) ----
   // Laid out by PrepareGitPanelFrame; PaintGitPanel draws only this.
   struct GitPanelPaint {

@@ -14,6 +14,7 @@
 #include "workspace/git/CommitWorkflowState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/render/GitSidebarPaint.h"
+#include "workspace/render/SidebarListPaint.h"
 #include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/SettingFlags.h"
@@ -34,8 +35,6 @@ constexpr float kSidebarInset = 10.0f;
 static_assert(kSidebarInset == kCommitWorkflowFieldInset,
               "PrepareCommitBodyViewportForFrame sizes the commit body field with "
               "kCommitWorkflowFieldInset; keep it equal to the sidebar inset");
-constexpr float kTreeIndentWidth = kWorkspaceSidebarTreeIndentWidth;
-constexpr float kTreeChevronSlotWidth = kWorkspaceSidebarTreeChevronSlotWidth;
 
 // Reuse a thread-local scratch so the per-result label assembly is allocation-bounded by max label
 // width, not by `results × frames`. The render path only inspects the returned view immediately
@@ -64,13 +63,6 @@ std::string_view BuildProjectSearchResultLabel(std::size_t line,
   label += "  ";
   label += snippet;
   return label;
-}
-
-// An empty list's note: under the list's first row, down to the list's bottom.
-SDL_FRect SidebarPlaceholderBox(const SDL_FRect& sidebar, const ScrollableListLayout& list) {
-  const float top = list.row_y + 4.0f;
-  return MakeRect(sidebar.x + kSidebarInset, top, sidebar.w - kSidebarInset * 2.0f,
-                  std::max(0.0f, list.list_rect.y + list.list_rect.h - top));
 }
 
 }  // namespace
@@ -276,123 +268,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     // banners, the open commit draft, and the list's rows and scrollbar -- as frame
     // prep laid it out (PrepareGitPanelFrame), each element in its own PaintElement.
     PaintGitPanel(renderer, frame_state_, theme_, text_renderer_);
-  } else if (UsesPluginItemSurface(sidebar_mode) || sidebar_mode == SidebarMode::Problems || sidebar_mode == SidebarMode::Tests) {
-    // One two-column list surface for every secondary sidebar view. Outline already
-    // reused the plugin item surface; Problems and Tests did not, and because this
-    // dispatch ends in an unguarded `else` that paints the file tree, both of them
-    // painted the tree's rows under their own header while their hit-testing,
-    // keyboard and context menus acted on the entry list nobody could see. Clicking
-    // what looked like a file in Problems jumped to a diagnostic.
-    const auto& problems = project_state.sidebar.problems;
-    const auto& tests = project_state.sidebar.tests;
-    const auto& plugin = project_state.sidebar.plugin;
-
-    // Row source per view: same geometry, same painting, three different lists.
-    struct SecondaryRow {
-      std::string_view primary;
-      std::string_view secondary;
-      int depth = 0;
-      bool collapsible = false;
-      bool collapsed = false;
-    };
-    const std::size_t row_count = sidebar_mode == SidebarMode::Problems ? problems.entries.size()
-                                  : sidebar_mode == SidebarMode::Tests  ? tests.entries.size()
-                                                                        : plugin.items.size();
-    const std::size_t selected_index = sidebar_mode == SidebarMode::Problems
-                                           ? problems.selected_index
-                                       : sidebar_mode == SidebarMode::Tests ? tests.selected_index
-                                                                            : plugin.selected_index;
-    const auto row_at = [&](std::size_t index) -> SecondaryRow {
-      if (sidebar_mode == SidebarMode::Problems) {
-        const auto& entry = problems.entries[index];
-        return SecondaryRow{entry.primary_label, entry.detail_label};
-      }
-      if (sidebar_mode == SidebarMode::Tests) {
-        const auto& entry = tests.entries[index];
-        return SecondaryRow{entry.label, entry.detail_label};
-      }
-      const auto& item = plugin.items[index];
-      return SecondaryRow{item.label, item.detail, item.depth, item.collapsible, item.collapsed};
-    };
-
-    // Every one of these views is laid out from the same origin; each keeps its own
-    // accessor so render and hit-test literally call the same function per view.
-    const auto list_layout = sidebar_mode == SidebarMode::Problems
-                                 ? ComputeProblemsSidebarListLayout(layout.sidebar, row_count)
-                             : sidebar_mode == SidebarMode::Tests
-                                 ? ComputeTestsSidebarListLayout(layout.sidebar, row_count)
-                                 : ComputePluginSidebarListLayout(layout.sidebar, row_count);
-    const int scroll_row = list_layout.scroll_row;
-
-    for (int row = 0; row < list_layout.visible_rows; ++row) {
-      const int item_index = scroll_row + row;
-      if (item_index >= static_cast<int>(row_count)) {
-        break;
-      }
-
-      const SecondaryRow item = row_at(static_cast<std::size_t>(item_index));
-      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
-      const bool selected = static_cast<std::size_t>(item_index) == selected_index;
-      const bool emphasized = selected || PointerOver(row_rect);
-      const SDL_Color row_background =
-          emphasized ? theme_.row_highlight : theme_.surface_background;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, emphasized,
-                                  selected);
-
-      const SDL_Color primary_color = emphasized ? theme_.text_primary : theme_.text_secondary;
-      const SDL_Color secondary_color = emphasized ? theme_.text_secondary : theme_.text_muted;
-
-      // Tree rows: host-drawn indentation by depth plus a disclosure twisty on
-      // collapsible rows. Flat sidebars (depth 0, not collapsible) keep the
-      // original left inset so their layout is unchanged.
-      const bool tree_row = item.depth > 0 || item.collapsible;
-      float label_x = row_rect.x + 6.0f;
-      if (tree_row) {
-        const float depth_offset = static_cast<float>(item.depth) * kTreeIndentWidth;
-        const float tree_x = row_rect.x + 6.0f + depth_offset;
-        label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
-        if (item.collapsible) {
-          DrawChevron(renderer, tree_x, row_rect.y + row_rect.h * 0.5f, !item.collapsed,
-                      theme_.text_muted);
-        }
-      }
-      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, label_x,
-                                  row_rect.x + row_rect.w - 6.0f, primary_color, secondary_color,
-                                  row_background, item.primary, item.secondary, 0.62f);
-    }
-
-    // Empty state. Plugin/Outline placeholder text is prebuilt on refresh
-    // (SidebarCoordinator::RecomputePluginSidebarPlaceholder); Problems and Tests use
-    // static literals that say what would put a row here, matching the debug pane's
-    // hints ("No breakpoints — click the editor gutter to add one."). Either way the
-    // render path never materializes a string.
-    std::string_view placeholder;
-    bool placeholder_is_error = false;
-    if (sidebar_mode == SidebarMode::Problems) {
-      if (problems.entries.empty()) {
-        placeholder = "No problems detected in this project.";
-      }
-    } else if (sidebar_mode == SidebarMode::Tests) {
-      if (!tests.error.empty()) {
-        placeholder = tests.error;
-        placeholder_is_error = true;
-      } else if (tests.entries.empty()) {
-        placeholder = tests.running ? "Discovering tests\xE2\x80\xA6"
-                                    : "No tests discovered — run Discover Tests.";
-      }
-    } else {
-      placeholder = plugin.placeholder;
-      placeholder_is_error = plugin.placeholder_is_error;
-    }
-    if (!placeholder.empty()) {
-      DrawWrappedPlaceholderIn(text_renderer_, renderer, SidebarPlaceholderBox(layout.sidebar, list_layout),
-                               placeholder_is_error ? theme_.diff_deleted : theme_.text_muted,
-                             theme_.surface_background, placeholder);
-    }
-
-    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(row_count),
-                            list_layout.visible_units, static_cast<float>(scroll_row),
-                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
+  } else if (SidebarViewUsesTheList(sidebar_mode)) {
+    // One two-column list surface for every secondary sidebar view (Problems,
+    // Tests, Outline, plugin items), as frame prep laid it out
+    // (PrepareSidebarListFrame), each element in its own PaintElement.
+    PaintSidebarList(renderer, frame_state_, theme_, text_renderer_);
   } else {
     // The file tree -- its Collapse and Refresh buttons, its rows and its scrollbar
     // -- as frame prep laid it out (PrepareTreeSidebarFrame), each element in its

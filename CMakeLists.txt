@@ -860,6 +860,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/debug/DebugPaneLayout.cpp
   src/workspace/render/DebugPaneRender.cpp
   src/workspace/render/GitSidebarPaint.cpp
+  src/workspace/render/SidebarListPaint.cpp
   src/workspace/render/TreeSidebarPaint.cpp
   src/workspace/render/SidebarModeRowPaint.cpp
   src/workspace/render/MenuPopupPaint.cpp
