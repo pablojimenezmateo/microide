@@ -831,26 +831,9 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
     }
     pane->frame_selection = selection;
     pane->frame_selection_live = context_.current_project_state.surface.focus == FocusTarget::Panel;
-    // The caret this frame paints against the one on screen: a cursor that hid or
-    // moved without its rows changing (DECTCEM, a bare cursor move) left the old
-    // caret painted in a pane nothing else repainted (QA monkey, seed 1).
-    const std::optional<SDL_FRect> caret = TerminalCaretRectIn(pane_layout, pane->frame_cursor);
-    const auto same_rect = [](const std::optional<SDL_FRect>& a, const std::optional<SDL_FRect>& b) {
-      return a.has_value() == b.has_value() &&
-             (!a.has_value() || (a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h));
-    };
-    if (!same_rect(caret, pane->painted_caret_rect) ||
-        pane->frame_cursor.shape != pane->painted_caret_shape ||
-        pane->frame_cursor.blinking != pane->painted_caret_blinking) {
-      for (const std::optional<SDL_FRect>& rect : {pane->painted_caret_rect, caret}) {
-        if (rect.has_value()) {
-          RequestRedrawRect(*rect);
-        }
-      }
-      pane->painted_caret_rect = caret;
-      pane->painted_caret_shape = pane->frame_cursor.shape;
-      pane->painted_caret_blinking = pane->frame_cursor.blinking;
-    }
+    // (The caret is a unit of the pane's grid, laid out from `frame_cursor` with the
+    // rows: a cursor that hid or moved without a row changing -- DECTCEM, a bare
+    // cursor move -- repaints where it was and is: PrepareTerminalGridFrame.)
   }
 }
 

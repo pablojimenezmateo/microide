@@ -64,8 +64,21 @@ struct TerminalGridRowPaint {
   std::size_t link_begin = 0;  // the hovered link's columns on this row; none when equal
   std::size_t link_end = 0;
 };
+// A pane's caret as the frame paints it: nothing (hidden, off screen, or the
+// blink's off phase), a steady outline (the pane does not own the keyboard) or
+// solid in the program's shape, a block with the glyph under it drawn in the
+// cell's background.
+struct TerminalCaretPaint {
+  enum class Style : std::uint8_t { None, Outline, Solid };
+  Style style = Style::None;
+  terminal::TerminalCursorShape shape = terminal::TerminalCursorShape::Block;
+  SDL_FRect cell{};    // the cell (two for a wide glyph), lifted a pixel as its row's fills are
+  SDL_FRect bounds{};  // the cell and the glyph's line box under it: its unit and paint element
+  const terminal::TerminalCell* glyph = nullptr;  // in the pane's snapshot; null: none drawn
+};
 struct TerminalGridPanePaint {
   SDL_FRect body{};
+  TerminalCaretPaint caret;
   float text_x = 0.0f;
   float text_width = 0.0f;
   float line_height = 0.0f;

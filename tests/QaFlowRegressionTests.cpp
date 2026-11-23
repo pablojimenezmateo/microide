@@ -10187,6 +10187,60 @@ void TestTheSearchPanelPaintsTheResultsItPrepared() {
   Expect(!shown.identical(), "and that frame does show them");
 }
 
+// A terminal pane's caret is a unit of its grid: where it is, its DECSCUSR shape
+// and whether it is drawn solid, as a steady outline (the pane does not own the
+// keyboard) or not at all. A cursor that moves, hides or changes shape with no
+// row changing repaints where it was and where it is, from the frame its wake
+// owes -- it used to be compared by hand against what each pane last painted.
+void TestATerminalCaretRepaintsWhereItWasAndIs() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (const std::string scale : {"1", "1.25"}) {
+    FlowFixture fixture("caret.txt", "text\n", 1600, 1000);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting ui.scale " + scale),
+           "set-setting ui.scale should run");
+    auto& session = TerminalShowing(fixture, 4, "first row of text\r\n\xE6\x97\xA5\xE6\x9C\xAC wide glyphs\r\nprompt$ ");
+    TestAccess::SetFocusPanel(fixture.shell);
+    fixture.ExpectFresh(NothingAnnounced(), "the terminal with the keyboard, at scale " + scale);
+    const SDL_FRect panel = TestAccess::CurrentLayout(fixture.shell).bottom_panel;
+    const auto output = [&](const char* bytes, const std::string& what) {
+      TerminalSessionTestAccess::AppendOutput(session, bytes);
+      fixture.ExpectFresh(TerminalWake(fixture), what + ", at scale " + scale);
+    };
+    // A bare cursor move: two cells of the panel, not a row.
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[1;7H");
+    const float moved = DamagedShareOf(fixture, panel, TerminalWake(fixture));
+    Expect(moved > 0.0f && moved < 0.02f,
+           "a cursor move repaints the two cells, at scale " + scale + ": " + std::to_string(moved));
+    output("\x1b[3;4H", "the cursor moved again");
+    output("\x1b[2;1H", "the cursor onto a wide glyph");
+    output("\x1b[2;9H", "and off it");
+    // The program's cursor shapes (DECSCUSR), blinking and steady.
+    output("\x1b[5 q", "a blinking bar");
+    output("\x1b[4 q", "a steady underline");
+    output("\x1b[3 q", "a blinking underline");
+    output("\x1b[2 q", "a steady block");
+    output("\x1b[1 q", "a blinking block");
+    // Hidden and shown (DECTCEM), moved while hidden.
+    output("\x1b[?25l", "the cursor hidden");
+    output("\x1b[1;3H", "moved while hidden");
+    output("\x1b[?25h", "shown again elsewhere");
+    // The keyboard leaving the terminal, for another surface and for its find
+    // bar: a steady outline, then the block back.
+    TestAccess::SetFocusEditor(fixture.shell);
+    fixture.ExpectFresh(NothingAnnounced(), "the keyboard in the editor: an outline, at scale " + scale);
+    output("\x1b[2;12H", "the outline moved by the program");
+    TestAccess::SetFocusPanel(fixture.shell);
+    fixture.ExpectFresh(NothingAnnounced(), "the keyboard back: the block, at scale " + scale);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "terminal-find"), "terminal-find opens the find bar");
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
+                        "the find bar has the keyboard: an outline, at scale " + scale);
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}),
+                        "the find bar closed: the block, at scale " + scale);
+  }
+}
+
 // The names of the card's elements of `kind` ("settings-category", "setting"),
 // as the control channel lists them, with their rects.
 std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
@@ -11054,6 +11108,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheSearchPanelRepaintsWhatChangedFromAFrame);
   AddTest(tests, "QaFlowRegression/TheSearchPanelPaintsTheResultsItPrepared",
           TestTheSearchPanelPaintsTheResultsItPrepared);
+  AddTest(tests, "QaFlowRegression/ATerminalCaretRepaintsWhereItWasAndIs", TestATerminalCaretRepaintsWhereItWasAndIs);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);

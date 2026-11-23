@@ -576,69 +576,18 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     // its line count, persisted scroll, visible lines and cursor. Nothing below
     // reads the live session or writes pane state.
     const TerminalPaneRectsLayout& rects = panel_vm.terminal_panes;
-    const float panel_height = layout.bottom_panel.h;
     for (std::size_t pane_index = 0; pane_index < tab->panes.size() && pane_index < rects.panes.size();
          ++pane_index) {
-      TerminalPaneState* pane = tab->panes[pane_index].get();
-      if (pane == nullptr) {
+      if (tab->panes[pane_index] == nullptr) {
         continue;
       }
-      const bool is_active = pane_index == tab->active_pane;
-      const SDL_FRect& body = rects.panes[pane_index];
-      const std::size_t line_count = pane->frame_line_count;
-      const LogSurfaceLayout pane_layout =
-          ComputeTerminalPaneLogLayout(body, panel_height, *pane, line_count);
-      const std::size_t first_row =
-          static_cast<std::size_t>(std::max(0, pane_layout.scroll.vertical_scroll));
-      const std::vector<terminal::TerminalLine>& terminal_lines = pane->visible_lines_snapshot.lines;
       // The body's fill and the rows -- cells, selection, find highlights, the
-      // hovered link -- as prep settled them, a unit each.
+      // hovered link -- then the empty pane's hint and the caret over them, as prep
+      // settled them: a unit each.
       PaintTerminalGridPane(renderer, frame_state_, pane_index, theme_, terminal_text_renderer_,
                             terminal_row_plan_);
-
       PaintTerminalPaneHint(renderer, frame_state_, pane_index, theme_, text_renderer_);
-
-      const terminal::TerminalCursorSnapshot& cursor = pane->frame_cursor;
-      // Same rect the blink invalidation asks for (TerminalCaretRectIn), so the
-      // dirty region and the painted caret cannot disagree.
-      const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(pane_layout, cursor);
-      if (caret_rect.has_value()) {
-        // The program's DECSCUSR shape; a steady one does not blink.
-        const SDL_FRect shape_rect = TerminalCursorShapeRect(*caret_rect, cursor.shape);
-        const bool block = cursor.shape == terminal::TerminalCursorShape::Block;
-        if (!is_active || !frame_state_.terminal_owns_caret) {
-          // A pane that does not own the keyboard -- an inactive pane, or the active
-          // one while focus is elsewhere or on its find bar -- shows where its cursor
-          // is with a steady outline, as VS Code's unfocused terminal does. The
-          // active pane blinked along with the find bar's caret while only the find
-          // bar's caret was repainted (QA monkey, seed 4). A bar or an underline is
-          // too thin to outline, so it is drawn steady as it is.
-          if (block) {
-            DrawRect(renderer, *caret_rect, theme_.cursor);
-          } else {
-            DrawFilledRect(renderer, shape_rect, theme_.cursor);
-          }
-        } else if (frame_state_.caret_visible || !cursor.blinking) {
-          DrawFilledRect(renderer, shape_rect, theme_.cursor);
-          if (block && cursor.row >= first_row && cursor.row - first_row < terminal_lines.size()) {
-            const auto& line = terminal_lines[cursor.row - first_row];
-            if (cursor.column < line.cells.size()) {
-              const auto& cell = line.cells[cursor.column];
-              const auto display_text = cell.DisplayText();
-              if (!display_text.empty()) {
-                const SDL_Color cursor_foreground =
-                    ResolveTerminalCellColors(
-                        cell.style, TerminalGridPanePalette(frame_state_, pane_index, theme_))
-                        .background;
-                // The glyph is drawn at the caret's own origin; the rect carries a
-                // 1px lift, so undo it here to keep the text on the row baseline.
-                terminal_text_renderer_.DrawString(renderer, caret_rect->x, caret_rect->y + 1.0f,
-                                                   cursor_foreground, display_text);
-              }
-            }
-          }
-        }
-      }
+      PaintTerminalGridCaret(renderer, frame_state_, pane_index, theme_, terminal_text_renderer_);
     }
     // Each pane's scrollbar and the dividers, over every pane (prep's snapshot).
     PaintTerminalChrome(renderer, frame_state_, theme_);

@@ -796,9 +796,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       context_.text_input.composition.text.empty();
   frame_state_.terminal_owns_caret = project_state.surface.focus == FocusTarget::Panel &&
                                      context_.text_input.active_surface == TextInputSurface::Terminal;
-  // Ownership changes the terminal caret's style (steady outline vs blinking block)
-  // at the same place, which the caret-region comparison below cannot see.
-  chrome_unit(ActiveTerminalCaretRect(layout), frame_state_.terminal_owns_caret ? 1u : 2u);
+  // (Ownership changes the terminal caret's style -- steady outline or blinking
+  // block -- at the same place: it is in each pane's caret unit, with the blink's
+  // phase: PrepareTerminalGridFrame.)
   {
     // The terminal's find bar, a card over the active pane, keyed on all it
     // paints: the query's visible tail, the match count (which the terminal's
@@ -2267,6 +2267,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         .theme = &theme_,
         .text_metrics = terminal_text_renderer_.MetricsGeneration(),
         .char_width = terminal_text_renderer_.CharWidth(),
+        .terminal_text = &terminal_text_renderer_,
+        .caret_phase_on = frame_state_.caret_visible,
         .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
     };
     if (inputs.visible) {
@@ -2295,6 +2297,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         grid.selection = pane->frame_selection;
         grid.selection_live = pane->frame_selection_live;
         grid.hovered_link = pane->hovered_link;
+        // The caret, from the cursor sampled with the lines. Only the active pane
+        // can own the keyboard, and only while the terminal has it (not its find
+        // bar, nor another surface): the others show a steady outline.
+        grid.caret_cell = TerminalCaretRectIn(log, pane->frame_cursor);
+        grid.cursor = pane->frame_cursor;
+        grid.caret_owned = index == tab->active_pane && frame_state_.terminal_owns_caret;
         // The find highlights are the active pane's.
         if (index == tab->active_pane && panel.find_matches != nullptr) {
           grid.find_matches = *panel.find_matches;

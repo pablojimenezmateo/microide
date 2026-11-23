@@ -7,6 +7,7 @@
 
 #include "render/DevicePixelSnap.h"
 #include "render/PaintElement.h"
+#include "render/ScopedRenderClip.h"
 #include "workspace/render/BottomPanelTerminalGridPaint.h"
 #include "workspace/render/EditorRowUnits.h"
 
@@ -22,6 +23,13 @@ static_assert(std::has_unique_object_representations_v<terminal::TerminalCell>,
               "a terminal cell is keyed by its bytes: no padding");
 
 constexpr std::uint64_t kGridKeySeed = 0x7465726d67726964ull;  // "termgrid"
+
+// The part of `rect` inside the pane's body: what of a row or a caret shows, and
+// so what its unit damages. Empty when none does.
+SDL_FRect InBody(const SDL_FRect& rect, const SDL_FRect& body) {
+  SDL_FRect shown{};
+  return SDL_GetRectIntersectionFloat(&rect, &body, &shown) ? shown : SDL_FRect{};
+}
 // What a row's key folds beyond its cells, each group behind its own tag so one
 // group's values cannot stand for another's.
 constexpr std::uint64_t kSelectionTag = 0x53454c;
@@ -203,6 +211,47 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
           .rect = UnitRect(inputs.renderer, pane.body),
           .fingerprint = MixRowKey(style, pane.reverse_video ? 1u : 2u),
       });
+      // The caret: a steady outline in a pane that does not own the keyboard (an
+      // inactive pane, or the active one while focus is elsewhere or on its find
+      // bar), else solid in the program's DECSCUSR shape while the blink's phase
+      // is on or the shape is a steady one.
+      TerminalCaretPaint& caret = painted.caret;
+      if (pane.caret_cell.has_value()) {
+        caret.style = !pane.caret_owned ? TerminalCaretPaint::Style::Outline
+                      : (inputs.caret_phase_on || !pane.cursor.blinking) ? TerminalCaretPaint::Style::Solid
+                                                                         : TerminalCaretPaint::Style::None;
+      }
+      std::uint64_t caret_key = 0;
+      if (caret.style != TerminalCaretPaint::Style::None) {
+        caret.shape = pane.cursor.shape;
+        caret.cell = *pane.caret_cell;
+        // The glyph is drawn on its row's line, a pixel under the lifted cell.
+        SDL_FRect bounds = caret.cell;
+        bounds.h += 1.0f;
+        if (caret.style == TerminalCaretPaint::Style::Solid && caret.shape == terminal::TerminalCursorShape::Block &&
+            pane.cursor.row >= pane.first_row && pane.cursor.row - pane.first_row < pane.lines.size()) {
+          const terminal::TerminalLine& line = pane.lines[pane.cursor.row - pane.first_row];
+          if (pane.cursor.column < line.cells.size() && !line.cells[pane.cursor.column].DisplayText().empty()) {
+            caret.glyph = &line.cells[pane.cursor.column];
+            if (caret.glyph->length > 1 && inputs.terminal_text != nullptr) {
+              // A glyph from a fallback font can be wider than its cells.
+              bounds.w = std::max(bounds.w, inputs.terminal_text->MeasureWidth(caret.glyph->DisplayText()));
+            }
+          }
+        }
+        caret.bounds = bounds;
+        caret_key = MixRowKey(style, static_cast<std::uint64_t>(caret.style) << 8 |
+                                         static_cast<std::uint64_t>(caret.shape));
+        caret_key = MixRowKey(caret_key, ColorBits(theme.cursor));
+        caret_key = MixRowKey(caret_key, FloatBits(caret.cell.x) | FloatBits(caret.cell.w) << 32);
+        if (caret.glyph != nullptr) {
+          caret_key = MixRowKeyBytes(caret_key, reinterpret_cast<const char*>(caret.glyph),
+                                     sizeof(terminal::TerminalCell));
+          caret_key = MixRowKey(caret_key, pane.reverse_video ? 1u : 2u);
+        }
+      }
+      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, InBody(caret.bounds, pane.body)),
+                                          .fingerprint = caret_key});
       // What every row of the pane shares.
       std::uint64_t pane_style = MixRowKey(style, pane.reverse_video ? 1u : 2u);
       pane_style = MixRowKey(pane_style, FloatBits(pane.text_x) | FloatBits(pane.text_width) << 32);
@@ -232,12 +281,10 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
         const float text_y = pane.text_y + static_cast<float>(slot) * pane.line_height;
         TerminalGridRowPaint& row = grid.rows.emplace_back();
         // A cell's background is lifted a pixel over its glyph, so the row is its
-        // band and the glyphs' last pixel row under it, inside the pane.
-        SDL_FRect rect = MakeRect(pane.body.x, text_y - 1.0f, pane.body.w, pane.line_height + 1.0f);
-        const float bottom = std::min(rect.y + rect.h, pane.body.y + pane.body.h);
-        rect.y = std::max(rect.y, pane.body.y);
-        rect.h = std::max(0.0f, bottom - rect.y);
-        row.rect = rect;
+        // band and the glyphs' last pixel row under it. (A body too short for its
+        // last row cuts it: paint clips the pane to its body, and the row's unit
+        // is the part that shows.)
+        row.rect = MakeRect(pane.body.x, text_y - 1.0f, pane.body.w, pane.line_height + 1.0f);
         row.text_y = text_y;
         row.line = &line;
         row.emphasis = TerminalRowSelectionEmphasis(pane.selection, absolute);
@@ -282,7 +329,8 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
           key = MixRowKey(key, row.link_begin);
           key = MixRowKey(key, row.link_end);
         }
-        units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, row.rect), .fingerprint = key});
+        units.push_back(
+            DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, InBody(row.rect, pane.body)), .fingerprint = key});
       }
       painted.count = grid.rows.size() - painted.first;
     }
@@ -290,10 +338,39 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
   frame.derived_damage.Commit(DerivedSurface::BottomPanelTerminalGrid, inputs.damage);
 }
 
-TerminalPaintPalette TerminalGridPanePalette(const PreparedFrameState& frame, std::size_t pane,
-                                             const render::Theme& theme) {
+void PaintTerminalGridCaret(SDL_Renderer* renderer, const PreparedFrameState& frame, std::size_t pane_index,
+                            const render::Theme& theme, const render::TextRenderer& terminal_text) {
   const PreparedFrameState::TerminalGridPaint& grid = frame.terminal_grid;
-  return PanePalette(pane < grid.panes.size() ? grid.panes[pane] : TerminalGridPanePaint{}, theme);
+  if (!grid.visible || pane_index >= grid.panes.size()) {
+    return;
+  }
+  const TerminalGridPanePaint& pane = grid.panes[pane_index];
+  const TerminalCaretPaint& caret = pane.caret;
+  if (caret.style == TerminalCaretPaint::Style::None) {
+    return;
+  }
+  const render::ScopedRenderClip body_clip(renderer, pane.body);
+  const render::PaintElement element(renderer, caret.bounds, "terminal-caret");
+  const SDL_FRect shape_rect = TerminalCursorShapeRect(caret.cell, caret.shape);
+  const bool block = caret.shape == terminal::TerminalCursorShape::Block;
+  if (caret.style == TerminalCaretPaint::Style::Outline) {
+    // As VS Code's unfocused terminal shows where its cursor is. A bar or an
+    // underline is too thin to outline, so it is drawn steady as it is.
+    if (block) {
+      OutlineRect(renderer, caret.cell, theme.cursor);
+    } else {
+      FillRect(renderer, shape_rect, theme.cursor);
+    }
+    return;
+  }
+  FillRect(renderer, shape_rect, theme.cursor);
+  if (caret.glyph != nullptr) {
+    // The glyph in its cell's background, at the cell's own origin: the cell
+    // carries a 1px lift, undone here to keep the text on the row's baseline.
+    terminal_text.DrawString(renderer, caret.cell.x, caret.cell.y + 1.0f,
+                             ResolveTerminalCellColors(caret.glyph->style, PanePalette(pane, theme)).background,
+                             caret.glyph->DisplayText());
+  }
 }
 
 void PaintTerminalGridPane(SDL_Renderer* renderer, const PreparedFrameState& frame, std::size_t pane_index,
@@ -310,6 +387,8 @@ void PaintTerminalGridPane(SDL_Renderer* renderer, const PreparedFrameState& fra
     const render::PaintElement element(renderer, pane.body, "terminal-body");
     FillRect(renderer, pane.body, theme.text_primary);
   }
+  // Nothing of a pane leaves its body: a body too short for its last row cuts it.
+  const render::ScopedRenderClip body_clip(renderer, pane.body);
   // A partial frame's clip is often one row (a keystroke's echo) or the caret:
   // planning and drawing every row of every pane for it costs a whole grid per
   // clip, so a row the clip cannot reach is skipped, with a row of slack.

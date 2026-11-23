@@ -728,14 +728,6 @@ struct TerminalPaneState {
   // above): the session is written by its PTY reader thread, and paint reading it
   // live let one frame's renders disagree about the caret and the line count.
   terminal::TerminalCursorSnapshot frame_cursor{};
-  // Where frame_cursor's caret was last painted (nullopt: hidden or off screen).
-  // A cursor can hide or move with no row of text changing, which no output
-  // damage covers; frame prep repaints the old and new rects when this moves.
-  std::optional<SDL_FRect> painted_caret_rect;
-  // ... and in which DECSCUSR style: a program switching to a bar (vim's insert
-  // mode) changes the caret's pixels in the same cell.
-  terminal::TerminalCursorShape painted_caret_shape = terminal::TerminalCursorShape::Block;
-  bool painted_caret_blinking = true;
   std::size_t frame_line_count = 0;
   // DECSCNM as of this frame: paint swaps every cell's colours and the pane's fill.
   bool frame_reverse_video = false;
