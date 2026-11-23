@@ -163,14 +163,19 @@ class DelayRelay {
       if (bytes_per_second_ != 0) {
         // A virtual clock: this chunk left at `due` (not when the thread woke),
         // so ordinary timer oversleep does not eat into the modelled bandwidth.
-        // But it may lag real time by at most one chunk: a writer that woke very
-        // late (a sanitizer build, a loaded box) must not then send everything
-        // that came due back to back -- a burst above the link's rate, which a
-        // real link cannot produce and an ack-measured bandwidth would believe.
+        // It may lag real time by up to kCatchUp, which it then sends back to
+        // back -- a short burst, as a real link's queue drains after a hiccup.
+        // More would be a burst no link produces, which an ack-measured bandwidth
+        // would believe. Capped at ONE chunk (~0.3 ms at 12.5 MB/s), a writer at
+        // nice 19 on a box at load 11 lost 0.3-0.8 s of wire per 1.5 s transfer
+        // to scheduler latency, and the link ran at 61-74 % of its rate
+        // (RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct, 12
+        // of 80 runs).
         const auto transmit = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(static_cast<double>(chunk.bytes.size()) /
                                           static_cast<double>(bytes_per_second_)));
-        link_free = std::max(due, std::chrono::steady_clock::now() - transmit) + transmit;
+        const auto lag = std::max<std::chrono::steady_clock::duration>(transmit, kCatchUp);
+        link_free = std::max(due, std::chrono::steady_clock::now() - lag) + transmit;
       }
       lock.unlock();
       if (!blackhole_) {
@@ -191,6 +196,7 @@ class DelayRelay {
     }
   }
 
+  static constexpr auto kCatchUp = std::chrono::milliseconds(2);
   int upstream_fd_ = -1;
   int relay_fd_ = -1;
   int client_fd_ = -1;
