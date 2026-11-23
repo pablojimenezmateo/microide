@@ -16,8 +16,8 @@ void DebugPaneService::Activate(DebugPaneMode mode) {
   if (!was_visible && operations_.note_layout_inputs_changed) {
     operations_.note_layout_inputs_changed();
   }
-  if (operations_.request_redraw) {
-    operations_.request_redraw();
+  if (operations_.request_frame) {
+    operations_.request_frame();
   }
 }
 
@@ -36,8 +36,8 @@ void DebugPaneService::Close() {
   if (operations_.note_layout_inputs_changed) {
     operations_.note_layout_inputs_changed();
   }
-  if (operations_.request_redraw) {
-    operations_.request_redraw();
+  if (operations_.request_frame) {
+    operations_.request_frame();
   }
 }
 

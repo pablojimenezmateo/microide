@@ -9298,6 +9298,35 @@ void TestATerminalsOutputRepaintsItsPaneNotThePanel() {
   fixture.ExpectFresh(NothingAnnounced(), "the terminal in front again, with what it printed meanwhile");
 }
 
+// The debug dock opening, closing and showing another of its lists: the room it
+// takes from the editor and gives back, the focus ring and its rows are derived,
+// so each owes a frame. Each asked for the whole window.
+void TestTheDebugDockOpensAndClosesFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "debugging enabled, the dock closed");
+  const auto run = [&](const std::string& command, const std::string& what) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, command), command + " should run");
+    const workspace::RenderInvalidation asked = fixture.shell.ConsumePendingRenderInvalidation();
+    Expect(asked.frame && !asked.full && asked.rects.empty(),
+           what + " owes a frame and names no rect (rects=" + std::to_string(asked.rects.size()) + ")");
+    fixture.ExpectFresh(asked, what);
+  };
+  run("debug-pane-toggle", "the dock opening");
+  Expect(TestAccess::CurrentProjectState(fixture.shell).debug_pane.visible, "the dock is open");
+  run("debug-pane-watch", "the dock showing its Watch list");
+  run("debug-pane-callstack", "the dock showing its Call Stack");
+  run("debug-pane-toggle", "the dock closing");
+  Expect(!TestAccess::CurrentProjectState(fixture.shell).debug_pane.visible, "the dock is closed");
+  run("debug-pane-breakpoints", "the dock opening on its Breakpoints");
+  run("debug-pane-toggle", "the dock closing again");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -9977,6 +10006,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheBottomPanelsBodyRepaintsWhenOtherContentTakesIt);
   AddTest(tests, "QaFlowRegression/ATerminalsOutputRepaintsItsPaneNotThePanel",
           TestATerminalsOutputRepaintsItsPaneNotThePanel);
+  AddTest(tests, "QaFlowRegression/TheDebugDockOpensAndClosesFromAFrame", TestTheDebugDockOpensAndClosesFromAFrame);
   AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
           TestARemoteProjectsStageRepaintsItsTabFromAFrame);
   AddTest(tests, "QaFlowRegression/AMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame",

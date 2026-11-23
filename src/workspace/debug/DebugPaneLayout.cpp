@@ -268,7 +268,7 @@ DebugPaneService& WorkspaceShell::MakeDebugPaneService() {
   }
   glue_->debug_pane_service = std::make_unique<DebugPaneService>(context_.current_project_state,
                           DebugPaneService::Operations{
-                              .request_redraw = [this]() { RequestWindowRedraw(); },
+                              .request_frame = [this]() { RequestPreparedFrame(); },
                               .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
                           });
   return *glue_->debug_pane_service;

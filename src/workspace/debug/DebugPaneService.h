@@ -14,7 +14,10 @@ namespace microide::workspace {
 class DebugPaneService {
  public:
   struct Operations {
-    std::function<void()> request_redraw;
+    // The dock opened, closed or showed another of its lists: its region (and the
+    // editor's, which gives or takes the room), the focus ring and its rows are
+    // derived, so a frame repaints them. It asked for the whole window.
+    std::function<void()> request_frame;
     std::function<void()> note_layout_inputs_changed;
   };
 
