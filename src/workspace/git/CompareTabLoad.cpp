@@ -76,6 +76,30 @@ void MarkCompareModelBuilt(CompareTabState& compare_tab, const compare::CompareB
   compare_tab.derived_ignore_whitespace = built.ignore_whitespace;
   compare_tab.derived_syntax = built.syntax;
   compare_tab.derived_fingerprint_valid = true;
+  // Each side's line -> row, for the token windows (addressed by line). The
+  // model was replaced, so the windows no longer describe it until re-pointed.
+  // Sized once, to the side's last line (its lines ascend down the rows), so a
+  // build allocates at most the two tables and a rebuild of the same size nothing.
+  const auto index_side = [&](std::vector<std::uint32_t>& line_rows, int compare::CompareRow::* line) {
+    const std::vector<compare::CompareRow>& rows = compare_tab.model.rows;
+    std::size_t line_count = 0;
+    for (std::size_t row = rows.size(); row-- > 0;) {
+      if (rows[row].*line > 0) {
+        line_count = static_cast<std::size_t>(rows[row].*line);
+        break;
+      }
+    }
+    line_rows.assign(line_count, 0);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+      const int number = rows[row].*line;
+      if (number > 0 && static_cast<std::size_t>(number) <= line_count) {
+        line_rows[static_cast<std::size_t>(number - 1)] = static_cast<std::uint32_t>(row);
+      }
+    }
+  };
+  index_side(compare_tab.left_line_rows, &compare::CompareRow::left_line);
+  index_side(compare_tab.right_line_rows, &compare::CompareRow::right_line);
+  compare_tab.token_windows_stale = true;
 }
 
 }  // namespace microide::workspace

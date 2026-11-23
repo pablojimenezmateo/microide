@@ -533,8 +533,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                                 surface.right_visible_columns;
     if (compare_row.left_line > 0 && wrap_row.left_present) {
       std::array<char, 20> line_number_buf;
-      const std::vector<editor::SyntaxTokenKind>* cached_tokens =
-          &compare_tab->left_token_window.Tokens(static_cast<std::size_t>(model_index));
+      const std::vector<editor::SyntaxTokenKind>* cached_tokens = &CompareRowLeftTokens(*compare_tab, compare_row);
       const std::vector<compare::CompareTextSpan>& left_changed_spans =
           compare_row.left_changed_spans;
       editor::RowDecorationInput left_input;
@@ -705,11 +704,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       // An unchanged row identical on both sides holds its tokens once, in the
       // left window; the right one declined to fill it. Same predicate, one
       // definition — see CompareRowRightTokensAliasLeft.
-      const std::size_t right_token_row = static_cast<std::size_t>(model_index);
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
-          CompareRowRightTokensAliasLeft(*compare_tab, right_token_row)
-              ? &compare_tab->left_token_window.Tokens(right_token_row)
-              : &compare_tab->right_token_window.Tokens(right_token_row);
+          CompareRowRightTokensAliasLeft(*compare_tab, static_cast<std::size_t>(model_index))
+              ? &CompareRowLeftTokens(*compare_tab, compare_row)
+              : &CompareRowRightOwnTokens(*compare_tab, compare_row);
       const std::vector<compare::CompareTextSpan>& right_changed_spans =
           compare_row.right_changed_spans;
       editor::RowDecorationInput right_input;

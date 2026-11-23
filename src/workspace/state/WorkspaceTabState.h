@@ -180,8 +180,24 @@ struct CompareTabState {
   // that: only the rows on screen hold tokens at all, so the second copy costs a
   // pooled buffer and one tokenize of a line already in cache, and the flag array
   // plus its two read sites cost more than they save.
+  //
+  // Each window is addressed by its own pane's LINES (line - 1), not by model row:
+  // a pane's syntax state at a line follows from its own text above it, which a
+  // rebuild of the diff does not move. So a keystroke in the working side leaves
+  // the left window alone and restarts the right one at the edited line
+  // (SurfaceTokenWindow::ResetFrom), where both restarted at row 0. The rows are
+  // reached through `left_line_rows` / `right_line_rows`; CompareRowLeftTokens and
+  // CompareRowRightOwnTokens are the row-side accessors.
   SurfaceTokenWindow left_token_window;
   SurfaceTokenWindow right_token_window;
+  // The model row of each side's line (line - 1 -> row), rebuilt with the model
+  // (MarkCompareModelBuilt); their capacity is kept across rebuilds.
+  std::vector<std::uint32_t> left_line_rows;
+  std::vector<std::uint32_t> right_line_rows;
+  // The windows do not describe the model's text: set by every replacement of the
+  // model, cleared by whoever re-points them -- the keystroke's rebuild, which
+  // knows the first changed line, or else frame prep, which resets them whole.
+  bool token_windows_stale = true;
   // Bracket-match memo for the editable pane, keyed exactly as the editor
   // renderer's is: (content revision, caret line, caret column). FindBracketMatch
   // is O(file), and the compare surface paints through its own row loop with no
@@ -299,13 +315,13 @@ struct CompareTabState {
 // tokenizer did fill on the right, or vice versa, the pane paints unstyled.
 //
 // A row the right pane's walk has not reached yet reads the left window too. Its
-// state there is not known, and it has no tokens of its own to draw: the walks
-// restart on every rebuild of the diff -- each keystroke in the working side --
-// and share one frame's time, so when that ran out during the left pane's walk
-// every unchanged row past the right frontier dropped its colours for a frame
-// (soak 185e45a464f9). The left pane's tokens stand in until the right walk has
-// the row; if its state there then differs, the tokenizer fills the row (it asks
-// only about rows its frontier has passed) and the row repaints from its own.
+// state there is not known, and it has no tokens of its own to draw: when a
+// frame's walk time ran out before the right pane's walk reached it, every such
+// row dropped its colours for a frame (soak 185e45a464f9). The left pane's
+// tokens stand in until the right walk has the row; if its state there then
+// differs, the tokenizer fills the row (it asks only about rows its frontier has
+// passed) and the row repaints from its own. A row the LEFT walk has not reached
+// has no tokens to lend, and is not aliased.
 inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size_t row) {
   if (row >= tab.model.rows.size()) {
     return false;
@@ -315,8 +331,27 @@ inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size
       compare_row.right_line <= 0 || compare_row.left_text != compare_row.right_text) {
     return false;
   }
-  return row >= tab.right_token_window.frontier() ||
-         tab.left_token_window.StateBefore(row) == tab.right_token_window.StateBefore(row);
+  const auto left = static_cast<std::size_t>(compare_row.left_line - 1);
+  const auto right = static_cast<std::size_t>(compare_row.right_line - 1);
+  if (left >= tab.left_token_window.frontier()) {
+    return false;
+  }
+  return right >= tab.right_token_window.frontier() ||
+         tab.left_token_window.StateBefore(left) == tab.right_token_window.StateBefore(right);
+}
+
+// A row's tokens in each pane's own window (none for a side the row lacks). The
+// working side DRAWS the left pane's for a row CompareRowRightTokensAliasLeft
+// names, and its own otherwise.
+inline const std::vector<editor::SyntaxTokenKind>& CompareRowLeftTokens(const CompareTabState& tab,
+                                                                        const compare::CompareRow& row) {
+  static const std::vector<editor::SyntaxTokenKind> kNone;
+  return row.left_line > 0 ? tab.left_token_window.Tokens(static_cast<std::size_t>(row.left_line - 1)) : kNone;
+}
+inline const std::vector<editor::SyntaxTokenKind>& CompareRowRightOwnTokens(const CompareTabState& tab,
+                                                                            const compare::CompareRow& row) {
+  static const std::vector<editor::SyntaxTokenKind> kNone;
+  return row.right_line > 0 ? tab.right_token_window.Tokens(static_cast<std::size_t>(row.right_line - 1)) : kNone;
 }
 
 struct MergeTabState {

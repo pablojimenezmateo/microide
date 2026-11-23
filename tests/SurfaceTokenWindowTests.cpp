@@ -236,6 +236,101 @@ void TestSurfaceTokenWindowAWalkWithTimeLeftKeepsGoing() {
          "a walk out of time still takes its row step: it stopped at " + std::to_string(spent.frontier()));
 }
 
+// An edit re-points the window at the pane from its first changed line: the
+// states and token buffers above it stand (a row's tokens follow from its text
+// and the state it resumes from), and the walk restarts there. It restarted at
+// the top: a keystroke at line 40,000 of a diff walked 40,000 rows again.
+void TestSurfaceTokenWindowAnEditRestartsTheWalkAtItsLine() {
+  constexpr std::size_t kLines = 900;
+  constexpr std::size_t kTop = 600;
+  constexpr std::size_t kBottom = 640;
+  constexpr std::size_t kEdit = 620;
+  Pane pane = MakePane(kLines);
+  const SyntaxState initial = SyntaxHighlighter::InitialState(pane.path, pane.lines);
+  SurfaceTokenWindow window;
+  window.Reset(kLines, initial);
+  EnsureRows(window, pane, kTop, kBottom, kLines);
+  Expect(window.frontier() >= kBottom && !window.Tokens(kTop + 5).empty(), "the band is walked and filled");
+
+  // A comment opened at the edit (every row below resumes from another state),
+  // and a line added under it (every row below moves down one).
+  pane.lines[kEdit] = "int edited = 1; /* opened by the edit";
+  pane.lines.insert(pane.lines.begin() + static_cast<std::ptrdiff_t>(kEdit) + 1, "int added = 2;");
+  const auto expected = TokenizeWholePane(pane);
+  window.ResetFrom(kEdit, pane.lines.size(), initial);
+  Expect(window.line_count() == kLines + 1, "the window has the pane's new line count");
+  Expect(window.frontier() == kEdit, "the walk restarts at the edited line, not at the top: " +
+                                         std::to_string(window.frontier()));
+  for (std::size_t row = kTop; row < kEdit; ++row) {
+    Expect(window.Tokens(row) == expected[row], "a row above the edit keeps its tokens");
+  }
+  for (std::size_t row = kEdit; row < kBottom; ++row) {
+    Expect(window.Tokens(row).empty(), "a row from the edit on has handed its buffer back");
+  }
+  // One step of 40 rows reaches the bottom of the band: 20 rows were left to walk.
+  EnsureRows(window, pane, kTop, kBottom, kBottom - kTop);
+  Expect(window.frontier() == kBottom, "the walk from the edit reaches the band in one step: " +
+                                           std::to_string(window.frontier()));
+  for (std::size_t row = kTop; row < kBottom; ++row) {
+    Expect(window.Tokens(row) == expected[row],
+           "after the edit every row of the band tokenizes as a walk from the top does (row " +
+               std::to_string(row) + ")");
+  }
+
+  // Nothing changed (the count alone): nothing is walked again.
+  window.ResetFrom(pane.lines.size(), pane.lines.size(), initial);
+  Expect(window.frontier() == kBottom && window.Tokens(kTop) == expected[kTop], "no change keeps everything");
+  // The first line, or another initial state (the language changed): from the top.
+  window.ResetFrom(0, pane.lines.size(), initial);
+  Expect(window.frontier() == 0 && window.Tokens(kTop).empty(), "a change at the first line restarts at the top");
+  EnsureRows(window, pane, kTop, kBottom, pane.lines.size());
+  SyntaxState other = initial;
+  other.definition_id += 1;
+  window.ResetFrom(kEdit, pane.lines.size(), other);
+  Expect(window.frontier() == 0 && window.Tokens(kTop).empty(), "another initial state restarts at the top");
+}
+
+// Typing: an edit and a re-walk of the band, over and over. Steady, it allocates
+// nothing: the rows from the edit on hand their buffers to the pool and take
+// them back, and the tables are resized within their capacity.
+void TestSurfaceTokenWindowSteadyEditsDoNotAllocate() {
+#if MICROIDE_PERF_HARNESS_BUILD
+  namespace perf = microide::tests::perf;
+  constexpr std::size_t kLines = 2000;
+  constexpr std::size_t kTop = 1500;
+  constexpr std::size_t kBottom = 1540;
+  Pane pane = MakePane(kLines);
+  const SyntaxState initial = SyntaxHighlighter::InitialState(pane.path, pane.lines);
+  SurfaceTokenWindow window;
+  window.Reset(kLines, initial);
+  const auto edit = [&](std::size_t round) {
+    // A line added and taken away in turn, at a line that moves through the band.
+    const std::size_t line = kTop + 5 + round % 20;
+    if (round % 2 == 0) {
+      pane.lines.insert(pane.lines.begin() + static_cast<std::ptrdiff_t>(line), "int typed = 3;");
+    } else {
+      pane.lines.erase(pane.lines.begin() + static_cast<std::ptrdiff_t>(line));
+    }
+    window.ResetFrom(line, pane.lines.size(), initial);
+    EnsureRows(window, pane, kTop, kBottom, kLines);
+  };
+  EnsureRows(window, pane, kTop, kBottom, kLines);
+  for (std::size_t round = 0; round < 40; ++round) {
+    edit(round);  // warm: the pool and the tables reach their working size
+  }
+  pane.lines.reserve(pane.lines.size() + 8);
+  const auto before = perf::Allocations::Snapshot();
+  for (std::size_t round = 40; round < 240; ++round) {
+    edit(round);
+  }
+  const auto delta = perf::Allocations::DeltaSince(before);
+  // The pane's own vector of strings is the test's (its inserted literal fits a
+  // small string, its capacity is reserved); what is counted is the window's.
+  Expect(delta.allocations == 0, "a steady run of edits must allocate nothing in the window: " +
+                                     std::to_string(delta.allocations));
+#endif
+}
+
 }  // namespace
 
 void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests) {
@@ -248,6 +343,9 @@ void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SurfaceTokenWindow/BudgetedWalkConvergesWithoutWrongTokens",
           TestSurfaceTokenWindowBudgetedWalkConvergesWithoutWrongTokens);
   AddTest(tests, "SurfaceTokenWindow/AWalkWithTimeLeftKeepsGoing", TestSurfaceTokenWindowAWalkWithTimeLeftKeepsGoing);
+  AddTest(tests, "SurfaceTokenWindow/AnEditRestartsTheWalkAtItsLine",
+          TestSurfaceTokenWindowAnEditRestartsTheWalkAtItsLine);
+  AddTest(tests, "SurfaceTokenWindow/SteadyEditsDoNotAllocate", TestSurfaceTokenWindowSteadyEditsDoNotAllocate);
   AddTest(tests, "SurfaceTokenWindow/SteadyScrollDoesNotAllocate",
           TestSurfaceTokenWindowSteadyScrollDoesNotAllocate);
 }

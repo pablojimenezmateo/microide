@@ -6,6 +6,7 @@
 #include <charconv>
 #include <cmath>
 #include <functional>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -23,6 +24,22 @@
 namespace microide::workspace {
 
 namespace {
+
+// The length of the bytes two texts share from their start. In blocks: this runs
+// over the working side's whole text above an edit on every keystroke in a diff,
+// and a byte loop that can stop anywhere is not vectorized.
+std::size_t CommonPrefixLength(std::string_view a, std::string_view b) {
+  const std::size_t limit = std::min(a.size(), b.size());
+  constexpr std::size_t kBlock = 4096;
+  std::size_t at = 0;
+  while (at + kBlock <= limit && std::memcmp(a.data() + at, b.data() + at, kBlock) == 0) {
+    at += kBlock;
+  }
+  while (at < limit && a[at] == b[at]) {
+    ++at;
+  }
+  return at;
+}
 
 std::size_t CompareMaxVisualColumns(const compare::CompareModel& model) {
   std::size_t max_columns = 0;
@@ -455,12 +472,12 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   const std::size_t visible_end_row =
       visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)) + 64;
   // The compare view collapses large unchanged runs, so a visible presentation row
-  // can map to a MODEL row far below its presentation index. The cumulative
-  // tokenizer indexes by model row, so derive its window in MODEL space from the
-  // presentation rows actually on screen (a CollapsedContext row spans through the
-  // end of its run so rows below inherit the correct syntax state). Feeding the
-  // presentation scroll position directly capped tokenization far below the visible
-  // model rows, leaving hunks deep in a collapsed diff unhighlighted.
+  // can map to a MODEL row far below its presentation index. The window is found
+  // in MODEL space first, from the presentation rows actually on screen (a
+  // CollapsedContext row spans through the end of its run), and then in each
+  // pane's lines below. Feeding the presentation scroll position directly capped
+  // tokenization far below the visible model rows, leaving hunks deep in a
+  // collapsed diff unhighlighted.
   const std::size_t presentation_row_count = compare_tab.presentation.rows.size();
   const auto model_row_for_visual = [&](std::size_t visual_index) -> std::size_t {
     if (presentation_row_count == 0) {
@@ -485,16 +502,52 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   // naming it (TD-2026-08-15-248).
   util::PerformanceTrace::Scope syntax_scope("WorkspaceShell::RenderCompareSurface::SyntaxTokens");
 
-  // Both panes tokenize cumulatively down the MODEL rows, so reaching a row means
-  // walking every row above it. SurfaceTokenWindow does that walk with
+  // A model replaced by anyone but the keystroke's rebuild (which re-points the
+  // windows at the first changed line): an asynchronous load's result, a language
+  // whose rules were reloaded. From the top.
+  if (compare_tab.token_windows_stale) {
+    compare_tab.left_token_window.Reset(
+        compare_tab.left_line_rows.size(),
+        compare_tab.left_content != nullptr
+            ? editor::SyntaxHighlighter::InitialState(compare_tab.path, *compare_tab.left_content)
+            : editor::SyntaxState{});
+    compare_tab.right_token_window.Reset(
+        compare_tab.right_line_rows.size(),
+        editor::SyntaxHighlighter::InitialState(compare_tab.path, compare_tab.right_viewport.lines()));
+    compare_tab.token_windows_stale = false;
+  }
+
+  // Each pane tokenizes cumulatively down its own LINES, so reaching a line means
+  // walking every line above it. SurfaceTokenWindow does that walk with
   // `AdvanceState` -- which allocates nothing -- and keeps token buffers only for a
   // bounded band around the viewport, where this used to hold one heap buffer per
   // row of the diff for the tab's life (TD-2026-08-15-242).
   //
-  // A row absent on a side reads as the empty line, which is exactly what the
-  // per-row form did: it left that side's tokens empty and carried the side's
-  // syntax state forward untouched, and `AdvanceState`/`HighlightLineInto` both
-  // do that for an empty line.
+  // The band, in each pane's lines: from the first line the visible model rows
+  // show of it to the last. A pane the rows show nothing of (a long run the other
+  // side added) still walks to where they are, so its state is there when its
+  // lines come back.
+  const std::vector<compare::CompareRow>& rows = compare_tab.model.rows;
+  const auto lines_of = [&](int compare::CompareRow::* line, std::size_t line_count) {
+    std::size_t first = line_count;
+    for (std::size_t row = window_start; row < window_end; ++row) {
+      if (rows[row].*line > 0) {
+        first = static_cast<std::size_t>(rows[row].*line - 1);
+        break;
+      }
+    }
+    std::size_t end = 0;
+    for (std::size_t row = window_end; row-- > 0;) {
+      if (rows[row].*line > 0) {
+        end = static_cast<std::size_t>(rows[row].*line);
+        break;
+      }
+    }
+    return std::pair<std::size_t, std::size_t>{std::min(first, end), end};
+  };
+  const auto [left_start, left_end] = lines_of(&compare::CompareRow::left_line, compare_tab.left_line_rows.size());
+  const auto [right_start, right_end] =
+      lines_of(&compare::CompareRow::right_line, compare_tab.right_line_rows.size());
   // 256 rows a step, and more steps while the frame's walk time lasts: a plain
   // file's walk to row 30,000 then takes a frame or two, not ~117 repaints of the
   // pane (soak a64655101a5a), and a costly syntax's still stops at its budget.
@@ -502,32 +555,26 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   const SurfaceTokenWindow::WalkBudget walk_budget{
       kCompareSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
   compare_tab.left_token_window.EnsureWindow(
-      window_start, window_end, compare_tab.path, walk_budget,
-      [&](std::size_t row) -> std::string_view {
-        const compare::CompareRow& compare_row = compare_tab.model.rows[row];
-        return compare_row.left_line > 0 ? compare_row.left_text : std::string_view{};
-      });
+      left_start, left_end, compare_tab.path, walk_budget,
+      [&](std::size_t line) -> std::string_view { return rows[compare_tab.left_line_rows[line]].left_text; });
   compare_tab.right_token_window.EnsureWindow(
-      window_start, window_end, compare_tab.path, walk_budget,
-      [&](std::size_t row) -> std::string_view {
-        const compare::CompareRow& compare_row = compare_tab.model.rows[row];
-        return compare_row.right_line > 0 ? compare_row.right_text : std::string_view{};
-      },
+      right_start, right_end, compare_tab.path, walk_budget,
+      [&](std::size_t line) -> std::string_view { return rows[compare_tab.right_line_rows[line]].right_text; },
       // Skip the rows whose tokens the render site will read from the LEFT window
       // -- an unchanged row identical on both sides. Left is ensured first, so its
       // states are current when this asks.
-      [&](std::size_t row) { return !CompareRowRightTokensAliasLeft(compare_tab, row); });
+      [&](std::size_t line) { return !CompareRowRightTokensAliasLeft(compare_tab, compare_tab.right_line_rows[line]); });
   // (Rows this step reached repaint in this frame through their own units: each
   // row keys on its tokens, CompareRowUnits. This asked for the whole surface
   // whenever the walk advanced -- on every keystroke, since an edit restarts it.)
-  // Capped per frame: if it has not yet reached the deepest visible model row (after
-  // scrolling past a giant collapsed run), the next frame takes the next step
-  // (PreparedFrameState::syntax_catch_up_rect). Against each window's own row
+  // Capped per frame: if a pane has not yet reached its deepest visible line (after
+  // scrolling far down a large file), the next frame takes the next step
+  // (PreparedFrameState::syntax_catch_up_rect). Against each window's own line
   // count: one never sized walks nothing, and would otherwise ask forever.
-  const auto behind = [&](const SurfaceTokenWindow& window) {
-    return window.frontier() < std::min(window_end, window.line_count());
+  const auto behind = [](const SurfaceTokenWindow& window, std::size_t end) {
+    return window.frontier() < std::min(end, window.line_count());
   };
-  if (behind(compare_tab.left_token_window) || behind(compare_tab.right_token_window)) {
+  if (behind(compare_tab.left_token_window, left_end) || behind(compare_tab.right_token_window, right_end)) {
     frame_state_.syntax_catch_up_rect = rect;
   }
 }
@@ -656,6 +703,9 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   // rules, and the per-language shared pointer says so by identity.
   compare_tab.build_options.syntax =
       language_contract_.ResolveDiffSyntax(compare_tab.right_viewport.language_id());
+  // The first line of each pane the rebuild changes (none: max): see the rebuild.
+  std::size_t left_first_changed_line = 0;
+  std::size_t right_first_changed_line = 0;
   const bool content_changed =
       !compare_tab.derived_fingerprint_valid ||
       compare_tab.derived_right_content_revision != right_content_revision ||
@@ -667,6 +717,28 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     util::PerformanceTrace::Scope rebuild_scope(
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
     std::string right_content = compare_tab.right_viewport.SerializeDocumentText(right_line_ending);
+    // What the token windows can keep (they are addressed by each pane's lines):
+    // nothing unless they describe the model being replaced and the language's
+    // rules stand. Then the left pane's are untouched while its buffer is the
+    // same one, and the right pane's stand above the first line that differs --
+    // found in the bytes, so a keystroke, a paste, an undo and a reload from disk
+    // all name it the same way.
+    const bool windows_describe_model =
+        !compare_tab.token_windows_stale && compare_tab.derived_fingerprint_valid &&
+        compare_tab.derived_syntax == compare_tab.build_options.syntax && compare_tab.model.right_source != nullptr;
+    left_first_changed_line =
+        windows_describe_model && compare_tab.derived_left_content == compare_tab.left_content
+            ? std::numeric_limits<std::size_t>::max()
+            : 0;
+    if (windows_describe_model) {
+      const std::string& before = *compare_tab.model.right_source;
+      const std::size_t shared = CommonPrefixLength(before, right_content);
+      right_first_changed_line =
+          shared == before.size() && shared == right_content.size()
+              ? std::numeric_limits<std::size_t>::max()
+              : static_cast<std::size_t>(std::count(right_content.begin(),
+                                                    right_content.begin() + static_cast<std::ptrdiff_t>(shared), '\n'));
+    }
     // In place, recycling the previous build's row storage: a fresh model is two
     // string allocations per row, and this runs on every keystroke in the
     // editable pane (TD-2026-08-13-208).
@@ -713,21 +785,18 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
                                        context_.current_project_state.branch_review);
   RefreshCompareReviewHeader(compare_tab);
   if (content_changed) {
-    // Straight off the blob: detection reads a bounded head, and splitting the
-    // whole left side into owned lines to hand it over was one allocation per line
-    // of the file — 14 % of a large compare's open (TD-2026-08-06-159).
-    compare_tab.left_token_window.Reset(
-        compare_tab.model.rows.size(),
+    // The windows follow the rebuild: each restarts at its pane's first changed
+    // line (ResetFrom; from the top when nothing of it can be kept). The initial
+    // states come straight off the buffers: detection reads a bounded head, where
+    // splitting the left side into owned lines was 14 % of a large compare's open
+    // (TD-2026-08-06-159) and materializing the right side's snapshot 20 % of it.
+    compare_tab.left_token_window.ResetFrom(
+        left_first_changed_line, compare_tab.left_line_rows.size(),
         editor::SyntaxHighlighter::InitialState(compare_tab.path, *compare_tab.left_content));
-    // The buffer itself, not `Snapshot()`. Detection reads a bounded head through
-    // `LineWindow`, whereas asking for the snapshot materialized the WHOLE document
-    // into a second owned copy — 20 % of a large compare's open, and retained until
-    // the next edit. Nothing downstream here reads the snapshot (the serialization
-    // above walks the piece tree directly), so warming it bought nothing.
-    compare_tab.right_token_window.Reset(
-        compare_tab.model.rows.size(),
-        editor::SyntaxHighlighter::InitialState(compare_tab.path,
-                                                compare_tab.right_viewport.lines()));
+    compare_tab.right_token_window.ResetFrom(
+        right_first_changed_line, compare_tab.right_line_rows.size(),
+        editor::SyntaxHighlighter::InitialState(compare_tab.path, compare_tab.right_viewport.lines()));
+    compare_tab.token_windows_stale = false;
     compare_tab.syntax_highlighting_enabled = true;
     compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
   }

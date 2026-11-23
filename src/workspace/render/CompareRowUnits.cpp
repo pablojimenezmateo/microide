@@ -174,13 +174,13 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
         content = MixText(content, model.right_text, long_line_stand_in);
         content = MixSpans(content, model.left_changed_spans);
         content = MixSpans(content, model.right_changed_spans);
-        content = MixTokens(content, compare.left_token_window.Tokens(model_index));
+        content = MixTokens(content, CompareRowLeftTokens(compare, model));
         // WHICH window the working side reads, too (CompareRowRightTokensAliasLeft):
         // it is paint's input as the tokens are, and it follows the two panes'
         // syntax states, which can move with neither window's tokens for the row
         // moving (soak 185e45a464f9, 47359511506b, 832463f2425b, b3d25c24c346).
         content = Mix(content, CompareRowRightTokensAliasLeft(compare, model_index) ? 1u : 2u);
-        content = MixTokens(content, compare.right_token_window.Tokens(model_index));
+        content = MixTokens(content, CompareRowRightOwnTokens(compare, model));
         // The working side's plugin and language-server decorations on its line
         // (its text styles and gutter mark are drawn; the line's whole key is
         // folded, as an editor row folds it).

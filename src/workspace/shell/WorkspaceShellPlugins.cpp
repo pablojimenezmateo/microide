@@ -581,6 +581,9 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
       if (language.empty() || !changed_language_set.contains(language)) {
         continue;
       }
+      // The language's rules changed: the panes' syntax states are those of the
+      // old ones, whatever the refresh finds to rebuild. From the top (frame prep).
+      tab.compare->token_windows_stale = true;
       RefreshCompareTabDerivedState(*tab.compare);
       continue;
     }

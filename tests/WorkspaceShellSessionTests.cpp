@@ -1027,10 +1027,14 @@ void TestWorkspaceShellCompareSyntaxTokensAreDeferredUntilRender() {
          "working-tree comparison should open for deferred syntax-token fixture");
 
   const auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  Expect(compare.left_token_window.line_count() == compare.model.rows.size(),
-         "deferred compare syntax should size left token cache to compare rows");
-  Expect(compare.right_token_window.line_count() == compare.model.rows.size(),
-         "deferred compare syntax should size right token cache to compare rows");
+  // Each window is addressed by its own pane's lines (three, and the trailing
+  // empty one).
+  Expect(compare.left_token_window.line_count() == compare.left_line_rows.size() &&
+             compare.left_token_window.line_count() >= 3,
+         "deferred compare syntax should size the left token window to the left pane's lines");
+  Expect(compare.right_token_window.line_count() == compare.right_line_rows.size() &&
+             compare.right_token_window.line_count() >= 3,
+         "deferred compare syntax should size the right token window to the right pane's lines");
   Expect(compare.left_token_window.frontier() == 0 && compare.right_token_window.frontier() == 0,
          "deferred compare syntax should avoid eager tokenization during tab open");
 }

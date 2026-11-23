@@ -40,6 +40,7 @@
 #include "workspace/HoverTextWrap.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/git/BranchReviewStateBridge.h"
+#include "workspace/git/CompareTabLoad.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
 #include "workspace/render/CompareRowUnits.h"
@@ -7930,26 +7931,30 @@ void TestAnUnchangedCompareRowReadsTheLeftTokensUntilTheRightWalkHasIt() {
   std::size_t aliased_count = 0;
   for (std::size_t row = 0; row < rows; ++row) {
     aliased[row] = workspace::CompareRowRightTokensAliasLeft(compare, row) &&
-                   !compare.left_token_window.Tokens(row).empty();
+                   !workspace::CompareRowLeftTokens(compare, compare.model.rows[row]).empty();
     aliased_count += aliased[row] ? 1 : 0;
   }
   Expect(aliased_count >= 10, "the unchanged rows read the left window's tokens (" + std::to_string(aliased_count) +
                                   " of " + std::to_string(rows) + ")");
   const std::vector<workspace::DerivedDamage::Unit> caught_up = keys();
   const editor::SyntaxState initial = compare.right_token_window.StateBefore(0);
-  const auto right_line = [&](std::size_t row) -> std::string_view {
-    const compare::CompareRow& model = compare.model.rows[row];
-    return model.right_line > 0 ? std::string_view(model.right_text) : std::string_view{};
+  // (The windows are addressed by each pane's lines, the rows through the tab's
+  // line index.)
+  const std::size_t right_lines = compare.right_line_rows.size();
+  const auto right_line = [&](std::size_t line) -> std::string_view {
+    return compare.model.rows[compare.right_line_rows[line]].right_text;
   };
-  const auto declines_aliased = [&](std::size_t row) { return !workspace::CompareRowRightTokensAliasLeft(compare, row); };
+  const auto declines_aliased = [&](std::size_t line) {
+    return !workspace::CompareRowRightTokensAliasLeft(compare, compare.right_line_rows[line]);
+  };
 
   // The right pane's walk as a frame whose time ran out leaves it: restarted, one
   // step in. The left pane's is whole, its tokens what they were. Every unchanged
   // row still reads them -- the frame paints what the one before painted -- and
   // no key moves but the changed row's, whose own tokens are gone for now.
-  compare.right_token_window.Reset(rows, initial);
-  compare.right_token_window.EnsureWindow(0, rows, compare.path, workspace::SurfaceTokenWindow::WalkBudget{1},
-                                          right_line, declines_aliased);
+  compare.right_token_window.Reset(right_lines, initial);
+  compare.right_token_window.EnsureWindow(0, right_lines, compare.path,
+                                          workspace::SurfaceTokenWindow::WalkBudget{1}, right_line, declines_aliased);
   Expect(compare.right_token_window.frontier() == 1, "the right walk is one row in");
   std::size_t still_aliased = 0;
   for (std::size_t row = 0; row < rows; ++row) {
@@ -7964,16 +7969,17 @@ void TestAnUnchangedCompareRowReadsTheLeftTokensUntilTheRightWalkHasIt() {
   // The right pane's walk past the rows from ANOTHER state (a comment opened above
   // them on its side), their tokens not filled yet: now they read the right
   // window, and each is rekeyed though neither window's tokens for it moved.
-  compare.right_token_window.Reset(rows, initial);
+  compare.right_token_window.Reset(right_lines, initial);
   compare.right_token_window.EnsureWindow(
-      rows, rows, compare.path, workspace::SurfaceTokenWindow::WalkBudget{rows},
-      [&](std::size_t row) -> std::string_view { return row == 0 ? std::string_view("/* opened") : right_line(row); },
+      right_lines, right_lines, compare.path, workspace::SurfaceTokenWindow::WalkBudget{right_lines},
+      [&](std::size_t line) -> std::string_view { return line == 0 ? std::string_view("/* opened") : right_line(line); },
       declines_aliased);
-  Expect(compare.right_token_window.frontier() == rows, "the right walk passed every row");
+  Expect(compare.right_token_window.frontier() == right_lines, "the right walk passed every line");
   std::size_t flipped = 0;
   for (std::size_t row = 0; row < rows; ++row) {
     if (aliased[row] && !workspace::CompareRowRightTokensAliasLeft(compare, row)) {
-      Expect(compare.right_token_window.Tokens(row).empty() && !compare.left_token_window.Tokens(row).empty(),
+      Expect(workspace::CompareRowRightOwnTokens(compare, compare.model.rows[row]).empty() &&
+                 !workspace::CompareRowLeftTokens(compare, compare.model.rows[row]).empty(),
              "its own tokens are none yet, the left's are what they were");
       ++flipped;
     }
@@ -9271,7 +9277,286 @@ void TestATrackedLspRequestRepaintsItsStatusSegmentNotTheWindow() {
 
 }  // namespace
 
+// ---- a compare tab's syntax windows are addressed by each pane's lines ------------
+namespace {
+
+// A file whose lines' syntax colours depend on the lines above them: a block
+// comment opens every 40 lines and closes 20 lines later.
+std::string StatefulSource(int lines, int changed_every) {
+  std::string text;
+  for (int i = 0; i < lines; ++i) {
+    const int phase = i % 40;
+    if (phase == 0) {
+      text += "/* region " + std::to_string(i) + " opens here\n";
+    } else if (phase == 20) {
+      text += "region closes here */\n";
+    } else if (changed_every > 0 && i % changed_every == 7) {
+      text += "long changed_" + std::to_string(i) + " = 2;  // on this side\n";
+    } else {
+      text += "int value_" + std::to_string(i) + " = 1;  // note\n";
+    }
+  }
+  return text;
+}
+
+// Frames until both panes' walks have what is on screen.
+void SettleCompare(FlowFixture& fixture) {
+  for (int frame = 0; frame < 8; ++frame) {
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  }
+}
+
+// Every token buffer the windows hold is what tokenizing its pane from the top
+// gives for that line, and a row that draws the left pane's tokens on its
+// working side draws what the right pane's own walk gives. Returns how many
+// buffers were held.
+std::size_t ExpectCompareTokensOfAFreshWalk(FlowFixture& fixture, const std::string& what, bool caret_row_on_screen = true) {
+  workspace::CompareTabState& tab = TestAccess::ActiveCompare(fixture.shell);
+  const std::vector<compare::CompareRow>& rows = tab.model.rows;
+  const auto walk = [&](const std::vector<std::uint32_t>& line_rows, bool left, editor::SyntaxState state) {
+    std::vector<std::vector<editor::SyntaxTokenKind>> tokens(line_rows.size());
+    for (std::size_t line = 0; line < line_rows.size(); ++line) {
+      const compare::CompareRow& row = rows[line_rows[line]];
+      state = editor::SyntaxHighlighter::HighlightLineInto(left ? row.left_text : row.right_text, tab.path, state,
+                                                           &tokens[line]);
+    }
+    return tokens;
+  };
+  const auto left =
+      walk(tab.left_line_rows, true, editor::SyntaxHighlighter::InitialState(tab.path, *tab.left_content));
+  const auto right = walk(tab.right_line_rows, false,
+                          editor::SyntaxHighlighter::InitialState(tab.path, tab.right_viewport.lines()));
+  std::size_t held = 0;
+  std::size_t wrong = 0;
+  std::string first_wrong;
+  const auto note = [&](bool ok, const std::string& where) {
+    if (!ok && wrong++ == 0) {
+      first_wrong = where;
+    }
+  };
+  for (std::size_t index = 0; index < rows.size(); ++index) {
+    const compare::CompareRow& row = rows[index];
+    const auto& left_held = workspace::CompareRowLeftTokens(tab, row);
+    const auto& right_held = workspace::CompareRowRightOwnTokens(tab, row);
+    if (!left_held.empty()) {
+      ++held;
+      note(left_held == left[static_cast<std::size_t>(row.left_line - 1)], "left line " + std::to_string(row.left_line));
+      if (workspace::CompareRowRightTokensAliasLeft(tab, index)) {
+        note(left_held == right[static_cast<std::size_t>(row.right_line - 1)],
+             "right line " + std::to_string(row.right_line) + " (drawn from the left pane's)");
+      }
+    }
+    if (!right_held.empty()) {
+      ++held;
+      note(right_held == right[static_cast<std::size_t>(row.right_line - 1)],
+           "right line " + std::to_string(row.right_line));
+    }
+  }
+  Expect(wrong == 0, what + ": " + std::to_string(wrong) +
+                         " token buffers are not what a walk from the top gives, first at " + first_wrong);
+  // The caret's row, when it is on screen, draws tokens.
+  const std::size_t caret_line = tab.right_viewport.cursor_line();
+  if (caret_row_on_screen && caret_line < tab.right_line_rows.size()) {
+    const std::size_t caret_row = tab.right_line_rows[caret_line];
+    const auto& drawn = workspace::CompareRowRightTokensAliasLeft(tab, caret_row)
+                            ? workspace::CompareRowLeftTokens(tab, rows[caret_row])
+                            : workspace::CompareRowRightOwnTokens(tab, rows[caret_row]);
+    Expect(!drawn.empty() || rows[caret_row].right_text.empty(), what + ": the caret's row draws its tokens");
+  }
+  Expect(held >= 20, what + ": the windows hold the rows on screen (" + std::to_string(held) + ")");
+  return held;
+}
+
+struct CompareTokensFixture {
+  FlowFixture fixture;
+  std::filesystem::path right_path;
+
+  CompareTokensFixture() : fixture("left.cpp", StatefulSource(400, 0)) {
+    right_path = fixture.root / "right.cpp";
+    WriteFile(right_path, StatefulSource(400, 23));
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                          "compare-files " + fixture.file.string() + " " + right_path.string()),
+           "compare-files should open a diff");
+    compare().right_view_active = true;
+    TestAccess::SetFocusEditor(fixture.shell);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    Settle();
+  }
+
+  workspace::CompareTabState& compare() { return TestAccess::ActiveCompare(fixture.shell); }
+  void Settle() { SettleCompare(fixture); }
+  std::size_t ExpectTokensOfAFreshWalk(const std::string& what, bool caret_row_on_screen = true) {
+    return ExpectCompareTokensOfAFreshWalk(fixture, what, caret_row_on_screen);
+  }
+};
+
+// A keystroke in a compare tab's working side restarts the right pane's syntax
+// walk at the edited line and leaves the left pane's alone: both restarted at the
+// top of the file, so a keystroke at line 40,000 walked 80,000 rows. Whatever the
+// edit, what the windows then hold is what a walk from the top gives.
+void TestACompareEditRestartsItsSyntaxWalkAtTheEditedLine() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  CompareTokensFixture f;
+  workspace::CompareTabState& tab = f.compare();
+  editor::TextViewport& right = tab.right_viewport;
+  f.ExpectTokensOfAFreshWalk("the diff as opened");
+
+  // Down the file, so there is a walk above the edit to keep: a changed line
+  // (always shown), and a key so the view follows the caret there.
+  constexpr std::size_t kLine = 237;
+  right.MoveCursorTo(kLine, 4);
+  (void)DispatchEvents(f.fixture.shell, {KeyDownEvent(SDLK_RIGHT)});
+  f.Settle();
+  f.ExpectTokensOfAFreshWalk("the caret at line 237");
+  const std::size_t left_walked = tab.left_token_window.frontier();
+  const std::size_t right_walked = tab.right_token_window.frontier();
+  Expect(left_walked > kLine && right_walked > kLine, "both panes are walked past the caret's line (" +
+                                                          std::to_string(left_walked) + ", " +
+                                                          std::to_string(right_walked) + ")");
+
+  // A character, through the keyboard.
+  (void)DispatchEvents(f.fixture.shell, {TextInputEvent("x")});
+  Expect(tab.left_token_window.frontier() == left_walked,
+         "a keystroke in the working side leaves the left pane's walk where it was: " +
+             std::to_string(tab.left_token_window.frontier()) + " of " + std::to_string(left_walked));
+  Expect(tab.right_token_window.frontier() == kLine,
+         "and restarts the right pane's at the edited line: " + std::to_string(tab.right_token_window.frontier()));
+  f.Settle();
+  f.ExpectTokensOfAFreshWalk("a character typed at line 237");
+
+  const auto edited = [&](const std::string& what) {
+    TestAccess::RefreshActiveCompareDerivedState(f.fixture.shell);
+    Expect(tab.left_token_window.frontier() == left_walked, what + ": the left pane's walk stands");
+    f.Settle();
+    f.ExpectTokensOfAFreshWalk(what);
+  };
+  // A comment opened: every line below resumes from another state.
+  right.MoveCursorTo(245, 0);
+  right.InsertText("/* opened here ");
+  edited("a block comment opened at line 245");
+  // A line added, and three pasted: the lines below move.
+  right.MoveCursorTo(247, 0);
+  right.InsertText("\n");
+  edited("a line added at line 247");
+  right.InsertText("int pasted_a = 1;\nint pasted_b = 2; /* and\nclosed */ int pasted_c = 3;\n");
+  edited("three lines pasted");
+  // A line taken away.
+  right.MoveCursorTo(240, 0);
+  right.MoveCursorTo(241, 0, /*extend_selection=*/true);
+  right.Backspace();
+  edited("a line deleted at line 240");
+  // Undone, twice; then redone.
+  Expect(right.Undo() && right.Undo(), "the edits undo");
+  edited("two edits undone");
+  Expect(right.Redo(), "one redoes");
+  edited("one redone");
+  // The first line: nothing above it to keep.
+  right.MoveCursorTo(0, 0);
+  right.InsertText("// a first line\n");
+  TestAccess::RefreshActiveCompareDerivedState(f.fixture.shell);
+  Expect(tab.right_token_window.frontier() == 0, "an edit of the first line restarts the right pane's walk at the top");
+  f.Settle();
+  f.ExpectTokensOfAFreshWalk("a line added at the top", /*caret_row_on_screen=*/false);
+  // And the bottom of the file after all of it: the walk goes on from where it restarted.
+  right.MoveCursorTo(right.line_count() - 2, 0);
+  (void)DispatchEvents(f.fixture.shell, {KeyDownEvent(SDLK_RIGHT)});
+  f.Settle();
+  Expect(tab.right_token_window.frontier() > 380, "the walk reached the bottom of the file: " +
+                                                      std::to_string(tab.right_token_window.frontier()));
+  f.ExpectTokensOfAFreshWalk("scrolled to the bottom after the edits", /*caret_row_on_screen=*/false);
+}
+
+// The ways a pane's whole buffer is replaced under an open compare: none may keep
+// a syntax state of the text it replaced.
+void TestACompareWhoseBufferIsReplacedRestartsItsSyntaxWalk() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  {
+    CompareTokensFixture f;
+    workspace::CompareTabState& tab = f.compare();
+    editor::TextViewport& right = tab.right_viewport;
+    right.MoveCursorTo(237, 4);
+    (void)DispatchEvents(f.fixture.shell, {KeyDownEvent(SDLK_RIGHT)});
+    f.Settle();
+    f.ExpectTokensOfAFreshWalk("the caret at line 237");
+
+    // The whole text replaced by one edit (a paste over everything): the same
+    // three lines, then a comment closed early and another text.
+    const std::string before = StatefulSource(400, 23);
+    std::size_t third_line_end = 0;
+    for (int line = 0; line < 3; ++line) {
+      third_line_end = before.find('\n', third_line_end) + 1;
+    }
+    const std::string replaced =
+        before.substr(0, third_line_end) + "*/ int closed_early = 1;\n" + StatefulSource(380, 11);
+    right.MoveCursorTo(0, 0);
+    right.MoveCursorTo(right.line_count() - 1, right.lines()[right.line_count() - 1].size(), /*extend_selection=*/true);
+    right.InsertText(replaced);
+    TestAccess::RefreshActiveCompareDerivedState(f.fixture.shell);
+    Expect(tab.right_token_window.frontier() == 3,
+           "a text replaced whole restarts the right pane's walk at its first line that differs: " +
+               std::to_string(tab.right_token_window.frontier()));
+    f.Settle();
+    f.ExpectTokensOfAFreshWalk("the working side's text replaced whole", /*caret_row_on_screen=*/false);
+
+    // The left pane's buffer replaced, as a checkout of another revision does.
+    tab.left_content = compare::MakeCompareText("/* the left pane is one comment\n" + StatefulSource(300, 0));
+    TestAccess::RefreshActiveCompareDerivedState(f.fixture.shell);
+    Expect(tab.left_token_window.frontier() == 0, "another left buffer restarts the left pane's walk at the top");
+    f.Settle();
+    f.ExpectTokensOfAFreshWalk("the left pane's buffer replaced", /*caret_row_on_screen=*/false);
+
+    // The model replaced by someone other than the edit's own rebuild (a load's or
+    // a refresh's result, applied whole): the windows are reset by the next frame.
+    const std::string loaded = "/* loaded: a comment from the top\n" + StatefulSource(350, 5);
+    compare::BuildCompareModelInto(tab.model, tab.left_content, compare::MakeCompareText(loaded), tab.build_options);
+    workspace::MarkCompareModelBuilt(tab, tab.build_options, tab.derived_left_line_count);
+    f.Settle();
+    f.ExpectTokensOfAFreshWalk("a model applied whole", /*caret_row_on_screen=*/false);
+  }
+
+  // A working-tree diff whose file changes on disk: the watcher's path, a read off
+  // the shell thread, and its result applied whole.
+  {
+    // (A file no editor tab holds: the diff's working side is then the file's.)
+    FlowFixture fixture("notes.txt", "notes\n");
+    const std::filesystem::path tracked = fixture.root / "tracked.cpp";
+    WriteFile(tracked, StatefulSource(240, 0));
+    InitializeGitRepo(fixture.root);
+    CommitAll(fixture.root, "base", "base");
+    WriteFile(tracked, StatefulSource(240, 23));
+    Expect(TestAccess::OpenWorkingTreeComparison(fixture.shell, tracked, "HEAD", "HEAD"), "the diff opens");
+    const auto settle = [&]() {
+      for (int round = 0; round < 3; ++round) {
+        SettleCompare(fixture);
+        TestAccess::FlushPendingFileReads(fixture.shell);
+      }
+      SettleCompare(fixture);
+    };
+    settle();
+    ExpectCompareTokensOfAFreshWalk(fixture, "a working-tree diff as opened", /*caret_row_on_screen=*/false);
+    WriteFile(tracked, "/* changed on disk: a comment from the top\n" + StatefulSource(260, 7));
+    TestAccess::MarkCompareTabsStaleForPath(fixture.shell, tracked);
+    settle();
+    workspace::CompareTabState& tab = TestAccess::ActiveCompare(fixture.shell);
+    Expect(tab.right_line_rows.size() > 255, "the diff took the file's new text (" +
+                                                 std::to_string(tab.right_line_rows.size()) + " lines)");
+    ExpectCompareTokensOfAFreshWalk(fixture, "the file changed on disk", /*caret_row_on_screen=*/false);
+  }
+}
+
+}  // namespace
+
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/ACompareEditRestartsItsSyntaxWalkAtTheEditedLine",
+          TestACompareEditRestartsItsSyntaxWalkAtTheEditedLine);
+  AddTest(tests, "QaFlowRegression/ACompareWhoseBufferIsReplacedRestartsItsSyntaxWalk",
+          TestACompareWhoseBufferIsReplacedRestartsItsSyntaxWalk);
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged", TestAnOpenMenusRowsRepaintWhatChanged);
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintAtFractionalScales",
           TestAnOpenMenusRowsRepaintAtFractionalScales);

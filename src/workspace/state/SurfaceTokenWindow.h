@@ -66,6 +66,29 @@ class SurfaceTokenWindow {
     window_end_ = 0;
   }
 
+  // Re-points at a pane whose rows BEFORE `first_changed` are what they were and
+  // which now has `line_count` rows: an edit. Their end states stand, and so do
+  // their token buffers -- a row's tokens follow from its text and the state it
+  // resumes from, neither of which moved -- so the walk restarts at the edit, not
+  // at the top of the file: a keystroke at line 40,000 of a diff used to walk
+  // 40,000 rows again, on each pane. Rows from `first_changed` on hand their
+  // buffers to the pool. A pane that starts from another state (its language
+  // changed) is reset whole. `first_changed >= line_count` changes only the count.
+  void ResetFrom(std::size_t first_changed, std::size_t line_count, const editor::SyntaxState& initial_state) {
+    if (!(initial_state == initial_state_) || first_changed == 0) {
+      Reset(line_count, initial_state);
+      return;
+    }
+    first_changed = std::min(first_changed, line_count);
+    for (std::size_t row = std::max(window_start_, first_changed); row < window_end_ && row < tokens_.size(); ++row) {
+      RetireRow(row);
+    }
+    window_end_ = std::max(window_start_, std::min(window_end_, first_changed));
+    frontier_ = std::min(frontier_, first_changed);
+    end_states_.resize(line_count);
+    tokens_.resize(line_count);
+  }
+
   // How far one EnsureWindow walks the state frontier: `rows` at least, then on in
   // steps of `rows` while `until` has not passed. A row budget alone was sized for
   // the worst syntax, so a plain file a jump of 30,000 rows down took ~117 frames,

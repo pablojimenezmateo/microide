@@ -3390,8 +3390,9 @@ void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
   }
 
   auto& tokenized_compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  Expect(tokenized_compare.left_token_window.frontier() == tokenized_compare.model.rows.size(),
-         "tokenization reaches the deepest visible model row behind the collapsed run");
+  // (The windows are addressed by each pane's lines: the left pane's last line.)
+  Expect(tokenized_compare.left_token_window.frontier() == tokenized_compare.left_line_rows.size(),
+         "tokenization reaches the deepest visible line behind the collapsed run");
   // A deep content row (the bottom v299 change) is highlighted — not left blank.
   // Scan the tail (the very last model row is the phantom trailing empty line).
   bool deep_row_has_tokens = false;
@@ -3399,8 +3400,8 @@ void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
                                      ? tokenized_compare.model.rows.size() - 8
                                      : 0;
   for (std::size_t row = tail_start; row < tokenized_compare.model.rows.size(); ++row) {
-    if (!tokenized_compare.left_token_window.Tokens(row).empty() ||
-        !tokenized_compare.right_token_window.Tokens(row).empty()) {
+    if (!microide::workspace::CompareRowLeftTokens(tokenized_compare, tokenized_compare.model.rows[row]).empty() ||
+        !microide::workspace::CompareRowRightOwnTokens(tokenized_compare, tokenized_compare.model.rows[row]).empty()) {
       deep_row_has_tokens = true;
       break;
     }
