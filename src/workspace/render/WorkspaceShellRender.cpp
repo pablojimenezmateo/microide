@@ -1,3 +1,4 @@
+#include "workspace/render/WorkspaceShellRenderPrimitives.h"
 #include "workspace/render/NotificationToastPaint.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -128,6 +129,16 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   if (skip_window_chrome && dirty_rect_hint.has_value()) {
     const TabDragState& drag = context_.interaction_state.tab_drag;
     if (drag.dragging && drag.body_drop() && !DirtyHintSkips(dirty_rect_hint, drag.body_drop_rect)) {
+      skip_window_chrome = false;
+    }
+    // A tree drag's drop preview and ghost are drawn by the same pass, and are
+    // units of their own: a clip over the pane they tint, or under the ghost, that
+    // missed the strips repainted the pane bare (QA tree-drag, tree-dotdot-folder).
+    const PathDragState& path_drag = context_.interaction_state.path_drag;
+    if (path_drag.dragging &&
+        ((path_drag.target != PathDragState::Target::None &&
+          !DirtyHintSkips(dirty_rect_hint, path_drag.drop_rect)) ||
+         !DirtyHintSkips(dirty_rect_hint, detail::PathDragGhostRect(path_drag, text_renderer_)))) {
       skip_window_chrome = false;
     }
   }

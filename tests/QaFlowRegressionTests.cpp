@@ -1999,6 +1999,54 @@ void TestClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips() {
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after that");
 }
 
+// QA tree-drag, tree-dotdot-folder: a tree row dragged over a pane tints the pane
+// (or the half an edge drop carves) and carries a ghost of its name, both drawn
+// by the window chrome's pass and both units of their own. Once the motion owed a
+// frame and no longer named the window, a clip over the tinted pane or under the
+// ghost that missed every strip skipped that pass and repainted the pane bare.
+void TestATreeDragsPreviewAndGhostRepaintFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the start");
+  const auto& entries = TestAccess::TreeEntries(fixture.shell);
+  std::optional<std::size_t> index;
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].path.filename() == "main.txt") {
+      index = i;
+    }
+  }
+  const std::optional<SDL_FRect> row =
+      index.has_value() ? TestAccess::TreeSidebarRowRect(fixture.shell, *index) : std::nullopt;
+  Expect(row.has_value(), "main.txt's row is on screen");
+  if (!row) {
+    return;
+  }
+  const float x = row->x + row->w * 0.5f;
+  const float y = row->y + row->h * 0.5f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y)}),
+                      "the press on the row");
+  const SDL_FRect editor = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+  // Out of the tree, into the pane's middle, to its right edge, back to the middle.
+  for (const auto& [px, py, what] :
+       {std::tuple{x + 30.0f, y + 12.0f, "the drag leaving the row"},
+        std::tuple{editor.x + editor.w * 0.5f, editor.y + editor.h * 0.5f, "the drag over the pane"},
+        std::tuple{editor.x + editor.w - 12.0f, editor.y + editor.h * 0.5f, "the drag at the pane's right edge"},
+        std::tuple{editor.x + editor.w * 0.4f, editor.y + editor.h * 0.6f, "the drag back over the pane"}}) {
+    SDL_Event motion = MouseMotionEvent(px, py);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}), what);
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP,
+                                                                      editor.x + editor.w * 0.4f,
+                                                                      editor.y + editor.h * 0.6f)}),
+                      "the drop");
+}
+
 // The QA monkey (seed 16): with the find widget up, a double-click selected a
 // word and a single click elsewhere took the selection away -- and the frame
 // repainted only the find widget, leaving the word highlighted on screen.
@@ -11312,6 +11360,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/RepublishedTextStylesAndGutterMarksRepaint",
           TestRepublishedTextStylesAndGutterMarksRepaint);
   AddTest(tests, "QaFlowRegression/ABannerRepaintsFromAFrame", TestABannerRepaintsFromAFrame);
+  AddTest(tests, "QaFlowRegression/ATreeDragsPreviewAndGhostRepaintFromAFrame",
+          TestATreeDragsPreviewAndGhostRepaintFromAFrame);
   AddTest(tests, "QaFlowRegression/ATabActivatedWithNoRequestRepaintsItsStrip",
           TestATabActivatedWithNoRequestRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
