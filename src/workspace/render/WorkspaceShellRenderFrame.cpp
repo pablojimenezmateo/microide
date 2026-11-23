@@ -13,6 +13,8 @@
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/MenuPopupPaint.h"
+#include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/render/SearchSidebarPaint.h"
 #include "workspace/render/SettingsCardPaint.h"
 #include "workspace/render/TabStripPaint.h"
 #include "workspace/render/SidebarModeRowPaint.h"
@@ -1927,16 +1929,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // frame repainting only the menu bar over a tree that had moved under it.
   // (The file tree and Source Control are not among them: their rows, buttons and
   // scrollbars are derived units of their own -- DerivedSurface::SidebarTree and
-  // DerivedSurface::GitPanel -- so a selection, a scroll or a rebuilt list repaints
-  // the rows it changed, not the sidebar. The unit keeps its place with no rect,
-  // and a switch to or from either view repaints the sidebar.)
-  if (sidebar_vm.visible && ActiveSidebarMode() != SidebarMode::Tree && ActiveSidebarMode() != SidebarMode::Git) {
+  // DerivedSurface::GitPanel, and likewise Search and the shared list
+  // (SidebarViewIsDerived) -- so a selection, a scroll or a rebuilt list repaints
+  // the rows it changed, not the sidebar. The unit keeps its place with no rect.)
+  if (sidebar_vm.visible && !SidebarViewIsDerived(ActiveSidebarMode())) {
     const SidebarState& sidebar = project_state.sidebar;
     std::size_t selected = 0;
     switch (ActiveSidebarMode()) {
       case SidebarMode::Problems: selected = sidebar.problems.selected_index; break;
       case SidebarMode::Tests: selected = sidebar.tests.selected_index; break;
-      case SidebarMode::Search: selected = project_state.overlay.workflow.project_search.selected_index; break;
       default:
         if (UsesPluginItemSurface(ActiveSidebarMode())) {
           selected = sidebar.plugin.selected_index;
@@ -2515,6 +2516,97 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::SidebarScrollbar;
     }
     PrepareSidebarListFrame(frame_state_, inputs);
+  }
+  // The Search panel, the same way: its fields and buttons, the status line, each
+  // visible row of the result list, its note and its scrollbar are units laid out
+  // here, with the text they show copied -- so a row repaints whoever changed
+  // what it shows: a batch of hits landing from the search's workers, a key that
+  // moved the selection, the pointer.
+  {
+    ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+    SearchSidebarInputs inputs{
+        .renderer = renderer,
+        .visible = sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Search,
+        .theme = &theme_,
+        .text_renderer = &text_renderer_,
+        .pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); },
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    // The focused field's visible text, caret and selection (the text-input pass
+    // draws the last two over the field): kept alive until the panel has copied it.
+    std::optional<TextInputVisual> visual;
+    if (inputs.visible) {
+      const SDL_FRect& sidebar = layout.sidebar;
+      const ProjectSearchState& search = project_state.overlay.workflow.project_search;
+      const TextInputSurface current_surface = prepare_cached_text_input_vm_->current_surface;
+      if (IsSidebarSearchFieldSurface(current_surface)) {
+        visual = BuildActiveTextInputVisual(layout, std::nullopt);
+      }
+      const std::string_view fallbacks[] = {
+          sidebar_vm.query_fallback_text,
+          sidebar_vm.replace_fallback_text,
+          sidebar_vm.include_fallback_text,
+          sidebar_vm.exclude_fallback_text,
+      };
+      const auto fields = project_search_panel::SidebarSearchFieldRects(sidebar, search.scope_expanded);
+      for (std::size_t index = 0; index < fields.size(); ++index) {
+        const project_search_panel::FieldSlot& slot = fields[index];
+        SearchSidebarFieldInputs& field = inputs.fields[index];
+        field.rect = slot.rect;
+        field.text = fallbacks[index];
+        field.focused = current_surface == slot.surface;
+        field.editing = search.editing && search.edit_field == slot.field;
+        if (visual.has_value() && visual->surface == slot.surface) {
+          if (!visual->displayed_text.empty()) {
+            field.text = visual->displayed_text;
+          }
+          PaintFingerprint caret;
+          caret.Add(visual->cursor_x).Add(visual->selection_bytes.has_value());
+          if (visual->selection_bytes.has_value()) {
+            caret.Add(visual->selection_bytes->first).Add(visual->selection_bytes->second);
+          }
+          field.caret_key = caret.value();
+        }
+      }
+      inputs.buttons = {
+          SearchSidebarButtonPaint{.rect = project_search_panel::ModeButtonRect(sidebar),
+                                   .label = ProjectSearchModeButtonLabel(),
+                                   .active = search.options.pattern_mode == project::ProjectSearchPatternMode::Regex},
+          SearchSidebarButtonPaint{.rect = project_search_panel::CaseButtonRect(sidebar),
+                                   .label = ProjectSearchCaseButtonLabel(),
+                                   .active = search.options.case_mode != project::ProjectSearchCaseMode::Smart},
+          SearchSidebarButtonPaint{.rect = project_search_panel::HiddenButtonRect(sidebar),
+                                   .label = ProjectSearchHiddenButtonLabel(),
+                                   .active = search.options.show_hidden},
+          SearchSidebarButtonPaint{.rect = project_search_panel::ReplaceAllButtonRect(sidebar),
+                                   .label = "All",
+                                   .enabled = !search.query.text().empty()},
+          // "..." mirrors VS Code's show/hide-scope affordance.
+          SearchSidebarButtonPaint{.rect = project_search_panel::ScopeButtonRect(sidebar),
+                                   .label = "\xE2\x80\xA6",
+                                   .active = search.scope_expanded},
+      };
+      inputs.status_rect =
+          MakeRect(sidebar.x + project_search_panel::kInset,
+                   sidebar.y + project_search_panel::StatusTop(search.scope_expanded),
+                   std::max(0.0f, sidebar.w - project_search_panel::kInset * 2.0f), text_renderer_.LineHeight());
+      inputs.status = sidebar_vm.project_search_status_text;
+      const std::vector<int>& line_map = BuildProjectSearchLineMap();
+      inputs.results = search.results;
+      inputs.line_map = line_map;
+      inputs.selected_index = search.selected_index;
+      inputs.list = ComputeProjectSearchSidebarListLayout(sidebar, line_map.size());
+      // The stored scroll, clamped to the list this frame lays out: the wheel and
+      // the scrollbar scroll past the selection freely, and only navigation pulls
+      // the selected row back into view (MoveProjectSearchSelection). Paint used
+      // to store it.
+      project_state.sidebar.scroll_row = inputs.list.scroll_row;
+      inputs.placeholder_rect = SidebarPlaceholderBox(sidebar, inputs.list);
+      inputs.empty_text = sidebar_vm.project_search_empty_text;
+      inputs.empty_is_error = sidebar_vm.project_search_empty_is_error;
+      inputs.scrollbar_active = context_.interaction_state.drag_target == DragTarget::SidebarScrollbar;
+    }
+    PrepareSearchSidebarFrame(frame_state_, inputs);
   }
   // Before any hover is resolved against the blame overlay or its card's damage is
   // decided: an overlay the active buffer has moved away from is this frame's

@@ -918,7 +918,7 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
   }
 }
 
-std::vector<int> WorkspaceShell::BuildProjectSearchLineMap() const {
+const std::vector<int>& WorkspaceShell::BuildProjectSearchLineMap() const {
   const auto& search = context_.current_project_state.overlay.workflow.project_search;
   // Rebuild only when `results` actually changed (revision mismatch), so a
   // hover/scroll/keystroke repaint reuses the prior grouped line map instead of

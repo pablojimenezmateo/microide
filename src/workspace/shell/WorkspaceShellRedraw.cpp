@@ -310,6 +310,11 @@ void WorkspaceShell::RequestPreparedFrame() {
   // click the editor answered with a frame repainted the whole editor surface.
   pending_render_invalidation_.frame = true;
   ++damage_generation_;
+  // What is under a still pointer may have changed, as with a rect: the cursor is
+  // resolved again. Without this a derived surface whose content changed under
+  // the pointer -- search results landing on the row it rests on -- kept the
+  // cursor of what was there until the pointer moved.
+  InvalidateCursorKindFingerprint();
 }
 
 void WorkspaceShell::RequestSidebarRedraw() {

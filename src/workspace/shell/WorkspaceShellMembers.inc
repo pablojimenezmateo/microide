@@ -1317,7 +1317,8 @@
   // Main-thread reconciliation of a completed off-thread replace-all (reload clean
   // tabs, refresh index/tree/finder, report status). Generation/root-guarded.
   void ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome);
-  std::vector<int> BuildProjectSearchLineMap() const;
+  // The memo itself: valid until the results next change.
+  const std::vector<int>& BuildProjectSearchLineMap() const;
   int ProjectSearchLineForResult(std::size_t index) const;
   void MoveBufferSearchSelection(int delta);
   void MoveProjectSearchSelection(int delta);

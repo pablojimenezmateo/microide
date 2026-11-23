@@ -48,6 +48,9 @@ enum class DerivedSurface : std::uint8_t {
   SidebarTree,
   // The sidebar's shared two-column list: Problems, Tests, Outline, plugin items.
   SidebarList,
+  // The sidebar's Search panel: its fields, buttons, status line, scrollbar and
+  // placeholder, then a unit per visible result row.
+  SidebarSearch,
   // The sidebar's mode tab row, shared by every sidebar view.
   SidebarModeRow,
   // The window's chrome a frame decides as a whole: its regions, the caret, the

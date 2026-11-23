@@ -202,6 +202,35 @@ struct TreeSidebarButtonPaint {
   bool enabled = false;
   bool hovered = false;
 };
+// The sidebar's Search panel (SearchSidebarPaint.h): a text field, a toggle or
+// action button, and a row of the result list -- a file's path, or a match as
+// "line:col  preview" with the matched span's place in that text. Every view is
+// into the panel's own `text`.
+struct SearchSidebarFieldPaint {
+  SDL_FRect rect{};  // its frame; empty: not laid out (a collapsed scope field)
+  // The frame and the text's line box, which starts 3 px into it and can end
+  // below it: the field's unit and paint element.
+  SDL_FRect bounds{};
+  std::string_view text;
+  bool focused = false;  // it has the keyboard: the accent frame
+  bool editing = false;  // its text in the primary ink
+};
+struct SearchSidebarButtonPaint {
+  SDL_FRect rect{};
+  std::string_view label;
+  bool enabled = true;
+  bool hovered = false;
+  bool active = false;
+};
+struct SearchSidebarRowPaint {
+  SDL_FRect rect{};
+  std::string_view text;
+  bool file = false;  // a file's header row, not a match
+  bool selected = false;
+  bool hovered = false;
+  std::size_t match_start = 0;  // the matched span, in bytes of `text`; none when
+  std::size_t match_length = 0;  // the length is 0
+};
 // A row of the file tree. `label` views its tree entry.
 struct TreeSidebarRowPaint {
   SDL_FRect rect{};
@@ -636,6 +665,24 @@ struct PreparedFrameState {
     std::optional<PanelScrollbarPaint> scrollbar;
   };
   SidebarListPaint sidebar_list;
+  // ---- the sidebar's Search panel (derived damage) ----
+  // Laid out by PrepareSearchSidebarFrame; PaintSearchSidebar draws only this.
+  struct SearchSidebarPaint {
+    bool visible = false;
+    std::array<SearchSidebarFieldPaint, 4> fields{};    // query, replace, include, exclude
+    std::array<SearchSidebarButtonPaint, 5> buttons{};  // mode, case, hidden, replace all, scope
+    SDL_FRect status_rect{};
+    std::string_view status;
+    std::vector<SearchSidebarRowPaint> rows;
+    SDL_FRect placeholder_rect{};
+    std::string_view placeholder;  // an empty list's note
+    bool placeholder_error = false;
+    std::optional<PanelScrollbarPaint> scrollbar;
+    // What the views above are into: copied at prep, so a search that lands or a
+    // field edited under the prepared frame changes nothing it paints.
+    std::string text;
+  };
+  SearchSidebarPaint search_sidebar;
   // ---- the Source Control panel's head (derived-damage 4.1, clip-discipline 4.1) ----
   // Laid out by PrepareGitPanelFrame; PaintGitPanel draws only this.
   struct GitPanelPaint {

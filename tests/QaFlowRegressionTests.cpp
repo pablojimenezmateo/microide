@@ -8835,6 +8835,9 @@ void TestADerivedSidebarViewCommitsItsSurfacesUnits() {
       case SidebarMode::Git:
         TestAccess::ShowGitSidebar(fixture.shell);
         break;
+      case SidebarMode::Search:
+        TestAccess::ShowSearchSidebar(fixture.shell, "", false);
+        break;
       case SidebarMode::Problems:
         TestAccess::ShowProblemsSidebar(fixture.shell);
         break;
@@ -9987,6 +9990,203 @@ void TestAnUnfocusedDiffsThumbsFollowAnEditInAnotherPane() {
   }
 }
 
+// The sidebar's Search panel is derived: its fields, buttons, status line and each
+// row of the result list are units. A key, a click, a hover, an edit of a field
+// and a batch of hits landing each owe a frame and name no rect, and the frame
+// repaints what changed -- a row lit or selected is a row of the sidebar, where
+// every one of them named the sidebar's rect.
+void TestTheSearchPanelRepaintsWhatChangedFromAFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string many;
+  for (int i = 0; i < 6; ++i) {
+    many += "alpha line " + std::to_string(i) + " with beta\n";
+  }
+  FlowFixture fixture("notes.txt", many);
+  WriteFile(fixture.root / "src" / "one.txt", "alpha in one\nno match here\nalpha again\n");
+  WriteFile(fixture.root / "src" / "two.txt", "beta only\nalpha in two\n");
+  TestAccess::ShowSearchSidebar(fixture.shell, "alpha", false);
+  WaitForProjectSearch(fixture.shell);
+  Expect(TestAccess::ProjectSearchResults(fixture.shell).size() >= 6,
+         "the search finds its alphas: " + std::to_string(TestAccess::ProjectSearchResults(fixture.shell).size()));
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the Search panel with its results");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::SidebarSearch) > 12,
+         "the panel lays out its fields, buttons and rows");
+  const SDL_FRect sidebar = TestAccess::CurrentLayout(fixture.shell).sidebar;
+  const auto frame_only = [&](const workspace::RenderInvalidation& asked, const std::string& what) {
+    Expect(!asked.full && asked.rects.empty(),
+           what + " names no rect (full=" + std::to_string(asked.full) + " rects=" +
+               std::to_string(asked.rects.size()) + ")");
+    fixture.ExpectFresh(asked, what);
+  };
+
+  // A hit's preview follows an edit of its line -- the match where it was, the
+  // text after it longer -- with nothing said about the sidebar.
+  {
+    editor::TextViewport& editor = TestAccess::ActiveEditor(fixture.shell);
+    editor.MoveCursorTo(0, std::string("alpha line 0 with beta").size());
+    editor.InsertText(" and more");
+    const SDL_FRect editor_surface = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+    fixture.ExpectFresh(workspace::RenderInvalidation{.full = false, .rects = {editor_surface}},
+                        "a hit's preview following an edit of its line");
+  }
+
+  // The pointer down the result rows: each lights a row, the last unlights it.
+  float lit = 0.0f;
+  for (std::size_t result = 0; result < 4; ++result) {
+    const SDL_FRect row = TestAccess::ProjectSearchResultRect(fixture.shell, result);
+    const workspace::RenderInvalidation asked =
+        DispatchEvents(fixture.shell, {MouseMotionEvent(row.x + 20.0f, row.y + row.h * 0.5f)});
+    // (The motion path names the two rows' hover rects itself; the share is what counts.)
+    lit = std::max(lit, DamagedShareOf(fixture, sidebar, asked));
+  }
+  Expect(lit > 0.0f && lit < 0.15f, "a lit result row repaints its rows, not the sidebar: " + std::to_string(lit));
+  for (std::size_t result = 0; result < 4; ++result) {
+    const SDL_FRect row = TestAccess::ProjectSearchResultRect(fixture.shell, result);
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(row.x + 20.0f, row.y + row.h * 0.5f)}),
+                        "the pointer onto a result row");
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(900.0f, 300.0f)}), "the pointer off the list");
+
+  // The selection moved by the keys, from the list.
+  TestAccess::SetFocusSidebar(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the keyboard in the sidebar");
+  const float moved = DamagedShareOf(fixture, sidebar, DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}));
+  Expect(moved > 0.0f && moved < 0.15f,
+         "the selection moving a row repaints its rows, not the sidebar: " + std::to_string(moved));
+  for (int key = 0; key < 3; ++key) {
+    frame_only(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN)}), "Down the results");
+  }
+  frame_only(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_UP)}), "Up the results");
+
+  // An event that reruns the search: its hits land from the search's workers, at
+  // any moment -- between a frame's partial paint and the full one it is compared
+  // with, too -- so the search is let finish before the frame is painted.
+  const auto settled = [&](workspace::RenderInvalidation asked, const std::string& what) {
+    Expect(!asked.full, what + " asks for no full frame");
+    // Not running, and its results unchanged for a while: "not running" alone is
+    // also true before a worker has picked the search up.
+    std::uint64_t revision = TestAccess::ProjectSearchResultsRevision(fixture.shell);
+    Uint64 quiet_since = SDL_GetTicks();
+    Expect(WaitUntil(
+               [&]() {
+                 const std::uint64_t now_revision = TestAccess::ProjectSearchResultsRevision(fixture.shell);
+                 if (TestAccess::ProjectSearchRunning(fixture.shell) || now_revision != revision) {
+                   revision = now_revision;
+                   quiet_since = SDL_GetTicks();
+                   return false;
+                 }
+                 return SDL_GetTicks() - quiet_since >= 60;
+               },
+               std::chrono::seconds(5), std::chrono::milliseconds(5),
+               [&]() { TestAccess::ConsumeProjectSearchUpdates(fixture.shell); }),
+           "the project search should settle");
+    asked.Merge(fixture.shell.ConsumePendingRenderInvalidation());
+    fixture.ExpectFresh(asked, what);
+  };
+  const auto typed = [&](const SDL_Event& event, const std::string& what) {
+    const workspace::RenderInvalidation asked = DispatchEvents(fixture.shell, {event});
+    Expect(!asked.full && asked.rects.empty(),
+           what + " names no rect (full=" + std::to_string(asked.full) + " rects=" +
+               std::to_string(asked.rects.size()) + ")");
+    settled(asked, what);
+  };
+
+  // The toggles and the scope fields they unfold.
+  for (const char* name : {"button:search/case", "button:search/mode", "button:search/hidden", "button:search/scope",
+                           "button:search/scope", "button:search/case", "button:search/mode", "button:search/hidden"}) {
+    const auto button = fixture.ElementRect(name);
+    Expect(button.has_value(), std::string("the panel shows ") + name);
+    if (!button) {
+      return;
+    }
+    fixture.ExpectFresh(
+        DispatchEvents(fixture.shell, {MouseMotionEvent(button->x + button->w * 0.5f, button->y + button->h * 0.5f)}),
+        std::string("the pointer onto ") + name);
+    settled(fixture.Click(*button), std::string("a click on ") + name);
+  }
+
+  // The query edited: typed, selected, cut back -- and the hits that follow it.
+  const auto query = fixture.ElementRect("field:search/query");
+  Expect(query.has_value(), "the panel shows its query field");
+  if (!query) {
+    return;
+  }
+  // (Typing reruns the search after a pause, from the frame loop's scheduled
+  // wake, which a test does not run: Return commits the field and searches now.)
+  settled(fixture.Click(*query), "a click in the query field");
+  typed(KeyDownEvent(SDLK_END), "End in the query");
+  for (const char* text : {" ", "i", "n"}) {
+    typed(TextInputEvent(text), std::string("the query typed: ") + text);
+  }
+  SDL_Event shift_left = KeyDownEvent(SDLK_LEFT);
+  shift_left.key.mod = SDL_KMOD_LSHIFT;
+  for (int key = 0; key < 3; ++key) {
+    typed(shift_left, "Shift+Left selecting in the query");
+  }
+  typed(KeyDownEvent(SDLK_BACKSPACE), "the selection cut from the query");
+  // A query nothing matches: the list's note; and one that matches again.
+  for (const char* text : {"z", "q", "x"}) {
+    typed(TextInputEvent(text), std::string("the query typed: ") + text);
+  }
+  settled(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "Return: the query nothing matches");
+  Expect(TestAccess::ProjectSearchResults(fixture.shell).empty(), "nothing matches the query");
+  settled(fixture.Click(*query), "a click in the query field again");
+  typed(KeyDownEvent(SDLK_END), "End in the query");
+  for (int key = 0; key < 3; ++key) {
+    typed(KeyDownEvent(SDLK_BACKSPACE), "the query cut back");
+  }
+  settled(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "Return: the query that matches");
+  Expect(!TestAccess::ProjectSearchResults(fixture.shell).empty(), "the query matches again");
+
+  // Another view and back: the panel's units go and come.
+  TestAccess::ShowTreeSidebar(fixture.shell);
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the tree in the sidebar");
+  Expect(TestAccess::DerivedUnitCount(fixture.shell, workspace::DerivedSurface::SidebarSearch) == 0,
+         "the panel out of sight lays out nothing");
+  TestAccess::ShowSearchSidebar(fixture.shell, "beta", false);
+  settled(fixture.shell.ConsumePendingRenderInvalidation(), "Search again, another query");
+}
+
+// The panel paints the snapshot its frame prepared: results replaced under a
+// prepared frame -- a search that lands, asked about by a control query before
+// the frame paints -- change nothing it draws. Its rows used to view the live
+// results from inside the paint.
+void TestTheSearchPanelPaintsTheResultsItPrepared() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("notes.txt", "alpha one\nalpha two\nbeta three\n");
+  TestAccess::ShowSearchSidebar(fixture.shell, "alpha", false);
+  WaitForProjectSearch(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the Search panel with two hits");
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  SDL_Surface* painted = SDL_DuplicateSurface(fixture.canvas.surface());
+  Expect(painted != nullptr, "the painted frame should copy");
+
+  fixture.PinCaret();
+  const auto token = fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TestAccess::ShowSearchSidebar(fixture.shell, "beta", false);
+  WaitForProjectSearch(fixture.shell);
+  (void)TestAccess::ControlUi(fixture.shell);
+  fixture.shell.RenderClip(token, fixture.canvas.renderer(), fixture.width, fixture.height);
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  const render::PixelDiffResult diff = DiffSurfaces(painted, fixture.canvas.surface());
+  Expect(diff.identical(), "a frame paints the results it prepared; " + DescribePixelDiff(diff));
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(NothingAnnounced(), "the next frame, with the new results");
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  const render::PixelDiffResult shown = DiffSurfaces(painted, fixture.canvas.surface());
+  SDL_DestroySurface(painted);
+  Expect(!shown.identical(), "and that frame does show them");
+}
+
 // The names of the card's elements of `kind` ("settings-category", "setting"),
 // as the control channel lists them, with their rects.
 std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
@@ -10850,6 +11050,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheTabStripsPaintTheTabsTheyPrepared", TestTheTabStripsPaintTheTabsTheyPrepared);
   AddTest(tests, "QaFlowRegression/AnUnfocusedDiffsThumbsFollowAnEditInAnotherPane",
           TestAnUnfocusedDiffsThumbsFollowAnEditInAnotherPane);
+  AddTest(tests, "QaFlowRegression/TheSearchPanelRepaintsWhatChangedFromAFrame",
+          TestTheSearchPanelRepaintsWhatChangedFromAFrame);
+  AddTest(tests, "QaFlowRegression/TheSearchPanelPaintsTheResultsItPrepared",
+          TestTheSearchPanelPaintsTheResultsItPrepared);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);

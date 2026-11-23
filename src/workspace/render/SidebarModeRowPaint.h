@@ -27,15 +27,17 @@ constexpr bool SidebarViewUsesTheList(SidebarMode mode) {
   return UsesPluginItemSurface(mode) || mode == SidebarMode::Problems || mode == SidebarMode::Tests;
 }
 constexpr bool SidebarViewIsDerived(SidebarMode mode) {
-  return mode == SidebarMode::Tree || mode == SidebarMode::Git || SidebarViewUsesTheList(mode);
+  return mode == SidebarMode::Tree || mode == SidebarMode::Git || mode == SidebarMode::Search ||
+         SidebarViewUsesTheList(mode);
 }
 
 // The surface a derived view's own content is laid out on.
 constexpr DerivedSurface SidebarViewSurface(SidebarMode mode) {
-  return mode == SidebarMode::Tree  ? DerivedSurface::SidebarTree
-         : mode == SidebarMode::Git ? DerivedSurface::GitPanel
+  return mode == SidebarMode::Tree     ? DerivedSurface::SidebarTree
+         : mode == SidebarMode::Git    ? DerivedSurface::GitPanel
+         : mode == SidebarMode::Search ? DerivedSurface::SidebarSearch
          : SidebarViewUsesTheList(mode) ? DerivedSurface::SidebarList
-                                    : DerivedSurface::Count;
+                                        : DerivedSurface::Count;
 }
 
 struct SidebarModeRowInputs {

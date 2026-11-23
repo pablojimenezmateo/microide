@@ -866,6 +866,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/MenuPopupPaint.cpp
   src/workspace/render/BottomPanelTerminalGridPaint.cpp
   src/workspace/render/SettingsCardPaint.cpp
+  src/workspace/render/SearchSidebarPaint.cpp
   src/workspace/render/DiffDividerGeometry.cpp
   src/workspace/debug/DebugPaneService.cpp
   src/workspace/debug/DebugPaneMouseCoordinator.cpp
