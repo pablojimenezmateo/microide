@@ -483,6 +483,56 @@ void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
          "a newer row is a host change and is pulled");
 }
 
+// The same stale row after Keep Local, the user's one unconditional write: the
+// resolution recorded no `pushed_manifest`, so a row the host built before it was
+// taken as a host change. Naming bytes the mirror still holds (the base, here), the
+// pull wrote them back over the kept file from the object cache, unasked.
+void TestMirrorIgnoresAWatchRowOlderThanItsKeepLocal() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "base\n");
+  session.Connect();
+  session.Sync();
+  WriteFile(session.host / "a.txt", "host\n");
+  WriteFile(session.Tree("a.txt"), "mine\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"a.txt"}, "both sides moved");
+  // Compare fetches the host's side; its bytes are at hand afterwards.
+  session.engine->FetchHostCopy("a.txt", [](std::optional<std::filesystem::path>, std::string) {});
+  session.engine->ResolveConflict("a.txt", remote::MirrorSyncEngine::Resolution::KeepLocal);
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "mine\n", "Keep Local writes the host");
+  const std::uint64_t acknowledged = session.store->entries()["a.txt"].pushed_manifest;
+  // The newest manifest the mirror had taken: built before the answer, whatever
+  // the answer recorded.
+  const std::uint64_t before_answer = session.store->manifest_id();
+
+  const std::string_view stale = "base\n";
+  session.engine->WatchSink()(remote::RemoteWorkspace::WatchDelta{
+      .manifest_id = before_answer,
+      .deleted = {},
+      .rows = {remote::ManifestRow{.path = "a.txt",
+                                   .kind = remote::ManifestEntryKind::File,
+                                   .size = stale.size(),
+                                   .mode = 0644,
+                                   .mtime_ns = 0,
+                                   .hash = util::HashContent(stale),
+                                   .link_target = {}}},
+      .repository_moved = false});
+  session.engine->Flush();
+  Expect(ReadFile(session.Tree("a.txt")) == "mine\n" &&
+             session.engine->StateOf("a.txt") == ContentState::Current,
+         "a row older than the Keep Local is not taken over it");
+  WriteFile(session.Tree("a.txt"), "mine again\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "mine again\n" &&
+             session.engine->StateOf("a.txt") == ContentState::Current,
+         "so the next save lands, with no conflict");
+  Expect(before_answer > 0 && acknowledged >= before_answer,
+         "the answer's manifest is recorded, as a push's is: " + std::to_string(acknowledged));
+}
+
 // The skip above compares manifest ids, and those are one server tree's sequence:
 // a reconnect that reaches a new tree (the last connection to the old one went, or
 // the server restarted) starts again at 1. A push acknowledged at id N before the
@@ -1812,6 +1862,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorPushesLocalWritesUnderCompareAndSwap);
   AddTest(tests, "MirrorSyncEngine/IgnoresAWatchRowOlderThanItsPush",
           TestMirrorIgnoresAWatchRowOlderThanItsPush);
+  AddTest(tests, "MirrorSyncEngine/IgnoresAWatchRowOlderThanItsKeepLocal",
+          TestMirrorIgnoresAWatchRowOlderThanItsKeepLocal);
   AddTest(tests, "MirrorSyncEngine/ReconnectToANewServerFlushesTheJournal",
           TestMirrorReconnectToANewServerFlushesTheJournal);
   AddTest(tests, "MirrorSyncEngine/APushWhoseAnswerWasLostIsNotAConflict",

@@ -740,6 +740,8 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     entry->base = result.hash;
+    // As a push's: a row the host built before this write is older than it.
+    entry->pushed_manifest = result.manifest_id;
     if (entry->has_remote) {
       entry->remote.hash = *result.hash;
       entry->remote.size = content.size();
