@@ -4214,6 +4214,53 @@ void TestAHoverCardThatSaysSomethingElseRepaints() {
   fixture.ExpectFresh(frame, "the hover card's fuller answer, the same size");
 }
 
+// derived-damage 5.4: a still frame damages nothing. In each of the shell's main
+// states, a second prepared frame with nothing changed must name no rect: a unit
+// whose key folds something that drifts frame to frame (a time, an address that
+// moves, an unsorted container, a float recomputed with noise) would otherwise
+// repaint itself on every frame -- every blink and every hover -- and show up only
+// as a perf number. The caret's blink phase is pinned, so it is not the change.
+void TestAStillFrameDamagesNothing() {
+  FlowFixture fixture("notes.txt", "alpha beta\ngamma delta\nepsilon\n");
+  const auto still = [&](const char* what) {
+    fixture.PinCaret();
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    fixture.PinCaret();
+    (void)fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    const workspace::RenderInvalidation again = fixture.shell.ConsumePendingRenderInvalidation();
+    std::string named;
+    for (const SDL_FRect& rect : again.rects) {
+      named += " " + std::to_string(static_cast<int>(rect.x)) + "," + std::to_string(static_cast<int>(rect.y)) + " " +
+               std::to_string(static_cast<int>(rect.w)) + "x" + std::to_string(static_cast<int>(rect.h));
+    }
+    Expect(!again.full && again.rects.empty(),
+           std::string(what) + ": a still frame damages nothing (damaged" + (again.full ? " the window" : named) + ")");
+  };
+  still("an editor beside the file tree");
+  TestAccess::ShowGitSidebar(fixture.shell);
+  still("the git view");
+  TestAccess::ShowProblemsSidebar(fixture.shell);
+  still("the problems view");
+  TestAccess::ShowTreeSidebar(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "the editor splits");
+  still("two editor groups");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.still", 30);
+  still("the Output panel");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  still("the terminal panel");
+  TestAccess::OpenMenuBarMenuForTest(fixture.shell, workspace::WorkspaceShell::MenuId::File);
+  still("the File menu open");
+  WriteFile(fixture.root / "base.txt", "one\ntwo\nthree\n");
+  WriteFile(fixture.root / "incoming.txt", "one\nTWO\nthree\n");
+  WriteFile(fixture.root / "current.txt", "one\n2\nthree\n");
+  WriteFile(fixture.root / "result.txt", "one\n<<<<<<< HEAD\n2\n=======\nTWO\n>>>>>>> in\nthree\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  still("a merge in front");
+}
+
 // derived-damage 5.1: the editor's own changes ask for a frame, and the frame
 // repaints the rows they changed -- not the pane, which every one of them used to
 // repaint through RequestEditorSurfaceRedraw / RequestActiveTabRedraw. A click, an
@@ -9395,6 +9442,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATabActivatedWithNoRequestRepaintsItsStrip);
   AddTest(tests, "QaFlowRegression/AHoverCardThatSaysSomethingElseRepaints",
           TestAHoverCardThatSaysSomethingElseRepaints);
+  AddTest(tests, "QaFlowRegression/AStillFrameDamagesNothing", TestAStillFrameDamagesNothing);
   AddTest(tests, "QaFlowRegression/EditorChangesRepaintTheirRowsNotThePane",
           TestEditorChangesRepaintTheirRowsNotThePane);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalContextMenuRowRepaintsWhole",
