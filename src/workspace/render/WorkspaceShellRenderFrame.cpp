@@ -550,6 +550,31 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                                   layout.status_bar, layout.tab_strip}) {
     chrome_unit(region, 0);  // a region that appears, vanishes or moves: rect-only
   }
+  // The bottom panel's body, keyed on WHAT it shows: a terminal tab, an output
+  // channel's rows, a plugin's surface. Each kind repaints its own changes (a
+  // pane its new snapshot, the output its rows' units); one taking the body from
+  // another leaves nothing of the other's -- an output of three rows over a
+  // terminal's grid -- so the body repaints whole. Which terminal tab too, and
+  // its pane layout: a tab not touched since it was last in front has no new
+  // snapshot to say so. (Every such switch named the panel's rect.)
+  {
+    const PanelState& panel = project_state.panel;
+    std::uint64_t shows = static_cast<std::uint64_t>(panel.content) + 1;
+    if (panel.content == PanelContentKind::Terminal) {
+      const TerminalTabState* tab = project_state.active_terminal_tab_index < project_state.terminal_tabs.size()
+                                        ? project_state.terminal_tabs[project_state.active_terminal_tab_index].get()
+                                        : nullptr;
+      shows = MixRowKey(MixRowKey(shows, reinterpret_cast<std::uintptr_t>(tab)),
+                        tab != nullptr ? tab->layout_revision : 0);
+    } else if (panel.content == PanelContentKind::PluginSurface) {
+      shows = MixRowKeyBytes(MixRowKeyBytes(shows, panel.surface_owner.data(), panel.surface_owner.size()),
+                             panel.surface_id.data(), panel.surface_id.size());
+    }
+    chrome_unit(panel.content != PanelContentKind::None && layout.bottom_panel.h > 0.0f
+                    ? std::optional<SDL_FRect>(BottomPanelContentRect(layout))
+                    : std::nullopt,
+                shows);
+  }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");
     RefreshStatusBar();

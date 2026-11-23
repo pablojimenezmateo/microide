@@ -9122,6 +9122,115 @@ void TestADebugSessionsCallbacksRepaintNoWindowWhileTheDockIsClosed() {
   fixture.ExpectFresh(asked, "an evaluate and the output it printed, the dock closed");
 }
 
+// "The bottom panel changed" while the panel is closed: nothing of it is on screen,
+// and what its owner changed that is -- a region the panel takes or leaves, the
+// status bar -- is derived. It asked for the WHOLE WINDOW. A debug session's
+// console opening the panel is such a change, and paints from a frame.
+void TestAClosedBottomPanelAsksForNoWindow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  TestAccess::HideBottomPanel(fixture.shell);
+  TestAccess::SetDebugPaneVisible(fixture.shell, true);  // (a stop opens the dock; here it is open already)
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "the panel closed");
+  TestAccess::RequestBottomPanelRedraw(fixture.shell);
+  const workspace::RenderInvalidation closed = fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(closed.frame && !closed.full && closed.rects.empty(),
+         "a closed panel's change owes a frame and names no rect (rects=" + std::to_string(closed.rects.size()) + ")");
+
+  const float window = static_cast<float>(fixture.width) * static_cast<float>(fixture.height);
+  const auto largest_named = [&](const workspace::RenderInvalidation& asked) {
+    float largest = asked.full ? window : 0.0f;
+    for (const SDL_FRect& rect : asked.rects) {
+      largest = std::max(largest, rect.w * rect.h);
+    }
+    return largest / window;
+  };
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "stop"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  fixture.ExpectFresh(full, "debugging enabled");
+  const auto pump = [&]() { TestAccess::ConsumeDapCallbacks(fixture.shell); };
+  // The session starts: its console takes the panel, which opens.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  Expect(WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the mock adapter should stop on configurationDone");
+  for (int round = 0; round < 20; ++round) {
+    pump();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(TestAccess::BottomPanelVisible(fixture.shell), "the session's console opened the panel");
+  const workspace::RenderInvalidation started = fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(largest_named(started) < 0.5f, "the console opening the panel names no window-sized rect: " +
+                                            std::to_string(largest_named(started)));
+  fixture.ExpectFresh(started, "the session's console opened the panel");
+  // The session ends.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-stop"), "debug-stop should run");
+  Expect(WaitUntil([&]() { return !TestAccess::DebugSessionActive(fixture.shell); }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(5), pump),
+         "the session ends");
+  for (int round = 0; round < 20; ++round) {
+    pump();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  // (Stop Debugging closes the dock and names the window for that itself, so
+  // only the frame is held here.)
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the session ended");
+}
+
+// The bottom panel's body shows one kind of content at a time: a terminal tab,
+// an output channel, a plugin's surface. Each repaints its own changes; one
+// taking the body from another leaves nothing of the other's, so the body is a
+// unit keyed on what it shows -- and on which terminal tab, since a tab nothing
+// touched while it was behind has no new snapshot to repaint it. Every such
+// switch named the panel's rect.
+void TestTheBottomPanelsBodyRepaintsWhenOtherContentTakesIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("panel.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  {
+    auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+    TerminalSessionTestAccess::Reset(session, 8, 80);
+    TerminalSessionTestAccess::AppendOutput(
+        session, "first$ one\r\nfirst$ two\r\nfirst$ three\r\nfirst$ four\r\nfirst$ five\r\nfirst$ ");
+  }
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a terminal with six lines");
+  auto& state = TestAccess::CurrentProjectState(fixture.shell);
+
+  // An output channel of two rows takes the body; then the terminal takes it back.
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa.two", 2);
+  fixture.ExpectFresh(NothingAnnounced(), "an output channel took the body from the terminal");
+  state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
+  fixture.ExpectFresh(NothingAnnounced(), "the terminal took it back");
+  // A second terminal tab in front, with its own text; then the first again,
+  // which nothing touched meanwhile.
+  TestAccess::AddTerminalTab(fixture.shell);
+  {
+    auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+    TerminalSessionTestAccess::Reset(session, 8, 80);
+    TerminalSessionTestAccess::AppendOutput(session, "second$ ");
+  }
+  fixture.ExpectFresh(NothingAnnounced(), "a second terminal tab in front");
+  state.active_terminal_tab_index = 0;
+  fixture.ExpectFresh(NothingAnnounced(), "the first terminal tab in front again");
+  // The panel closes and comes back.
+  TestAccess::HideBottomPanel(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the panel closed");
+  state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
+  fixture.ExpectFresh(NothingAnnounced(), "the panel opened on its terminal");
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -9796,6 +9905,9 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTheDebugToolbarFollowsItsSessionFromAFrame);
   AddTest(tests, "QaFlowRegression/ADebugSessionsCallbacksRepaintNoWindowWhileTheDockIsClosed",
           TestADebugSessionsCallbacksRepaintNoWindowWhileTheDockIsClosed);
+  AddTest(tests, "QaFlowRegression/AClosedBottomPanelAsksForNoWindow", TestAClosedBottomPanelAsksForNoWindow);
+  AddTest(tests, "QaFlowRegression/TheBottomPanelsBodyRepaintsWhenOtherContentTakesIt",
+          TestTheBottomPanelsBodyRepaintsWhenOtherContentTakesIt);
   AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
           TestARemoteProjectsStageRepaintsItsTabFromAFrame);
   AddTest(tests, "QaFlowRegression/AMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame",

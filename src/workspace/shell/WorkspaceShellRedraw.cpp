@@ -494,7 +494,12 @@ void WorkspaceShell::RequestBottomPanelRedraw() {
     RequestRedrawRect(layout->bottom_panel);
     return;
   }
-  RequestWindowRedraw();
+  // Hidden, none of the panel is on screen, and what a caller changed that IS on
+  // screen is derived: the regions a panel leaves or takes (the chrome's region
+  // units; the layout follows its inputs by itself), the status bar. A frame.
+  // This was the WHOLE WINDOW, for whatever touched a closed panel -- as the
+  // hidden sidebar's fallback was (TD-2026-10-15-341).
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RequestDebugPaneRedraw() {

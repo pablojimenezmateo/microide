@@ -617,7 +617,9 @@ void WorkspaceShell::ShowDebugConsole(int session_id, const std::string& label) 
   output_channels_.EnsureChannel(channel_id, channel_label);
   context_.current_project_state.panel.content = PanelContentKind::Output;
   context_.current_project_state.panel.output.channel_id = channel_id;
-  RequestBottomPanelRedraw();
+  // The panel's header, the output's rows and the body under another kind of
+  // content are derived (and a panel this opens is a region that appears).
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ShowDebugOutput() {
@@ -637,7 +639,7 @@ void WorkspaceShell::RemoveDebugConsole(int session_id) {
   // drop the channel's backing data.
   CloseOutputChannelTab(channel_id);
   output_channels_.RemoveChannel(channel_id);
-  RequestBottomPanelRedraw();
+  RequestPreparedFrame();  // as ShowDebugConsole
 }
 
 }  // namespace microide::workspace

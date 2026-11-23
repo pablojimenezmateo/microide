@@ -48,7 +48,11 @@ class WorkspaceTabStripChrome {
     std::function<void(std::string_view)> ensure_output_channel_tab_open;
     std::function<void(std::string_view)> close_output_channel_tab;
     std::function<void(std::size_t)> close_terminal_tab;
-    std::function<void()> request_bottom_panel_redraw;
+    // The bottom panel's strip scrolled, a tab of it took the front or was
+    // closed: its header's tabs and what its body shows are derived (the header's
+    // units, the body's chrome unit, the output's rows, a pane's snapshot), so a
+    // frame repaints them. It named the panel's rect.
+    std::function<void()> request_bottom_panel_frame;
     // A strip scrolled to show other tabs repaints itself: the overflow chip's
     // click and the wheel change what a strip shows, and the shell's "nothing was
     // damaged, repaint the window" fallback does not fire when the same click

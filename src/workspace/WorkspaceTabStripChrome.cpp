@@ -331,8 +331,8 @@ bool WorkspaceTabStripChrome::ScrollEditorTabStripForGroup(std::size_t group_ind
 bool WorkspaceTabStripChrome::ScrollBottomPanelTabStrip(int direction) {
   const bool scrolled = tab_strip_service_->ScrollBottomPanelTabStrip(context_->current_project_state, direction,
                                                                       output_channels_->Channels());
-  if (scrolled && operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (scrolled && operations_.request_bottom_panel_frame) {
+    operations_.request_bottom_panel_frame();
   }
   return scrolled;
 }
@@ -367,7 +367,7 @@ bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {
   }
 
   context_->current_project_state.surface.focus = FocusTarget::Panel;
-  operations_.request_bottom_panel_redraw();
+  operations_.request_bottom_panel_frame();
   return true;
 }
 
@@ -407,7 +407,7 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
     }
   }
 
-  operations_.request_bottom_panel_redraw();
+  operations_.request_bottom_panel_frame();
   return true;
 }
 

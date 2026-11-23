@@ -797,7 +797,7 @@ void WorkspaceShell::CommitWatchExpressionPrompt() {
   } else if (!text.empty()) {
     debug_service_.AddWatch(text);
   }
-  RequestBottomPanelRedraw();
+  RequestDebugPaneRedraw();  // the Watch list is the debug dock's (it named the bottom panel)
 }
 
 void WorkspaceShell::OpenDebugReplPrompt() {
