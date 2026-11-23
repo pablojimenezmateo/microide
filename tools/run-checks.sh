@@ -15,7 +15,7 @@
 #   tools/run-checks.sh tidy     # clang-tidy use-after-move / unchecked-optional over src/ -> /tmp/microide-tidy.log
 #   tools/run-checks.sh all     # tests, asan, ubsan, tsan in sequence
 #
-# The full console output (build + test) is tee'd to the log file; the script's
+# The full console output (build + test) is copied to the log file (log_tee); the script's
 # exit status is the real status of the underlying command (via PIPESTATUS), so
 # CI and callers still see pass/fail while the file captures the details.
 #
@@ -90,8 +90,33 @@ repair_empty_deps() {
 }
 export -f locked_build repair_empty_deps
 
-# Run a command, tee combined stdout+stderr to $1, and return the command's
-# real exit status (not tee's).
+# The logger: GNU tee where it is installed (Ubuntu's default tee is uutils', which
+# aborted under lanes -- SIGABRT, no message -- on 2026-11-22 and 2026-11-23).
+LOG_TEE="$(command -v gnutee || command -v tee)"
+export LOG_TEE
+
+# `log_tee [-a] FILE`: copy stdin to stdout and to FILE, and return 0. A check's
+# status is the check's, never the logger's: when the tee dies mid-stream, this
+# function still holds the pipe open and drains the rest into FILE, so the check
+# writing into it never meets a broken pipe. Before, a dead tee turned the next
+# write into EPIPE, and a green qa-remote exited 1 with its summary lost.
+log_tee() {
+  local append=()
+  if [[ "${1:-}" == "-a" ]]; then
+    append=(-a); shift
+  fi
+  local log="$1" status=0
+  "$LOG_TEE" "${append[@]}" -- "$log" || status=$?
+  if (( status != 0 )); then
+    echo "run-checks: the logger ($LOG_TEE) exited with status $status; the rest goes to $log only" >&2
+    cat >> "$log"
+  fi
+  return 0
+}
+export -f log_tee
+
+# Run a command, log combined stdout+stderr to $1, and return the command's
+# real exit status (not the logger's).
 run_logged() {
   local log="$1"; shift
   {
@@ -101,7 +126,7 @@ run_logged() {
     echo "=== branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown) ==="
     echo
     "$@"
-  } 2>&1 | tee "$log"
+  } 2>&1 | log_tee "$log"
   return "${PIPESTATUS[0]}"
 }
 
@@ -120,8 +145,8 @@ check_leaked_fixtures() {
     [[ -n "$owner" ]] || continue
     kill -0 "$owner" 2>/dev/null && continue
     leaked=1
-    echo "run-checks: leaked remote-server fixture $dir (owner pid $owner exited):" | tee -a "$log"
-    pgrep -af -- "$dir/" | grep -v pgrep | tee -a "$log"
+    echo "run-checks: leaked remote-server fixture $dir (owner pid $owner exited):" | log_tee -a "$log"
+    pgrep -af -- "$dir/" | grep -v pgrep | log_tee -a "$log"
     pkill -KILL -f -- "$dir/" 2>/dev/null
     rm -rf "$dir"
   done
@@ -400,8 +425,8 @@ check_clang_build() {
   # is a real failure and is reported as one.
   run_logged "$log" bash -c '
     set -e
-    # pipefail, and it is load-bearing: the first pass is piped through tee, so
-    # without it the `if` below tests the status of tee, which is always 0. The lane
+    # pipefail, and it is load-bearing: the first pass is piped through log_tee, so
+    # without it the `if` below tests the status of log_tee, which is always 0. The lane
     # then reports green on a build that failed — the same pipe-hides-exit-code trap
     # dev-docs/project/validation-traps.md keeps finding, introduced by the very
     # retry that is here to make the lane more trustworthy. It was caught by
@@ -419,7 +444,7 @@ check_clang_build() {
     }
     stale_pch_marker="has been modified since the precompiled header"
     first_pass_log=$(mktemp)
-    if configure_and_build 2>&1 | tee "$first_pass_log"; then
+    if configure_and_build 2>&1 | log_tee "$first_pass_log"; then
       rm -f "$first_pass_log"
       exit 0
     fi
@@ -938,4 +963,8 @@ main() {
   esac
 }
 
-main "$@"
+
+# Sourced (tools/qa/test_run_logged.py), it only defines its functions.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
