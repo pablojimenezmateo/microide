@@ -300,27 +300,9 @@ struct PreparedFrameState {
   // page, a restored tab, the start page again -- and that saved the unsaved
   // buffers the crash recovery had just brought back (soak 0afa15c55c0f).
   bool focus_autosave_armed = false;
-  // (A compare tab's scroll, active side and diff shape are in its rows' keys:
-  // CompareRowUnits, derived-damage 2.5.)
-  // The focused compare or merge tab's scrollbars as painted (no track: hidden).
-  // An edit that widens a line or adds one moves a thumb that sits on none of the
-  // rows the edit damages -- typing into a compare tab's long line left the
-  // horizontal thumb at its old width (QA monkey, seed 17). As an editor pane's
-  // bar units do (EditorRowUnits): a bar shown or hidden repaints the surface, a moved one
-  // its strip. The lane's markers (a hash) likewise: a merge result edit that
-  // wrapped a line onto one more row moved the conflicts below it, and the lane
-  // kept their old markers (soak e97cacbc359f).
-  struct DiffSurfaceBars {
-    const void* tab = nullptr;
-    std::optional<SDL_FRect> horizontal_track;
-    SDL_FRect horizontal_thumb{};
-    // The overview lane sits LEFT of the vertical track; the thumb is in the
-    // track, so a moved thumb repaints the track, a changed marker the lane.
-    std::optional<SDL_FRect> vertical_lane;
-    SDL_FRect vertical_track{};
-    SDL_FRect vertical_thumb{};
-    std::uint64_t vertical_markers = 0;
-  };
+  // (A compare tab's scroll, active side and diff shape are in its rows' keys
+  // -- CompareRowUnits, derived-damage 2.5 -- and every diff pane's scrollbars
+  // are Chrome units, laid out with the panes.)
   // A compare or merge surface whose syntax tokenizer is still behind its visible
   // window after this frame's capped step: OnFramePresented requests it, so the
   // NEXT frame takes the next step. Damage requested during prep belongs to the

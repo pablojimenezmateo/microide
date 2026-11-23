@@ -1061,6 +1061,56 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       paint.decorations = nullptr;
       return paint;
     };
+    // A diff pane's scrollbars as two units of its pane: the horizontal track (its
+    // thumb), and the vertical track with the overview lane left of it (the thumb
+    // and the lane's markers, built here against the lane this frame paints). The
+    // thumbs move with what the rows key does not hold -- the longest line, the row
+    // count -- so typing into a long line left the horizontal thumb at its old
+    // width (QA monkey, seed 17), and an edit that wrapped a merge result line
+    // left the lane's markers where they were (soak e97cacbc359f).
+    // Every pane that shows a diff, focused or not: these were units of the focused
+    // diff alone, and a diff in another pane on the same file -- its working side
+    // is the buffer the focused editor types into -- kept a stale thumb (soak
+    // c98c39e63c72). Chrome units, two slots a pane (emitted after the panes): a
+    // bar is a strip along the pane's edge, and among the pane's own units it
+    // would join a changed row into one rect over the rows between them.
+    const std::uint64_t marker_theme_token = overview::ThemeMarkerToken(theme_);
+    std::array<std::array<DerivedDamage::Unit, 2>, kMaxEditorGroups> diff_bars{};
+    const auto append_diff_bars = [&](std::size_t gi, const void* tab, const SDL_FRect& area,
+                                      const ScrollSurfaceLayout& scroll, const DiffSurfacePaint& paint,
+                                      const auto& build_markers) {
+      std::array<DerivedDamage::Unit, 2>& units = diff_bars[gi];
+      std::size_t slot = 0;
+      const auto push = [&](const DerivedDamage::Unit& unit) { units[slot++] = unit; };
+      if (scroll.horizontal_scrollbar.has_value()) {
+        PaintFingerprint key;
+        key.Add(reinterpret_cast<std::uintptr_t>(tab))
+            .Add(scroll.horizontal_scrollbar->track)
+            .Add(scroll.horizontal_scrollbar->thumb)
+            .Add(paint.horizontal_bar_dragged);
+        push({scroll.horizontal_scrollbar->track, key.value()});
+      } else {
+        push({});
+      }
+      if (scroll.vertical_scrollbar.has_value()) {
+        const SDL_FRect& track = scroll.vertical_scrollbar->track;
+        const SDL_FRect lane = overview::LaneRect(track, area.x);
+        PaintFingerprint key;
+        key.Add(reinterpret_cast<std::uintptr_t>(tab))
+            .Add(lane)
+            .Add(track)
+            .Add(scroll.vertical_scrollbar->thumb)
+            .Add(paint.vertical_bar_dragged);
+        for (const overview::Marker& marker : build_markers(overview::LaneInnerRect(lane))) {
+          key.Add(marker.rect).Add(marker.color);
+        }
+        const float left = std::min(lane.x, track.x);
+        const float right = std::max(lane.x + lane.w, track.x + track.w);
+        push({SDL_FRect{left, track.y, right - left, track.h}, key.value()});
+      } else {
+        push({});
+      }
+    };
     for (const EditorPaneLayout& pane : panes) {
       const std::size_t gi = pane.group_index;
       if (gi >= kMaxEditorGroups || gi >= project_state.editor_groups.size() || !frame_state_.pane_metrics_valid[gi]) {
@@ -1161,6 +1211,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
             diff_paint.decorations = presentation->decorations.FindByPathKey(compare.right_viewport.path_key());
           }
         }
+        append_diff_bars(gi, &compare, area, ComputeCompareScrollLayout(area, compare_surface, compare), diff_paint,
+                         [&](const SDL_FRect& inner_lane) -> const std::vector<overview::Marker>& {
+                           EnsureCompareOverviewMarkers(theme_, inner_lane, marker_theme_token, compare);
+                           return compare.scrollbar_marker_cache;
+                         });
         AppendCompareRowUnits(
             compare,
             CompareRowGeometry{.surface = area,
@@ -1253,6 +1308,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
               .Add(merge.hover_state->preview_choice);
         }
 
+        append_diff_bars(gi, &merge, area, ComputeMergeScrollLayout(area, merge_surface, merge), diff_paint,
+                         [&](const SDL_FRect& inner_lane) -> const std::vector<overview::Marker>& {
+                           EnsureMergeOverviewMarkers(theme_, inner_lane, MergeTotalVisualRowCount(merge),
+                                                      marker_theme_token, merge);
+                           return merge.scrollbar_marker_cache;
+                         });
         const float right_reserved = merge_surface.show_vertical ? kWorkspaceDiffScrollbarReserve : 0.0f;
         // The toolbar, status line, base band and pane labels above the rows.
         {
@@ -1546,6 +1607,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
       }
     }
+    // Each pane's diff scrollbars (append_diff_bars): two slots a pane, empty for a
+    // pane that shows no diff.
+    for (const std::array<DerivedDamage::Unit, 2>& bars : diff_bars) {
+      for (const DerivedDamage::Unit& bar : bars) {
+        chrome_unit(bar.rect.w > 0.0f && bar.rect.h > 0.0f ? std::optional<SDL_FRect>(bar.rect) : std::nullopt,
+                    bar.fingerprint);
+      }
+    }
   }
   // Breakpoints: the gutter dots in every pane and the Breakpoints pane's rows.
   // They change through the gutter, F9, the pane's own keys and menus, the control
@@ -1612,64 +1681,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     chrome_unit(surface_rect, surface.value());
   }
-  // (A compare tab's scroll is in its rows' surface key: CompareRowUnits.)
-  {
-    PreparedFrameState::DiffSurfaceBars bars;
-    // The lane's markers are built here, against the lane this frame paints, so
-    // paint only draws them and a change in them is damage this frame knows of.
-    const auto take = [&](const void* tab, const ScrollSurfaceLayout& scroll, const auto& build_markers) {
-      bars.tab = tab;
-      if (scroll.horizontal_scrollbar.has_value()) {
-        bars.horizontal_track = scroll.horizontal_scrollbar->track;
-        bars.horizontal_thumb = scroll.horizontal_scrollbar->thumb;
-      }
-      if (scroll.vertical_scrollbar.has_value()) {
-        bars.vertical_lane = overview::LaneRect(scroll.vertical_scrollbar->track, ActiveTabSurface(layout).x);
-        bars.vertical_track = scroll.vertical_scrollbar->track;
-        bars.vertical_thumb = scroll.vertical_scrollbar->thumb;
-        const std::vector<overview::Marker>& markers = build_markers(overview::LaneInnerRect(*bars.vertical_lane));
-        std::uint64_t hash = util::kFnv1aOffsetBasis;
-        for (const overview::Marker& marker : markers) {
-          hash = util::Fnv1aBytes(hash, std::string_view(reinterpret_cast<const char*>(&marker.rect), sizeof marker.rect));
-          hash = util::Fnv1aBytes(hash, std::string_view(reinterpret_cast<const char*>(&marker.color), sizeof marker.color));
-        }
-        bars.vertical_markers = hash;
-      }
-    };
-    const SDL_FRect view_surface = ActiveTabSurface(layout);
-    const std::uint64_t theme_token = overview::ThemeMarkerToken(theme_);
-    if (CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
-      const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(view_surface, *compare);
-      take(compare, ComputeCompareScrollLayout(view_surface, surface, *compare),
-           [&](const SDL_FRect& inner_lane) -> const std::vector<overview::Marker>& {
-             EnsureCompareOverviewMarkers(theme_, inner_lane, theme_token, *compare);
-             return compare->scrollbar_marker_cache;
-           });
-    } else if (MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
-      const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(view_surface, *merge);
-      take(merge, ComputeMergeScrollLayout(view_surface, surface, *merge),
-           [&](const SDL_FRect& inner_lane) -> const std::vector<overview::Marker>& {
-             EnsureMergeOverviewMarkers(theme_, inner_lane, MergeTotalVisualRowCount(*merge), theme_token, *merge);
-             return merge->scrollbar_marker_cache;
-           });
-    }
-    // The focused diff's bars as units: the horizontal track (its thumb), and the
-    // vertical lane with its track (the thumb and the lane's markers). A bar that
-    // shows or hides moves the surface's own layout, which its rows key on.
-    PaintFingerprint horizontal;
-    horizontal.Add(reinterpret_cast<std::uintptr_t>(bars.tab)).Add(bars.horizontal_thumb);
-    chrome_unit(bars.horizontal_track, horizontal.value());
-    std::optional<SDL_FRect> vertical;
-    if (bars.vertical_lane.has_value()) {
-      const float left = std::min(bars.vertical_lane->x, bars.vertical_track.x);
-      const float right = std::max(bars.vertical_lane->x + bars.vertical_lane->w,
-                                   bars.vertical_track.x + bars.vertical_track.w);
-      vertical = SDL_FRect{left, bars.vertical_track.y, right - left, bars.vertical_track.h};
-    }
-    PaintFingerprint vertical_key;
-    vertical_key.Add(reinterpret_cast<std::uintptr_t>(bars.tab)).Add(bars.vertical_thumb).Add(bars.vertical_markers);
-    chrome_unit(vertical, vertical_key.value());
-  }
+  // (A compare tab's scroll is in its rows' surface key, and every diff pane's
+  // scrollbars are Chrome units: CompareRowUnits, append_diff_bars.)
   {
     std::uint64_t dividers = 0;
     for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {

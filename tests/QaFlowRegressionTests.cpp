@@ -9833,6 +9833,66 @@ void TestTheTabStripsPaintTheTabsTheyPrepared() {
   Expect(!shown.identical(), "and that frame does show them (the change under test is one the strips draw)");
 }
 
+// Soak c98c39e63c72 (ubsan, 2560x1440 at 1.75): a diff in one pane, its working
+// side the buffer an editor in the other pane types into. A character that
+// lengthened the file's longest line shrank the diff's horizontal thumb and
+// moved it a pixel, and nothing repainted it: a diff's scrollbars were units of
+// the FOCUSED diff alone. They are units of every pane that shows a diff.
+void TestAnUnfocusedDiffsThumbsFollowAnEditInAnotherPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string wide = "a line a good deal wider than either pane of the diff is: ";
+  for (int i = 0; i < 12; ++i) {
+    wide += "more and more and more text ";
+  }
+  std::string body;
+  for (int i = 0; i < 80; ++i) {
+    body += "line " + std::to_string(i) + "\n";
+  }
+  for (const std::string scale : {"1", "1.75"}) {
+    FlowFixture fixture("work.txt", "one\n" + wide + "\n" + body, 1463, 823);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting ui.scale " + scale),
+           "set-setting ui.scale should run");
+    const std::filesystem::path base = fixture.root / "base.txt";
+    WriteFile(base, "one\n" + wide + " as it was\n" + body);
+    // The file in the right pane, focused; its diff against the base in the left.
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-left"), "focus-group-left should run");
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                          "compare-files " + base.string() + " " + fixture.file.string()),
+           "compare-files should open a diff");
+    auto& project = TestAccess::CurrentProjectState(fixture.shell);
+    Expect(project.editor_groups.size() == 2 && project.editor_groups[0].has_active_tab() &&
+               project.editor_groups[0].active_tab().compare.has_value(),
+           "the left pane shows the diff");
+    if (project.editor_groups.size() != 2 || !project.editor_groups[0].active_tab().compare.has_value()) {
+      return;
+    }
+    project.editor_groups[0].active_tab().compare->horizontal_scroll = 40;  // the thumb off the track's end
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-right"), "focus-group-right should run");
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    const workspace::RenderInvalidation full{.full = true};
+    fixture.ExpectFresh(full, "a file and its diff side by side, at scale " + scale);
+    Expect(!TestAccess::ActiveTabIsCompare(fixture.shell), "the editor has the keyboard, not the diff");
+    TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(1, 30);
+    fixture.ExpectFresh(NothingAnnounced(), "the caret in the long line");
+    for (int key = 0; key < 14; ++key) {
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("a")}),
+                          "a character that lengthens the longest line, at scale " + scale);
+    }
+    // Lines added: the diff's vertical thumb and its lane's markers move too.
+    for (int key = 0; key < 4; ++key) {
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}),
+                          "a line break in the file, at scale " + scale);
+    }
+    for (int key = 0; key < 8; ++key) {
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_BACKSPACE)}),
+                          "and what shortens it again, at scale " + scale);
+    }
+  }
+}
+
 // The names of the card's elements of `kind` ("settings-category", "setting"),
 // as the control channel lists them, with their rects.
 std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
@@ -10694,6 +10754,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheSettingsCardRepaintsWhatChangedFromAFrame",
           TestTheSettingsCardRepaintsWhatChangedFromAFrame);
   AddTest(tests, "QaFlowRegression/TheTabStripsPaintTheTabsTheyPrepared", TestTheTabStripsPaintTheTabsTheyPrepared);
+  AddTest(tests, "QaFlowRegression/AnUnfocusedDiffsThumbsFollowAnEditInAnotherPane",
+          TestAnUnfocusedDiffsThumbsFollowAnEditInAnotherPane);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);
