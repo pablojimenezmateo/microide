@@ -9312,7 +9312,8 @@ void SettleCompare(FlowFixture& fixture) {
 // gives for that line, and a row that draws the left pane's tokens on its
 // working side draws what the right pane's own walk gives. Returns how many
 // buffers were held.
-std::size_t ExpectCompareTokensOfAFreshWalk(FlowFixture& fixture, const std::string& what, bool caret_row_on_screen = true) {
+std::size_t ExpectCompareTokensOfAFreshWalk(FlowFixture& fixture, const std::string& what,
+                                            bool caret_row_on_screen = true, std::size_t at_least = 20) {
   workspace::CompareTabState& tab = TestAccess::ActiveCompare(fixture.shell);
   const std::vector<compare::CompareRow>& rows = tab.model.rows;
   const auto walk = [&](const std::vector<std::uint32_t>& line_rows, bool left, editor::SyntaxState state) {
@@ -9365,7 +9366,7 @@ std::size_t ExpectCompareTokensOfAFreshWalk(FlowFixture& fixture, const std::str
                             : workspace::CompareRowRightOwnTokens(tab, rows[caret_row]);
     Expect(!drawn.empty() || rows[caret_row].right_text.empty(), what + ": the caret's row draws its tokens");
   }
-  Expect(held >= 20, what + ": the windows hold the rows on screen (" + std::to_string(held) + ")");
+  Expect(held >= at_least, what + ": the windows hold the rows on screen (" + std::to_string(held) + ")");
   return held;
 }
 
@@ -9373,9 +9374,11 @@ struct CompareTokensFixture {
   FlowFixture fixture;
   std::filesystem::path right_path;
 
-  CompareTokensFixture() : fixture("left.cpp", StatefulSource(400, 0)) {
+  explicit CompareTokensFixture(const std::string& left = StatefulSource(400, 0),
+                                const std::string& right = StatefulSource(400, 23))
+      : fixture("left.cpp", left) {
     right_path = fixture.root / "right.cpp";
-    WriteFile(right_path, StatefulSource(400, 23));
+    WriteFile(right_path, right);
     Expect(TestAccess::ExecuteCommandLine(fixture.shell,
                                           "compare-files " + fixture.file.string() + " " + right_path.string()),
            "compare-files should open a diff");
@@ -9387,8 +9390,9 @@ struct CompareTokensFixture {
 
   workspace::CompareTabState& compare() { return TestAccess::ActiveCompare(fixture.shell); }
   void Settle() { SettleCompare(fixture); }
-  std::size_t ExpectTokensOfAFreshWalk(const std::string& what, bool caret_row_on_screen = true) {
-    return ExpectCompareTokensOfAFreshWalk(fixture, what, caret_row_on_screen);
+  std::size_t ExpectTokensOfAFreshWalk(const std::string& what, bool caret_row_on_screen = true,
+                                       std::size_t at_least = 20) {
+    return ExpectCompareTokensOfAFreshWalk(fixture, what, caret_row_on_screen, at_least);
   }
 };
 
@@ -9468,6 +9472,95 @@ void TestACompareEditRestartsItsSyntaxWalkAtTheEditedLine() {
   Expect(tab.right_token_window.frontier() > 380, "the walk reached the bottom of the file: " +
                                                       std::to_string(tab.right_token_window.frontier()));
   f.ExpectTokensOfAFreshWalk("scrolled to the bottom after the edits", /*caret_row_on_screen=*/false);
+}
+
+// A diff collapses its long unchanged runs to one row. The rows inside a run are
+// walked -- the rows below it resume from their syntax state -- and not
+// tokenized: nothing draws them. A run between two changes was tokenized whole on
+// both panes whenever the window reached it.
+void TestACollapsedRunsRowsAreNotTokenized() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  constexpr int kLines = 1500;
+  constexpr int kFirstChange = 6;
+  constexpr int kSecondChange = 1486;
+  std::string left = StatefulSource(kLines, 0);
+  std::string right;
+  {
+    std::size_t at = 0;
+    for (int line = 0; line < kLines; ++line) {
+      const std::size_t end = left.find('\n', at) + 1;
+      right += line == kFirstChange || line == kSecondChange ? "long changed_here = 2;  // on this side\n"
+                                                             : left.substr(at, end - at);
+      at = end;
+    }
+  }
+  CompareTokensFixture f(left, right);
+  workspace::CompareTabState& tab = f.compare();
+  f.Settle();
+  // The run on screen, between the two changes.
+  std::optional<std::size_t> run_row;
+  for (std::size_t index = 0; index < tab.presentation.rows.size(); ++index) {
+    if (tab.presentation.rows[index].kind == compare::ComparePresentationRowKind::CollapsedContext &&
+        tab.presentation.rows[index].collapsed_run_length > 1000) {
+      run_row = index;
+    }
+  }
+  Expect(run_row.has_value(), "the unchanged middle of the file collapses to one row");
+  if (!run_row.has_value()) {
+    return;
+  }
+  // What the presentation shows of the model: every row but the middle of the run.
+  const auto shown_rows = [&]() {
+    std::vector<bool> shown(tab.model.rows.size(), false);
+    for (const compare::ComparePresentationRow& row : tab.presentation.rows) {
+      if (row.kind == compare::ComparePresentationRowKind::Model && row.model_row_index < shown.size()) {
+        shown[row.model_row_index] = true;
+      }
+    }
+    return shown;
+  };
+  const auto held = [&](const std::vector<bool>& shown, bool of_shown) {
+    std::size_t count = 0;
+    for (std::size_t row = 0; row < tab.model.rows.size(); ++row) {
+      if (shown[row] != of_shown) {
+        continue;
+      }
+      count += workspace::CompareRowLeftTokens(tab, tab.model.rows[row]).empty() ? 0 : 1;
+      count += workspace::CompareRowRightOwnTokens(tab, tab.model.rows[row]).empty() ? 0 : 1;
+    }
+    return count;
+  };
+  const std::vector<bool> shown = shown_rows();
+  const std::size_t hidden = static_cast<std::size_t>(std::count(shown.begin(), shown.end(), false));
+  Expect(hidden > 1000, "the run hides its middle: " + std::to_string(hidden) + " rows");
+  Expect(tab.left_token_window.frontier() >= tab.left_line_rows.size() - 1,
+         "the walk went through the run to the change below it: " + std::to_string(tab.left_token_window.frontier()));
+  Expect(held(shown, /*of_shown=*/false) == 0, "no row the run hides is tokenized: " +
+                                                   std::to_string(held(shown, false)) + " buffers held");
+  const std::size_t drawn = held(shown, /*of_shown=*/true);
+  Expect(drawn >= 8, "the rows drawn above and below the run are: " + std::to_string(drawn));
+  f.ExpectTokensOfAFreshWalk("a diff with a collapsed run on screen", /*caret_row_on_screen=*/false, /*at_least=*/8);
+
+  // The run shown: its rows on screen are tokenized now.
+  const SDL_FRect show_all = TestAccess::ActiveCompareCollapsedContextActionRects(f.fixture.shell, *run_row).all_rect;
+  (void)f.fixture.Click(show_all);
+  f.Settle();
+  const std::vector<bool> expanded = shown_rows();
+  // (The short runs at the file's two ends keep their own few rows hidden.)
+  const auto still_hidden = static_cast<std::size_t>(std::count(expanded.begin(), expanded.end(), false));
+  Expect(still_hidden < 50, "Show all shows the run's rows: " + std::to_string(still_hidden) + " of " +
+                                std::to_string(hidden) + " still hidden");
+  Expect(held(expanded, /*of_shown=*/false) == 0, "and still no hidden row is tokenized");
+  // The rows it hid that are on screen now (the view follows the selection to
+  // the change below the run) are tokenized.
+  std::size_t newly_drawn = 0;
+  for (std::size_t row = 0; row < tab.model.rows.size(); ++row) {
+    newly_drawn += !shown[row] && expanded[row] && !workspace::CompareRowLeftTokens(tab, tab.model.rows[row]).empty() ? 1 : 0;
+  }
+  Expect(newly_drawn >= 8, "expanded, the run's rows on screen are tokenized: " + std::to_string(newly_drawn));
+  f.ExpectTokensOfAFreshWalk("the run expanded", /*caret_row_on_screen=*/false, /*at_least=*/8);
 }
 
 // The ways a pane's whole buffer is replaced under an open compare: none may keep
@@ -9555,6 +9648,7 @@ void TestACompareWhoseBufferIsReplacedRestartsItsSyntaxWalk() {
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ACompareEditRestartsItsSyntaxWalkAtTheEditedLine",
           TestACompareEditRestartsItsSyntaxWalkAtTheEditedLine);
+  AddTest(tests, "QaFlowRegression/ACollapsedRunsRowsAreNotTokenized", TestACollapsedRunsRowsAreNotTokenized);
   AddTest(tests, "QaFlowRegression/ACompareWhoseBufferIsReplacedRestartsItsSyntaxWalk",
           TestACompareWhoseBufferIsReplacedRestartsItsSyntaxWalk);
   AddTest(tests, "QaFlowRegression/AnOpenMenusRowsRepaintWhatChanged", TestAnOpenMenusRowsRepaintWhatChanged);

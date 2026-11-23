@@ -1,3 +1,4 @@
+#include "util/InlineVector.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -498,6 +499,47 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   const std::size_t window_start = model_row_for_visual(visible_start_row);
   const std::size_t window_end =
       std::min(compare_tab.model.rows.size(), model_row_for_visual(visible_end_row) + 1);
+  // The rows that window spans but no presentation row shows: the collapsed runs
+  // on screen. Their lines are walked (the rows below resume from them) and not
+  // tokenized: nothing draws them. A run of 2,500 rows between two changes was
+  // tokenized on both panes each time the window reached it -- and, while the
+  // windows restarted on every keystroke, on every keystroke.
+  // On the stack: a window shows a handful. Past its capacity a run's rows are
+  // tokenized as they were, which costs time and draws nothing wrong.
+  util::InlineVector<std::pair<std::size_t, std::size_t>, 64> hidden_runs;
+  if (presentation_row_count > 0) {
+    const std::size_t first_presentation =
+        std::min(CompareVisualRowToPresentationRow(compare_tab, visible_start_row), presentation_row_count - 1);
+    const std::size_t last_presentation =
+        std::min(CompareVisualRowToPresentationRow(compare_tab, visible_end_row), presentation_row_count - 1);
+    for (std::size_t index = first_presentation; index <= last_presentation; ++index) {
+      const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(compare_tab, index);
+      if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext ||
+          row->collapsed_line_count <= 0) {
+        continue;
+      }
+      // The run it names is the whole unchanged stretch; what it hides is the
+      // middle of it, after the context rows shown above (the row before this
+      // one is the last of them).
+      std::size_t hidden_start = row->collapsed_run_start_model_row;
+      if (row->context_above && index > 0) {
+        if (const compare::ComparePresentationRow* above = CompareTabPresentationRowAt(compare_tab, index - 1);
+            above != nullptr && above->kind == compare::ComparePresentationRowKind::Model) {
+          hidden_start = above->model_row_index + 1;
+        }
+      }
+      if (hidden_runs.size() == hidden_runs.capacity()) {
+        break;
+      }
+      hidden_runs.push_back({hidden_start, hidden_start + static_cast<std::size_t>(row->collapsed_line_count)});
+    }
+  }
+  const auto row_is_drawn = [&hidden_runs](std::size_t row) {
+    // (In presentation order, so ascending and apart.)
+    const auto after = std::upper_bound(hidden_runs.begin(), hidden_runs.end(), row,
+                                        [](std::size_t value, const auto& run) { return value < run.first; });
+    return after == hidden_runs.begin() || row >= std::prev(after)->second;
+  };
   // 95 % of `RenderCompareSurface`'s per-frame self time sat here, with nothing
   // naming it (TD-2026-08-15-248).
   util::PerformanceTrace::Scope syntax_scope("WorkspaceShell::RenderCompareSurface::SyntaxTokens");
@@ -556,14 +598,18 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
       kCompareSyntaxRowsPerFrame, std::chrono::steady_clock::now() + kSyntaxWalkTimePerFrame};
   compare_tab.left_token_window.EnsureWindow(
       left_start, left_end, compare_tab.path, walk_budget,
-      [&](std::size_t line) -> std::string_view { return rows[compare_tab.left_line_rows[line]].left_text; });
+      [&](std::size_t line) -> std::string_view { return rows[compare_tab.left_line_rows[line]].left_text; },
+      [&](std::size_t line) { return row_is_drawn(compare_tab.left_line_rows[line]); });
   compare_tab.right_token_window.EnsureWindow(
       right_start, right_end, compare_tab.path, walk_budget,
       [&](std::size_t line) -> std::string_view { return rows[compare_tab.right_line_rows[line]].right_text; },
-      // Skip the rows whose tokens the render site will read from the LEFT window
-      // -- an unchanged row identical on both sides. Left is ensured first, so its
-      // states are current when this asks.
-      [&](std::size_t line) { return !CompareRowRightTokensAliasLeft(compare_tab, compare_tab.right_line_rows[line]); });
+      // Skip, too, the rows whose tokens the render site will read from the LEFT
+      // window -- an unchanged row identical on both sides. Left is ensured first,
+      // so its states are current when this asks.
+      [&](std::size_t line) {
+        const std::size_t row = compare_tab.right_line_rows[line];
+        return row_is_drawn(row) && !CompareRowRightTokensAliasLeft(compare_tab, row);
+      });
   // (Rows this step reached repaint in this frame through their own units: each
   // row keys on its tokens, CompareRowUnits. This asked for the whole surface
   // whenever the walk advanced -- on every keystroke, since an edit restarts it.)
