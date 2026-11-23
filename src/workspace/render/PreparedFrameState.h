@@ -477,6 +477,29 @@ struct PreparedFrameState {
   };
   PanelHeaderPaint panel_header;
 
+  // ---- the project strip and each editor group's tab strip ----
+  // Their tabs as this frame paints them, settled at prep (TabStripPaint.h): the
+  // rects slid, the lifted tab left out, the hover decided, and the titles owned
+  // -- views into `text`, never into the strip service's memo.
+  struct TabStripPaint {
+    bool shown = false;        // the strip draws its tabs, or its placeholder
+    bool placeholder = false;  // an editor strip with no tab: the "Welcome" stand-in
+    std::vector<PanelTabPaint> tabs;
+    std::string text;
+    PanelButtonPaint overflow_left;
+    PanelButtonPaint overflow_right;
+    // A tab drag whose ghost is drawn over this strip, from a copy of the list
+    // the tab was lifted out of.
+    bool dragging = false;
+    std::vector<VisibleStripTab> drag_tabs;
+    SDL_FRect drag_tabs_strip{};
+    std::size_t drag_source = 0;
+    float drag_pointer_x = 0.0f;
+    float drag_grab_offset_x = 0.0f;
+  };
+  TabStripPaint project_strip;
+  std::array<TabStripPaint, kMaxEditorGroups> editor_strips;
+
   // ---- the Output channel's body (derived-damage 3.1, clip-discipline stage 3) ----
   // Its rows, empty hint and scrollbar as this frame paints them, settled at prep
   // (PrepareBottomPanelOutputFrame) and drawn by PaintBottomPanelOutputBody alone.

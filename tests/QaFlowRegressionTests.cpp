@@ -9785,6 +9785,54 @@ void TestThePanelHeaderPaintsTheTitlesItPrepared() {
   fixture.ExpectFresh(NothingAnnounced(), "the next frame, with the new title");
 }
 
+// The editor's and the project strip's tabs are painted from the prepared frame,
+// their titles owned by it, as the panel header's are: a frame paints what it
+// prepared whoever asks the strip service for the tabs before it paints (the
+// service rebuilds its lists in place once a title has moved). The strips used
+// to ask the service again from inside every paint.
+void TestTheTabStripsPaintTheTabsTheyPrepared() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("first.txt", "one\n");
+  const std::filesystem::path other = fixture.temp_dir.path() / "app";
+  WriteFile(other / "b.txt", "b\n");
+  Expect(TestAccess::OpenProjectTab(fixture.shell, other, false, false), "a second project opens");
+  TestAccess::OpenSingleEditorTab(fixture.shell, other / "b.txt");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "two projects, a file in its tab");
+  Expect(TestAccess::CurrentLayout(fixture.shell).project_tab_strip.h > 0.0f, "the project strip shows");
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  SDL_Surface* painted = SDL_DuplicateSurface(fixture.canvas.surface());
+  Expect(painted != nullptr, "the painted frame should copy");
+
+  // The next frame is prepared; then a tab's title and the project's connection
+  // state change, and something asks for the tabs before the frame paints.
+  fixture.PinCaret();
+  const auto token = fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  auto& project = TestAccess::CurrentProjectState(fixture.shell);
+  Expect(!project.editor_groups.empty() && !project.editor_groups.front().open_tabs.empty(), "the project has a tab");
+  project.editor_groups.front().open_tabs.front().title = "a-title-set-under-the-prepared-frame.txt";
+  project.id = project::ProjectId::ForRemote("worky", "/srv/app");
+  project.remote_status.stages = {{.text = "not connected", .state = editor::WelcomeStageState::Failed}};
+  ++project.remote_status_revision;
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  (void)TestAccess::ControlUi(fixture.shell);
+  fixture.shell.RenderClip(token, fixture.canvas.renderer(), fixture.width, fixture.height);
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  const render::PixelDiffResult diff = DiffSurfaces(painted, fixture.canvas.surface());
+  Expect(diff.identical(), "a frame paints the tabs it prepared; " + DescribePixelDiff(diff));
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  // The frame after it shows them, from no request.
+  fixture.ExpectFresh(NothingAnnounced(), "the next frame, with the new title and state");
+  SDL_FlushRenderer(fixture.canvas.renderer());
+  const render::PixelDiffResult shown = DiffSurfaces(painted, fixture.canvas.surface());
+  SDL_DestroySurface(painted);
+  Expect(!shown.identical(), "and that frame does show them (the change under test is one the strips draw)");
+}
+
 // The names of the card's elements of `kind` ("settings-category", "setting"),
 // as the control channel lists them, with their rects.
 std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
@@ -10645,6 +10693,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAPointerLeavingASettingsRowForAToastUnlightsIt);
   AddTest(tests, "QaFlowRegression/TheSettingsCardRepaintsWhatChangedFromAFrame",
           TestTheSettingsCardRepaintsWhatChangedFromAFrame);
+  AddTest(tests, "QaFlowRegression/TheTabStripsPaintTheTabsTheyPrepared", TestTheTabStripsPaintTheTabsTheyPrepared);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);

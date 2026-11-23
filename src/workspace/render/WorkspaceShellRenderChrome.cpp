@@ -20,14 +20,6 @@ using namespace detail;
 
 void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                         const WorkspaceLayout& layout) const {
-  // `strip_still`: no slide animating the tab's strip (see tab_hovered).
-  const auto draw_tab_close_button = [&](const SDL_FRect& tab_rect, const SDL_FRect& rect, SDL_Color color,
-                                         SDL_Color hover_color, bool strip_still) {
-    DrawStripTabCloseGlyph(renderer, tab_rect, rect,
-                            strip_still && !context_.interaction_state.tab_drag.dragging &&
-                                PointerOver(rect),
-                            color, hover_color);
-  };
   const StripTabPalette chrome_tab_palette{
       .active_fill = theme_.chrome_active,
       .inactive_fill = theme_.surface_raised,
@@ -37,40 +29,28 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       .active_glyph = theme_.chrome_text_secondary,
       .inactive_glyph = theme_.text_disabled,
   };
-  // A live drag owns the pointer, so the motion path stops resolving hover for it
-  // and `last_mouse_*` stays where the press landed. Nothing on a strip may claim
-  // hover from that stale point — an auto-scrolled strip would otherwise light up
-  // whichever tab drifted under it. VS Code drops tab hover during a drag too.
-  // Nor while the strip's tabs slide after a release: paint draws them at their
-  // slid rects, which overlap one another and the resting rects the hover probe
-  // repaints a pointer's leave from, so a tab lit mid-slide stayed lit when the
-  // pointer left (soak 38f44bf79ca8). The slide repaints its strip every frame
-  // until it lands, and hover returns with the tabs at rest.
-  const auto tab_hovered = [&](const SDL_FRect& rect, bool strip_still) {
-    return strip_still && !context_.interaction_state.tab_drag.dragging && PointerOver(rect);
-  };
-  // Chrome-like reorder: neighbor tabs render offset by the live slide animation,
-  // and the dragged tab is lifted out of the flow (drawn as the floating ghost by
-  // DrawTabDragFeedback) during an active drag. During the post-release settle
-  // there is no active drag, so the dropped tab renders in-flow and glides home.
-  const TabSlideState& tab_slide = context_.interaction_state.tab_slide;
+  // The strips' tabs are painted from the prepared frame (TabStripPaint.h): their
+  // slid rects, the tab a drag lifted out, what the pointer lights -- no hover
+  // from a pointer a drag holds still, none while the tabs slide after a release
+  // (soak 38f44bf79ca8) -- and their titles, all settled once at frame prep.
   const TabDragState& tab_drag = context_.interaction_state.tab_drag;
-  const auto slide_dx = [&](TabDragKind kind, std::size_t group_index, std::size_t index) -> float {
-    const std::span<const float> offsets = tab_slide.OffsetsFor(kind, group_index);
-    return index < offsets.size() ? offsets[index] : 0.0f;
-  };
-  const auto tab_lifted = [&](TabDragKind kind, std::size_t group_index, std::size_t index) -> bool {
-    if (!tab_drag.dragging || tab_drag.kind != kind) {
-      return false;
+  const auto draw_strip_tabs = [&](const PreparedFrameState::TabStripPaint& strip, const StripTabStyle& style,
+                                   const StripTabPalette& palette, std::string_view element_name) {
+    for (const PreparedFrameState::PanelTabPaint& tab : strip.tabs) {
+      // The tab paints inside itself, its close button included (clip-discipline 1.3).
+      const render::PaintElement element(renderer, tab.rect, element_name);
+      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.title, tab.badge_text, tab.badge_color,
+                   tab.show_badge, tab.active, style, palette, tab.hovered,
+                   StripTabRemoteMark{
+                       .secondary_label = tab.secondary_title, .state = tab.remote_state, .dimmed = tab.dimmed});
+      DrawStripTabCloseGlyph(renderer, tab.rect, tab.close_rect, tab.close_hovered,
+                             tab.active ? palette.active_glyph : palette.inactive_glyph,
+                             tab.active ? palette.active_text : palette.inactive_text);
     }
-    // The dragged tab is lifted out of its SOURCE group's strip for the whole
-    // gesture, including while the pointer is over the other group's — the ghost
-    // follows the pointer across, and the hole stays open where it came from until
-    // the drop commits (TD-2026-08-14-213).
-    if (kind == TabDragKind::Editor && tab_drag.source_group_index != group_index) {
-      return false;
-    }
-    return index == tab_drag.source_index;
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, strip.overflow_left.rect, /*point_right=*/false,
+                               strip.overflow_left.hidden, strip.overflow_left.hovered);
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, strip.overflow_right.rect, /*point_right=*/true,
+                               strip.overflow_right.hidden, strip.overflow_right.hovered);
   };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
@@ -144,65 +124,22 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                            CurrentWindowChromeState().Expanded());
   }
 
-  // Skip all project-tab work when the strip is hidden (zero height): no tab measuring,
-  // overflow controls, or drag ghost.
-  if (layout.project_tab_strip.h > 0.0f) {
-    const bool project_strip_still = tab_slide.OffsetsFor(TabDragKind::Project, 0).empty();
-    const auto& visible_project_tabs =
-        tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
-    for (const VisibleStripTab& tab : visible_project_tabs) {
-      if (tab_lifted(TabDragKind::Project, 0, tab.index)) {
-        continue;  // rendered as the floating ghost below
-      }
-      const float dx = slide_dx(TabDragKind::Project, 0, tab.index);
-      SDL_FRect rect = tab.rect;
-      SDL_FRect close_rect = tab.close_rect;
-      rect.x += dx;
-      close_rect.x += dx;
-      // The tab paints inside itself, its close button included (clip-discipline 1.3).
-      const render::PaintElement element(renderer, rect, "project-tab");
-      DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
-                   tab.badge_color, tab.show_badge, tab.active,
-                   StripTabStyle{
-                       .text_left_padding = 10.0f,
-                       .badge_size = 16.0f,
-                       .badge_gap = 8.0f,
-                       .close_right_reserve = 46.0f,
-                       .accent_edge = StripAccentEdge::Top,
-                   },
-                   chrome_tab_palette, tab_hovered(rect, project_strip_still), RemoteMarkOf(tab));
-      draw_tab_close_button(rect, close_rect,
-                            tab.active ? chrome_tab_palette.active_glyph
-                                       : chrome_tab_palette.inactive_glyph,
-                            tab.active ? chrome_tab_palette.active_text
-                                       : chrome_tab_palette.inactive_text,
-                            project_strip_still);
+  // The project strip, when it shows (prep settles nothing for a hidden one).
+  if (const PreparedFrameState::TabStripPaint& strip = frame_state_.project_strip; strip.shown) {
+    constexpr StripTabStyle kProjectTabStyle{
+        .text_left_padding = 10.0f,
+        .badge_size = 16.0f,
+        .badge_gap = 8.0f,
+        .close_right_reserve = 46.0f,
+        .accent_edge = StripAccentEdge::Top,
+    };
+    draw_strip_tabs(strip, kProjectTabStyle, chrome_tab_palette, "project-tab");
+    if (strip.dragging) {
+      DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip, strip.drag_tabs,
+                          strip.drag_tabs_strip, strip.drag_source, strip.drag_pointer_x, strip.drag_grab_offset_x,
+                          kProjectTabStyle, chrome_tab_palette);
     }
-    {
-      const auto project_overflow =
-          tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
-      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.left_button,
-                                 /*point_right=*/false, project_overflow.hidden_left,
-                                 PointerOver(project_overflow.left_button));
-      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.right_button,
-                                 /*point_right=*/true, project_overflow.hidden_right,
-                                 PointerOver(project_overflow.right_button));
-    }
-    if (const TabDragState& drag = context_.interaction_state.tab_drag;
-        drag.dragging && drag.kind == TabDragKind::Project) {
-      DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip,
-                          visible_project_tabs, layout.project_tab_strip, drag.source_index, drag.pointer_x,
-                          drag.grab_offset_x,
-                          StripTabStyle{
-                              .text_left_padding = 10.0f,
-                              .badge_size = 16.0f,
-                              .badge_gap = 8.0f,
-                              .close_right_reserve = 46.0f,
-                              .accent_edge = StripAccentEdge::Top,
-                          },
-                          chrome_tab_palette);
-    }
-  }  // project_tab_strip visible
+  }
 
   // Each editor group owns its own tab strip. For a single group this is the
   // global tab-strip band (filled in the frame pass); a pane stacked below
@@ -258,102 +195,45 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                               group_tab_strip.w, kWorkspaceDividerThickness),
                      theme_.border);
     }
-    const std::vector<VisibleStripTab>& visible_tabs =
-        HasActiveProjectCatalogEntry()
-            ? tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip)
-            : TabStripService::EmptyVisibleTabs();
-    if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
-      // Inside the strip, as the tabs are: the placeholder is 220 wide whatever
-      // the strip, and a pane squeezed narrower -- or one whose tabs no longer fit
-      // beside its overflow chevrons -- painted it over the debug pane, in full and
-      // partial frames alike, until the pane widened and nothing repainted what it
-      // had covered (soak 8830ce9c51b8).
-      const render::ScopedRenderClip placeholder_clip(
-          renderer, SDL_Rect{static_cast<int>(std::floor(group_tab_strip.x)),
-                             static_cast<int>(std::floor(group_tab_strip.y)),
-                             static_cast<int>(std::ceil(group_tab_strip.w)),
-                             static_cast<int>(std::ceil(group_tab_strip.h))});
-      const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_tab_strip);
-      DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
+    constexpr StripTabStyle kEditorTabStyle{
+        .text_left_padding = 10.0f,
+        .close_right_reserve = 46.0f,
+        .accent_edge = StripAccentEdge::Top,
+    };
+    const PreparedFrameState::TabStripPaint& strip = frame_state_.editor_strips[gi];
+    if (!strip.shown) {
+      continue;  // no project in this window
+    }
+    // The tabs and their chevrons stay inside the group's strip: with the pane
+    // beside it squeezed to its minimum, a tab painted past the strip's end over
+    // the debug pane, and a partial frame of the strip disagreed with a full one
+    // (QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
+    // So does the placeholder, 220 wide whatever the strip (soak 8830ce9c51b8).
+    // The drag ghost below is not clipped: it follows the pointer across strips.
+    std::optional<render::ScopedRenderClip> strip_clip;
+    strip_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(group_tab_strip.x)),
+                                          static_cast<int>(std::floor(group_tab_strip.y)),
+                                          static_cast<int>(std::ceil(group_tab_strip.w)),
+                                          static_cast<int>(std::ceil(group_tab_strip.h))});
+    if (strip.placeholder) {
+      DrawStripTab(text_renderer_, renderer, theme_, EmptyTabStripPlaceholderRect(group_tab_strip), "Welcome", {}, {},
+                   false, true,
                    StripTabStyle{
                        .text_left_padding = 10.0f,
                        .close_right_reserve = 0.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
                    group_tab_palette);
-    } else if (HasActiveProjectCatalogEntry()) {
-      // The tabs and their chevrons stay inside the group's strip: with the pane
-      // beside it squeezed to its minimum, a tab painted past the strip's end over
-      // the debug pane, and a partial frame of the strip disagreed with a full one
-      // (QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
-      // The drag ghost below is not clipped: it follows the pointer across strips.
-      std::optional<render::ScopedRenderClip> strip_clip;
-      strip_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(group_tab_strip.x)),
-                                            static_cast<int>(std::floor(group_tab_strip.y)),
-                                            static_cast<int>(std::ceil(group_tab_strip.w)),
-                                            static_cast<int>(std::ceil(group_tab_strip.h))});
-      const bool group_strip_still = tab_slide.OffsetsFor(TabDragKind::Editor, gi).empty();
-      for (const VisibleStripTab& tab : visible_tabs) {
-        if (tab_lifted(TabDragKind::Editor, gi, tab.index)) {
-          continue;  // rendered as the floating ghost below
-        }
-        const float dx = slide_dx(TabDragKind::Editor, gi, tab.index);
-        SDL_FRect rect = tab.rect;
-        SDL_FRect close_rect = tab.close_rect;
-        rect.x += dx;
-        close_rect.x += dx;
-        // The tab paints inside itself, its close button included (clip-discipline 1.3).
-        const render::PaintElement element(renderer, rect, "tab");
-        DrawStripTab(text_renderer_, renderer, theme_, rect, tab.display_title, tab.badge_text,
-                     tab.badge_color, tab.show_badge, tab.active,
-                     StripTabStyle{
-                         .text_left_padding = 10.0f,
-                         .close_right_reserve = 46.0f,
-                         .accent_edge = StripAccentEdge::Top,
-                     },
-                     group_tab_palette, tab_hovered(rect, group_strip_still));
-        draw_tab_close_button(rect, close_rect,
-                              tab.active ? group_tab_palette.active_glyph
-                                         : group_tab_palette.inactive_glyph,
-                              tab.active ? group_tab_palette.active_text
-                                         : group_tab_palette.inactive_text,
-                              group_strip_still);
-      }
-      const auto tab_overflow =
-          tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, visible_tabs);
-      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.left_button,
-                                 /*point_right=*/false, tab_overflow.hidden_left,
-                                 PointerOver(tab_overflow.left_button));
-      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.right_button,
-                                 /*point_right=*/true, tab_overflow.hidden_right,
-                                 PointerOver(tab_overflow.right_button));
-      strip_clip.reset();
-      if (const TabDragState& drag = context_.interaction_state.tab_drag;
-          drag.dragging && drag.kind == TabDragKind::Editor && gi == drag.target_group_index) {
-        // The ghost tracks the pointer, so it paints over the strip the pointer is
-        // over — which in a cross-group drag is not the strip the tab came from.
-        // Its label still comes from the SOURCE group's list, the only place the
-        // dragged tab exists until the drop commits (TD-2026-08-14-213). Asking for
-        // another group's visible list is safe here: the memo is per group index,
-        // so it cannot invalidate the `visible_tabs` reference above it.
-        const bool cross_group = drag.source_group_index != gi;
-        const bool source_known = drag.source_group_index < editor_group_rects.groups.size();
-        const SDL_FRect& ghost_tabs_strip =
-            cross_group && source_known ? editor_group_rects.groups[drag.source_group_index].tab_strip
-                                        : group_tab_strip;
-        const std::vector<VisibleStripTab>& ghost_tabs =
-            !cross_group ? visible_tabs
-            : source_known ? tab_strip_chrome_.ComputeVisibleTabsForGroup(drag.source_group_index, ghost_tabs_strip)
-                           : TabStripService::EmptyVisibleTabs();
-        DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, ghost_tabs, ghost_tabs_strip,
-                            drag.source_index, drag.pointer_x, drag.grab_offset_x,
-                            StripTabStyle{
-                                .text_left_padding = 10.0f,
-                                .close_right_reserve = 46.0f,
-                                .accent_edge = StripAccentEdge::Top,
-                            },
-                            chrome_tab_palette);
-      }
+      continue;
+    }
+    draw_strip_tabs(strip, kEditorTabStyle, group_tab_palette, "tab");
+    strip_clip.reset();
+    if (strip.dragging) {
+      // The ghost tracks the pointer, so it paints over the strip the pointer is
+      // over -- which in a cross-group drag is not the strip the tab came from.
+      DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, strip.drag_tabs, strip.drag_tabs_strip,
+                          strip.drag_source, strip.drag_pointer_x, strip.drag_grab_offset_x, kEditorTabStyle,
+                          chrome_tab_palette);
     }
   }
 

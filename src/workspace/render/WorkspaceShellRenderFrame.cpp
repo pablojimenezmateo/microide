@@ -13,6 +13,7 @@
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/MenuPopupPaint.h"
 #include "workspace/render/SettingsCardPaint.h"
+#include "workspace/render/TabStripPaint.h"
 #include "workspace/render/SidebarModeRowPaint.h"
 #include "workspace/render/TreeSidebarPaint.h"
 #include "workspace/render/HoverCardLimits.h"
@@ -1699,6 +1700,25 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     chrome_unit(layout.project_tab_strip.h > 0.0f ? std::optional<SDL_FRect>(layout.project_tab_strip) : std::nullopt,
                 version);
+    // What the strip paints, settled once: RenderWindowChrome draws this copy.
+    PreparedFrameState::TabStripPaint& strip = frame_state_.project_strip;
+    ResetTabStripPaint(strip);
+    if (layout.project_tab_strip.h > 0.0f) {
+      const TabDragState& drag = context_.interaction_state.tab_drag;
+      const bool project_drag = drag.dragging && drag.kind == TabDragKind::Project;
+      const std::span<const float> slide = context_.interaction_state.tab_slide.OffsetsFor(TabDragKind::Project, 0);
+      const auto pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); };
+      const std::vector<VisibleStripTab>& visible = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+      strip.shown = true;
+      SettleTabStripTabs(strip, visible, slide, project_drag ? std::optional<std::size_t>(drag.source_index) : std::nullopt,
+                         slide.empty() && !drag.dragging, pointer_over);
+      SettleTabStripOverflow(strip, tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible),
+                             pointer_over);
+      if (project_drag) {
+        SettleTabStripDrag(strip, visible, layout.project_tab_strip, drag.source_index, drag.pointer_x,
+                           drag.grab_offset_x);
+      }
+    }
   }
   // The overlay card's extent: one that opens, closes, grows or shrinks repaints
   // where it was and where it is.
@@ -1771,6 +1791,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       const bool present = gi < group_rects.groups.size() && gi < project_state.editor_groups.size();
       PaintFingerprint strip;
       PaintFingerprint band;
+      PreparedFrameState::TabStripPaint& strip_paint = frame_state_.editor_strips[gi];
+      ResetTabStripPaint(strip_paint);
       if (present) {
         strip.Add(gi == focused).Add(group_rects.groups.size());
         for (const TabEntry& tab : project_state.editor_groups[gi].open_tabs) {
@@ -1801,6 +1823,34 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           if (drag.dragging && drag.kind == TabDragKind::Editor) {
             strip.Add(drag.source_group_index).Add(drag.source_index).Add(drag.target_group_index);
             strip.Add(drag.pointer_x).Add(drag.grab_offset_x);
+          }
+          // What the strip paints, settled once: RenderWindowChrome draws this copy
+          // (TabStripPaint.h), not the service's list asked for again at paint.
+          const auto pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); };
+          const bool editor_drag = drag.dragging && drag.kind == TabDragKind::Editor;
+          strip_paint.shown = true;
+          strip_paint.placeholder = visible.empty();
+          // The dragged tab is lifted out of its SOURCE group's strip for the whole
+          // gesture, while the ghost is drawn over the strip the pointer is on.
+          SettleTabStripTabs(strip_paint, visible, slide,
+                             editor_drag && drag.source_group_index == gi ? std::optional<std::size_t>(drag.source_index)
+                                                                          : std::nullopt,
+                             still, pointer_over);
+          SettleTabStripOverflow(strip_paint, overflow, pointer_over);
+          if (!strip_paint.placeholder && editor_drag && gi == drag.target_group_index) {
+            // The ghost's label comes from the source group's list, the only place
+            // the tab exists until the drop commits (TD-2026-08-14-213). Another
+            // group's memo: asking for it leaves `visible` as it is.
+            const bool cross_group = drag.source_group_index != gi;
+            const bool source_known = drag.source_group_index < group_rects.groups.size();
+            const SDL_FRect& source_strip =
+                cross_group && source_known ? group_rects.groups[drag.source_group_index].tab_strip : strip_rect;
+            const std::vector<VisibleStripTab>& source_tabs =
+                !cross_group ? visible
+                : source_known ? tab_strip_chrome_.ComputeVisibleTabsForGroup(drag.source_group_index, source_strip)
+                               : TabStripService::EmptyVisibleTabs();
+            SettleTabStripDrag(strip_paint, source_tabs, source_strip, drag.source_index, drag.pointer_x,
+                               drag.grab_offset_x);
           }
         }
         band.Add(gi == focused).Add(std::string_view(BreadcrumbLabel(gi))).Add(frame_state_.status_items_hash);
