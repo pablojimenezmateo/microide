@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <SDL3/SDL.h>
 
 #include <cstddef>
@@ -89,6 +90,10 @@ inline constexpr std::size_t kWelcomeRecentFileLimit = 8;
 // View model for the welcome / placeholder surface. All display strings are
 // precomputed by RenderViewModelBuilder so the render TU only draws them.
 struct WelcomeViewModel {
+  // Which build of the page this is: the builder memoizes one model and rebuilds
+  // it IN PLACE, so its address says nothing -- a frame that paints the page keys
+  // on this (RenderViewModelBuilder::BuildWelcomeView).
+  std::uint64_t generation = 0;
   WelcomeKind kind = WelcomeKind::NoProject;
   std::string title;
   std::string subtitle;

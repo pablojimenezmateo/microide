@@ -1430,10 +1430,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       fill_pane_paint(gi, pane, group, *viewport, focused);
       if (viewport->is_placeholder()) {
         // The home surface repaints whole when anything it shows moves: the pane,
-        // its size, the recents list (the builder's memo, a new object per change).
+        // its size, and the page -- the recents, a remote project's connection
+        // stages -- by the generation of the builder's memo. (Not its address: the
+        // memo is one object rebuilt in place, and a stage that changed repainted
+        // nothing once "the editor area changed" became a frame.)
+        const editor::WelcomeViewModel* home = frame_state_.editor_pane_paint[gi].welcome;
         PaintFingerprint welcome;
-        welcome.Add(pane.rect).Add(reinterpret_cast<std::uintptr_t>(frame_state_.editor_pane_paint[gi].welcome))
-            .Add(settings.value());
+        welcome.Add(pane.rect).Add(home != nullptr ? home->generation : 0).Add(settings.value());
         units.push_back({pane.rect, welcome.value()});
         frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
         continue;

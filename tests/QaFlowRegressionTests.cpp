@@ -10236,6 +10236,45 @@ void TestATerminalCaretRepaintsWhereItWasAndIs() {
   }
 }
 
+// An empty pane's home page lists a remote project's connection stages and the
+// recent projects. Its unit was keyed on the ADDRESS of the builder's memo for it
+// -- a thread_local the builder rebuilds in place, so the address never moves --
+// and a stage that changed, or a recents list that did, repainted nothing once
+// "the editor area changed" became a frame. The unit keys on what the page shows.
+void TestTheHomePageRepaintsWhenWhatItListsChanges() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  const std::filesystem::path other = fixture.temp_dir.path() / "app";
+  WriteFile(other / "b.txt", "b\n");
+  Expect(TestAccess::OpenProjectTab(fixture.shell, other, false, false), "a second project opens");
+  auto& remote = TestAccess::CurrentProjectState(fixture.shell);
+  remote.id = project::ProjectId::ForRemote("worky", "/srv/app");
+  using Stage = editor::WelcomeStageState;
+  remote.remote_status.stages = {{.text = "not connected", .state = Stage::Failed}};
+  ++remote.remote_status_revision;
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a remote project with no tab: its home page, offline");
+  SDL_Surface* offline = FullFrame(fixture);
+
+  // The connection comes up: its status callback owes a frame.
+  remote.remote_status.stages = {{.text = "connecting to worky", .state = Stage::Active},
+                                 {.text = "connected", .state = Stage::Done}};
+  ++remote.remote_status_revision;
+  workspace::RenderInvalidation frame;
+  frame.frame = true;
+  fixture.ExpectFresh(frame, "the home page's stages following the connection");
+  SDL_Surface* online = FullFrame(fixture);
+  const SDL_FRect editor = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+  const render::PixelDiffResult changed = DiffSurfaces(offline, online);
+  SDL_DestroySurface(offline);
+  SDL_DestroySurface(online);
+  Expect(changed.count > 0 && static_cast<float>(changed.min_y + changed.box_height) > editor.y + 20.0f,
+         "the stages show on the home page (the case under test)");
+}
+
 // The names of the card's elements of `kind` ("settings-category", "setting"),
 // as the control channel lists them, with their rects.
 std::vector<std::pair<std::string, SDL_FRect>> SettingsCardElements(FlowFixture& fixture, std::string_view kind) {
@@ -11104,6 +11143,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TheSearchPanelPaintsTheResultsItPrepared",
           TestTheSearchPanelPaintsTheResultsItPrepared);
   AddTest(tests, "QaFlowRegression/ATerminalCaretRepaintsWhereItWasAndIs", TestATerminalCaretRepaintsWhereItWasAndIs);
+  AddTest(tests, "QaFlowRegression/TheHomePageRepaintsWhenWhatItListsChanges",
+          TestTheHomePageRepaintsWhenWhatItListsChanges);
   AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
           TestATerminalsEchoRepaintsItsRowNotItsPane);

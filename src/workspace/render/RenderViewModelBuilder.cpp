@@ -2037,6 +2037,9 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
   g_welcome_view_cache.root = cache_root;
   editor::WelcomeViewModel& vm = g_welcome_view_cache.model;
   vm = editor::WelcomeViewModel{};
+  // A new generation per rebuild, never reused: the model is rebuilt where it is.
+  thread_local std::uint64_t generation = 0;
+  vm.generation = ++generation;
   vm.shortcuts_heading = "Keyboard Shortcuts";
 
   // Curated, registry-sourced shortcut rows. Listing ActionIds (not literal chords)
