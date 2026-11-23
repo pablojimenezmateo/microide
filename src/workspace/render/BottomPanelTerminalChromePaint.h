@@ -17,7 +17,7 @@
 // The terminal's chrome around its grid -- each pane's empty hint and scrollbar,
 // the dividers between panes, the hint over a panel with no session -- as a
 // derived-damage surface (openspec derived-damage 3.1) painted element by element
-// (clip-discipline stage 3). The grid's rows keep their own damage (design D3).
+// (clip-discipline stage 3). The grid is its own surface (BottomPanelTerminalGridPaint.h).
 // Free functions, as the header's (BottomPanelHeaderPaint.h).
 namespace microide::workspace {
 

@@ -720,6 +720,10 @@ struct TerminalPaneState {
   // The link under the pointer, underlined while it is (VS Code's terminal).
   std::optional<TerminalLinkSpan> hovered_link;
   terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
+  // A content key per line of the snapshot (KeyTerminalGridRows), computed when
+  // the snapshot is taken: the grid's rows are derived units and key on these, so
+  // a frame hashes cells only when the session's generation moved.
+  std::vector<std::uint64_t> visible_row_keys;
   // What this pane paints this frame, sampled once in frame prep (with the lines
   // above): the session is written by its PTY reader thread, and paint reading it
   // live let one frame's renders disagree about the caret and the line count.
@@ -737,10 +741,9 @@ struct TerminalPaneState {
   bool frame_reverse_video = false;
   // The selection this frame paints (normalized, after the row-space rebase), and
   // whether at full strength (the panel has focus) or as the kept-but-not-live
-  // wash. Paint used to ask the shell per cell. Frame prep repaints the pane when
-  // either differs from the previous frame's, so no path that changes the
-  // selection -- a key, a pane switch, a program entering the alternate screen --
-  // needs its own damage request.
+  // wash. Paint used to ask the shell per cell. Each row's derived unit folds its
+  // slice of it, so no path that changes the selection -- a key, a pane switch, a
+  // program entering the alternate screen -- needs its own damage request.
   std::optional<TerminalSelectionBounds> frame_selection;
   bool frame_selection_live = false;
   std::size_t visible_lines_first_row = 0;

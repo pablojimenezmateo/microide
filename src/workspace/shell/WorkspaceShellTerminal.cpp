@@ -15,6 +15,7 @@
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
+#include "workspace/render/BottomPanelTerminalGridPaint.h"
 
 namespace microide::workspace {
 
@@ -796,16 +797,17 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
         pane->visible_lines_first_row == first_row && pane->visible_lines_max_rows == visible_rows;
     const std::uint64_t previous_generation =
         same_visible_range ? pane->visible_lines_snapshot.generation : 0;
-    // Paint reads this snapshot, so a frame that takes a new one repaints the pane:
-    // output can land after the wake that announced it was handled, and the frame
-    // that samples it may have been drawn for something else entirely (a caret
+    // Paint reads this snapshot, and its rows are derived units
+    // (PrepareTerminalGridFrame) keyed on these content keys: the frame that takes
+    // a new snapshot repaints the rows whose cells changed, whatever it was drawn
+    // for. Output can land after the wake that announced it was handled (a caret
     // blink repainted only the caret over vim's changed rows -- CI QA,
-    // terminal-programs). A wake's own repaint covers the usual case; this covers
-    // the frame that gets there first.
+    // terminal-programs). This repainted the whole pane: a keystroke's echo is
+    // one row.
     // The caret with the lines it is painted over, under one lock (see the API).
     if (pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
                                                  &pane->visible_lines_snapshot, &pane->frame_cursor)) {
-      RequestRedrawRect(rects.panes[pane_index]);
+      KeyTerminalGridRows(pane->visible_lines_snapshot.lines, pane->visible_row_keys);
     }
     // A caret on a wide glyph's lead cell covers both its cells: one cell wide, its
     // blink damaged half the glyph it draws over, and the other half kept the
@@ -822,18 +824,13 @@ void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
     pane->frame_line_count = line_count;
     pane->frame_reverse_video = pane->session.screen_reverse_video();
     // The selection, active pane only (the others have none: switching panes
-    // clears it), and how strongly it paints.
+    // clears it), and how strongly it paints. Each row's unit folds its slice.
     std::optional<TerminalSelectionBounds> selection;
     if (pane_index == tab.active_pane) {
       selection = NormalizeTerminalSelection(pane->selection_anchor, pane->selection_head);
     }
-    const bool selection_live = context_.current_project_state.surface.focus == FocusTarget::Panel;
-    if (selection != pane->frame_selection ||
-        (selection.has_value() && selection_live != pane->frame_selection_live)) {
-      RequestRedrawRect(rects.panes[pane_index]);
-    }
     pane->frame_selection = selection;
-    pane->frame_selection_live = selection_live;
+    pane->frame_selection_live = context_.current_project_state.surface.focus == FocusTarget::Panel;
     // The caret this frame paints against the one on screen: a cursor that hid or
     // moved without its rows changing (DECTCEM, a bare cursor move) left the old
     // caret painted in a pane nothing else repainted (QA monkey, seed 1).

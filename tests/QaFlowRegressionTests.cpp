@@ -2012,8 +2012,11 @@ void TestAClickThatClearsATerminalSelectionUnderTheFindWidgetRepaintsIt() {
   full.full = true;
   fixture.ExpectFresh(full, "the maximized terminal");
   TestAccess::SetFocusPanel(fixture.shell);
-  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search"), "search opens the terminal's find bar");
+  // (`search` is the project search: it opened the sidebar's, and this test ran
+  // with no find bar at all.)
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "terminal-find"), "terminal-find opens the find bar");
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the find widget");
+  Expect(TestAccess::TerminalFind(fixture.shell).visible(), "the find bar is open");
   const SDL_FPoint word = TestAccess::TerminalCellPoint(fixture.shell, 0, 12);
   const SDL_FPoint other = TestAccess::TerminalCellPoint(fixture.shell, 1, 3);
   for (int round = 0; round < 2; ++round) {
@@ -9350,6 +9353,300 @@ void TestTheDebugDockOpensAndClosesFromAFrame() {
   run("debug-pane-toggle", "the dock closing again");
 }
 
+// A link under the pointer is underlined, a row of the grid: the motion owes a
+// frame and the row's unit folds the link's span. Since "the bottom panel
+// changed" became a frame, nothing named the row and the underline appeared, and
+// stayed, only when something else repainted it.
+void TestAHoveredTerminalLinkRepaintsItsRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("link.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, 4, 80);  // few enough rows that none is scrolled away
+  TerminalSessionTestAccess::AppendOutput(
+      session, "go to https://example.com/x now\r\nplain row\r\nsee https://example.com/a-long-link-that-");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a terminal with a link");
+  const SDL_FPoint url = TestAccess::TerminalCellPoint(fixture.shell, 0, 12);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(url.x, url.y)}), "the pointer onto a link");
+  Expect(TestAccess::TerminalHoveredLink(fixture.shell).has_value(), "the link is hovered");
+  const SDL_FPoint other = TestAccess::TerminalCellPoint(fixture.shell, 2, 10);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(other.x, other.y)}),
+                      "the pointer onto another row's link");
+  const SDL_FPoint plain = TestAccess::TerminalCellPoint(fixture.shell, 1, 2);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(plain.x, plain.y)}), "the pointer off the links");
+  Expect(!TestAccess::TerminalHoveredLink(fixture.shell).has_value(), "no link is hovered");
+}
+
+// The share of `area` a frame for `asked` repaints: frame prep's damage with the
+// request's own. Leaves the canvas whole for the next step.
+float DamagedShareOf(FlowFixture& fixture, const SDL_FRect& area, const workspace::RenderInvalidation& asked) {
+  fixture.PinCaret();
+  const workspace::RenderInvalidation damage =
+      FrameDamage(fixture.shell, fixture.canvas, fixture.width, fixture.height, asked);
+  float covered = damage.full ? area.w * area.h : 0.0f;
+  for (const SDL_FRect& rect : damage.rects) {
+    SDL_FRect inside{};
+    if (SDL_GetRectIntersectionFloat(&rect, &area, &inside)) {
+      covered += inside.w * inside.h;
+    }
+  }
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  return covered / std::max(1.0f, area.w * area.h);
+}
+
+// A terminal of `rows` rows showing `output`, painted whole.
+terminal::TerminalSession& TerminalShowing(FlowFixture& fixture, std::size_t rows, std::string_view output) {
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, rows, 80);
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a terminal showing its output");
+  return session;
+}
+
+// The session's wake, as the frame loop handles it.
+workspace::RenderInvalidation TerminalWake(FlowFixture& fixture) {
+  TestAccess::ConsumeTerminalSessionUpdates(fixture.shell);
+  return fixture.shell.ConsumePendingRenderInvalidation();
+}
+
+// The terminal's grid is derived per row: a keystroke's echo changes one row's
+// cells, and the frame that samples it repaints that row. Any new output used to
+// repaint the whole pane -- every row planned and drawn again for one glyph.
+void TestATerminalsEchoRepaintsItsRowNotItsPane() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("echo.txt", "text\n");
+  auto& session = TerminalShowing(fixture, 4, "first line\r\nsecond line\r\nprompt$ ");
+  const SDL_FRect panel = TestAccess::CurrentLayout(fixture.shell).bottom_panel;
+  // The echo of a typed character: one row of the four.
+  TerminalSessionTestAccess::AppendOutput(session, "l");
+  const float echo = DamagedShareOf(fixture, panel, TerminalWake(fixture));
+  Expect(echo > 0.0f && echo < 0.2f, "an echo repaints its row, not the pane: " + std::to_string(echo) + " of the panel");
+  TerminalSessionTestAccess::AppendOutput(session, "s");
+  fixture.ExpectFresh(TerminalWake(fixture), "an echoed character");
+  // Sampled by a frame drawn for something else, before its wake is handled.
+  const workspace::RenderInvalidation elsewhere{.rects = {SDL_FRect{2.0f, 2.0f, 4.0f, 4.0f}}};
+  TerminalSessionTestAccess::AppendOutput(session, " -l");
+  fixture.ExpectFresh(elsewhere, "an echo sampled by another frame");
+  // A row rewritten in place above the cursor's (a status line), and one styled
+  // the same glyphs over: the key is the cells, style and all.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[s\x1b[1;1HFIRST LINE\x1b[u");
+  fixture.ExpectFresh(TerminalWake(fixture), "a row rewritten above the cursor");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[s\x1b[2;1H\x1b[31;4msecond line\x1b[0m\x1b[u");
+  const float restyled = DamagedShareOf(fixture, panel, TerminalWake(fixture));
+  Expect(restyled > 0.0f && restyled < 0.2f,
+         "a row restyled over the same glyphs repaints, alone: " + std::to_string(restyled));
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[s\x1b[2;1H\x1b[32;4msecond line\x1b[0m\x1b[u");
+  fixture.ExpectFresh(TerminalWake(fixture), "a row recoloured over the same glyphs");
+  // New lines, a scroll of the whole screen, then the screen cleared.
+  TerminalSessionTestAccess::AppendOutput(session, "\r\nfile-a  file-b\r\nprompt$ ");
+  fixture.ExpectFresh(TerminalWake(fixture), "output that adds rows");
+  TerminalSessionTestAccess::AppendOutput(session, "x\r\ny\r\nz\r\nprompt$ ");
+  fixture.ExpectFresh(TerminalWake(fixture), "output that scrolls the screen");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2J\x1b[Hprompt$ ");
+  fixture.ExpectFresh(TerminalWake(fixture), "the screen cleared");
+  // Nothing new: nothing repaints.
+  const float nothing = DamagedShareOf(fixture, panel, TerminalWake(fixture));
+  Expect(nothing == 0.0f, "a wake with nothing new repaints nothing: " + std::to_string(nothing));
+  // The whole screen in reverse video and back (DECSCNM): every row, and the
+  // blank under them.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?5h");
+  fixture.ExpectFresh(TerminalWake(fixture), "the screen in reverse video");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?5l");
+  fixture.ExpectFresh(TerminalWake(fixture), "the screen out of reverse video");
+}
+
+// A selection is each row's slice of it: growing it by a row repaints that row,
+// and the focus leaving the panel (the wash at half strength) repaints the rows
+// that carry it. A selection change used to repaint the pane.
+void TestATerminalSelectionRepaintsTheRowsItCovers() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("select.txt", "text\n");
+  TerminalShowing(fixture, 4, "To run a command as administrator\r\nuse sudo <command>\r\nsee man sudo_root\r\nprompt$ ");
+  TestAccess::SetFocusPanel(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the panel focused");
+  const SDL_FRect panel = TestAccess::CurrentLayout(fixture.shell).bottom_panel;
+  using Point = workspace::TerminalSelectionPoint;
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{0, 3}, Point{0, 16});
+  const float one_row = DamagedShareOf(fixture, panel, NothingAnnounced());
+  Expect(one_row > 0.0f && one_row < 0.2f, "a selection in one row repaints that row: " + std::to_string(one_row));
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{0, 3}, Point{0, 20});
+  fixture.ExpectFresh(NothingAnnounced(), "the selection grown along its row");
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{0, 3}, Point{2, 7});
+  fixture.ExpectFresh(NothingAnnounced(), "the selection grown over two more rows");
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{0, 3}, Point{2, 9});
+  const float last_row = DamagedShareOf(fixture, panel, NothingAnnounced());
+  Expect(last_row > 0.0f && last_row < 0.2f,
+         "the selection's end moving repaints its last row only: " + std::to_string(last_row));
+  TestAccess::SetFocusEditor(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the keyboard left the panel: the selection kept, not live");
+  TestAccess::SetFocusPanel(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the keyboard back in the panel");
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, std::nullopt, std::nullopt);
+  fixture.ExpectFresh(NothingAnnounced(), "the selection cleared");
+}
+
+// The find bar's matches are highlights on the rows that hold them: typing the
+// query, stepping to the next match and closing the bar each repaint those rows
+// from the frame the key owes.
+void TestTerminalFindHighlightsRepaintTheirRows() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("find.txt", "text\n");
+  auto& session = TerminalShowing(fixture, 4, "alpha beta\r\ngamma alpha\r\ndelta\r\nalpha$ ");
+  TestAccess::SetFocusPanel(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "terminal-find"), "terminal-find opens the find bar");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the find bar");
+  Expect(TestAccess::TerminalFind(fixture.shell).visible(), "the find bar is open");
+  for (const char* text : {"a", "l", "p"}) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(text)}),
+                        std::string("the query typed: ") + text);
+  }
+  Expect(TestAccess::TerminalFind(fixture.shell).matches().size() == 3,
+         "the query matches three times: " + std::to_string(TestAccess::TerminalFind(fixture.shell).matches().size()) +
+             " for [" + std::string(TestAccess::TerminalFind(fixture.shell).query().text()) + "]");
+  for (int step = 0; step < 3; ++step) {
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN)}), "the next match");
+  }
+  // Output while the bar is open moves the matches with it.
+  TerminalSessionTestAccess::AppendOutput(session, "alp");
+  fixture.ExpectFresh(TerminalWake(fixture), "a match typed at the prompt");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_BACKSPACE)}), "the query shortened");
+  // The bar's own buttons: under the pointer, pressed, and the pointer gone.
+  for (const char* name : {"button:terminal-find/next", "button:terminal-find/match-case",
+                           "button:terminal-find/whole-word", "button:terminal-find/previous"}) {
+    const auto button = fixture.ElementRect(name);
+    Expect(button.has_value(), std::string("the find bar shows ") + name);
+    if (!button) {
+      return;
+    }
+    fixture.ExpectFresh(
+        DispatchEvents(fixture.shell, {MouseMotionEvent(button->x + button->w * 0.5f, button->y + button->h * 0.5f)}),
+        std::string("the pointer onto ") + name);
+    fixture.ExpectFresh(fixture.Click(*button), std::string("a click on ") + name);
+  }
+  const SDL_FPoint grid = TestAccess::TerminalCellPoint(fixture.shell, 2, 30);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(grid.x, grid.y)}), "the pointer off the bar");
+  fixture.ExpectFresh(fixture.Click(SDL_FRect{grid.x - 1.0f, grid.y - 1.0f, 2.0f, 2.0f}),
+                      "a click on the terminal: the bar keeps its matches and gives the keyboard back");
+  Expect(TestAccess::TerminalFind(fixture.shell).visible() && !TestAccess::TerminalFind(fixture.shell).focused(),
+         "the bar is open and not focused");
+  // A key typed into the terminal owes a frame and names no rect: its echo is a
+  // row's to repaint. It named the panel's body, every row of it, per key.
+  const workspace::RenderInvalidation typed = DispatchEvents(fixture.shell, {TextInputEvent("x")});
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "x",
+         "the key went to the terminal: [" + TerminalSessionTestAccess::SentBytes(session) + "]");
+  Expect(!typed.full && typed.rects.empty(),
+         "a key typed into the terminal names no rect: " + std::to_string(typed.rects.size()));
+  fixture.ExpectFresh(typed, "a key typed into the terminal");
+  const auto query = fixture.ElementRect("field:terminal-find/query");
+  Expect(query.has_value(), "the find bar shows its query field");
+  if (!query) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*query), "a click in the query field takes the keyboard back");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "the find bar closed");
+  Expect(!TestAccess::TerminalFind(fixture.shell).visible(), "the bar is closed");
+}
+
+// Two panes: what one prints is not the other's to repaint, and a row unit is a
+// slot of its own pane -- the first pane gaining a row moves no unit of the second.
+void TestOneTerminalPanesOutputLeavesTheOtherPaneAlone() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("panes.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term-split"), "term-split should split the terminal");
+  Expect(TestAccess::TerminalPaneCount(fixture.shell) == 2, "the terminal should have two panes");
+  for (std::size_t pane = 0; pane < 2; ++pane) {
+    auto& session = TestAccess::TerminalPaneSession(fixture.shell, pane);
+    TerminalSessionTestAccess::Reset(session, 4, 40);
+    TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  }
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  const workspace::RenderInvalidation full{.full = true};
+  fixture.ExpectFresh(full, "a terminal tab of two panes");
+  const workspace::TerminalPaneRectsLayout rects = TestAccess::TerminalPaneRects(fixture.shell);
+  auto& first = TestAccess::TerminalPaneSession(fixture.shell, 0);
+  TerminalSessionTestAccess::AppendOutput(first, "ls\r\none two three\r\nprompt$ ");
+  const float other = DamagedShareOf(fixture, rects.panes[1], TerminalWake(fixture));
+  Expect(other == 0.0f, "rows added to the first pane repaint none of the second: " + std::to_string(other));
+  TerminalSessionTestAccess::AppendOutput(first, "x");
+  const float own = DamagedShareOf(fixture, rects.panes[0], TerminalWake(fixture));
+  Expect(own > 0.0f && own < 0.4f, "an echo in the first pane repaints its row: " + std::to_string(own));
+  TerminalSessionTestAccess::AppendOutput(TestAccess::TerminalPaneSession(fixture.shell, 1), "make\r\n");
+  TerminalSessionTestAccess::AppendOutput(first, "y");
+  fixture.ExpectFresh(TerminalWake(fixture), "output in both panes at once");
+
+  // The keyboard moving between the panes: the selection goes with the pane it
+  // leaves, and the find bar's highlights are the active pane's rows'.
+  const auto run = [&](const std::string& command, const std::string& what) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, command), command + " should run");
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), what);
+  };
+  TestAccess::SetFocusPanel(fixture.shell);
+  fixture.ExpectFresh(NothingAnnounced(), "the panel focused");
+  using Point = workspace::TerminalSelectionPoint;
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{0, 0}, Point{0, 6});
+  fixture.ExpectFresh(NothingAnnounced(), "a selection in the active pane");
+  const std::size_t was_active = TestAccess::ActiveTerminalPaneIndex(fixture.shell);
+  run(was_active == 0 ? "term-pane-right" : "term-pane-left", "the other pane focused, the selection gone");
+  Expect(TestAccess::ActiveTerminalPaneIndex(fixture.shell) != was_active, "the other pane is active");
+  run("terminal-find prompt", "the find bar open on a query both panes hold");
+  Expect(!TestAccess::TerminalFind(fixture.shell).matches().empty(), "the query matches in the active pane");
+  run(was_active == 0 ? "term-pane-left" : "term-pane-right", "the first pane focused under an open find bar");
+  run(was_active == 0 ? "term-pane-right" : "term-pane-left", "and the other again");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)}), "the find bar closed");
+}
+
+// The same rows at fractional scales, where a row's band and the glyph row under
+// it fall between device pixels: an echo, a selection and a hovered link.
+void TestTerminalRowsRepaintAtFractionalScales() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (const std::string scale : {"1.25", "1.6", "2.25"}) {
+    FlowFixture fixture("scale.txt", "text\n", 1600, 1000);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting ui.scale " + scale),
+           "set-setting ui.scale should run");
+    auto& session =
+        TerminalShowing(fixture, 3, "go to https://example.com/x now\r\n\x1b[41mred\x1b[0m gjpqy \x1b[4munder\x1b[0m\r\nprompt$ ");
+    TestAccess::SetFocusPanel(fixture.shell);
+    fixture.ExpectFresh(NothingAnnounced(), "the panel focused at scale " + scale);
+    for (const char* echo : {"g", "j", "\x1b[7m \x1b[0m", "\b\b\b   \b\b\b"}) {
+      TerminalSessionTestAccess::AppendOutput(session, echo);
+      fixture.ExpectFresh(TerminalWake(fixture), "an echo at scale " + scale);
+    }
+    using Point = workspace::TerminalSelectionPoint;
+    TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{1, 0}, Point{1, 9});
+    fixture.ExpectFresh(NothingAnnounced(), "a selection in the middle row at scale " + scale);
+    TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, Point{0, 2}, Point{2, 3});
+    fixture.ExpectFresh(NothingAnnounced(), "a selection over every row at scale " + scale);
+    TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, std::nullopt, std::nullopt);
+    fixture.ExpectFresh(NothingAnnounced(), "the selection cleared at scale " + scale);
+    const SDL_FPoint url = TestAccess::TerminalCellPoint(fixture.shell, 0, 12);
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(url.x, url.y)}),
+                        "the pointer onto a link at scale " + scale);
+    const SDL_FPoint plain = TestAccess::TerminalCellPoint(fixture.shell, 1, 6);
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(plain.x, plain.y)}),
+                        "the pointer off the link at scale " + scale);
+  }
+}
+
 // A remote project's tab wears its connection's state in its corner. The strip's
 // unit keys on its sources' version, which folds each tab's worst stage, so a
 // stage change repaints the strip from a frame: the status callback named the
@@ -10030,6 +10327,15 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalsOutputRepaintsItsPaneNotThePanel",
           TestATerminalsOutputRepaintsItsPaneNotThePanel);
   AddTest(tests, "QaFlowRegression/TheDebugDockOpensAndClosesFromAFrame", TestTheDebugDockOpensAndClosesFromAFrame);
+  AddTest(tests, "QaFlowRegression/AHoveredTerminalLinkRepaintsItsRow", TestAHoveredTerminalLinkRepaintsItsRow);
+  AddTest(tests, "QaFlowRegression/ATerminalsEchoRepaintsItsRowNotItsPane",
+          TestATerminalsEchoRepaintsItsRowNotItsPane);
+  AddTest(tests, "QaFlowRegression/ATerminalSelectionRepaintsTheRowsItCovers",
+          TestATerminalSelectionRepaintsTheRowsItCovers);
+  AddTest(tests, "QaFlowRegression/TerminalFindHighlightsRepaintTheirRows", TestTerminalFindHighlightsRepaintTheirRows);
+  AddTest(tests, "QaFlowRegression/OneTerminalPanesOutputLeavesTheOtherPaneAlone",
+          TestOneTerminalPanesOutputLeavesTheOtherPaneAlone);
+  AddTest(tests, "QaFlowRegression/TerminalRowsRepaintAtFractionalScales", TestTerminalRowsRepaintAtFractionalScales);
   AddTest(tests, "QaFlowRegression/ARemoteProjectsStageRepaintsItsTabFromAFrame",
           TestARemoteProjectsStageRepaintsItsTabFromAFrame);
   AddTest(tests, "QaFlowRegression/AMenuHangingFromAStatusSegmentOpensAndClosesFromAFrame",

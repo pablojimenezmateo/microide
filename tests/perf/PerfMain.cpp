@@ -1225,6 +1225,55 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
+  // A keystroke's echo: one row of a full, coloured screen changes and the frame
+  // that samples it is a partial one. The grid's rows are derived units
+  // (BottomPanelTerminalGridPaint.h), so that frame repaints the echo's row and
+  // paint skips the rows its clip cannot reach; it used to repaint the pane --
+  // every row planned and drawn -- for each echoed character, and the key before
+  // it had already repainted the panel's body. Typing and erasing, so the row
+  // never wraps and the screen never scrolls: every frame is one row's change.
+  // Not baseline_gated yet: no reference run on a quiet box has recorded it.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "terminal_echo_partial_frames",
+      .smoke = false,
+      .baseline_gated = false,
+      .warmup_iterations = 1,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
+            context.OpenTerminal("perf-echo");
+            std::string output;
+            output.reserve(160 * 400);
+            for (int line = 0; line < 160; ++line) {
+              for (int word = 0; word < 16; ++word) {
+                output += "\x1b[3";
+                output += static_cast<char>('0' + (line + word) % 8);
+                output += word % 3 == 0 ? ";44" : ";49";
+                output += "mword";
+                output += std::to_string(word);
+                output += ' ';
+              }
+              output += "\x1b[0m\r\n";
+            }
+            output += "prompt$ ";
+            context.FeedTerminalOutput(output);
+            context.PumpFrames(2);
+            // What the session's wake asks for: a frame, no rect.
+            workspace::WorkspaceShell::RenderInvalidation wake;
+            wake.frame = true;
+            context.Measure("terminal.echo_400_frames", [&]() {
+              for (int key = 0; key < 200; ++key) {
+                const char glyph = static_cast<char>('a' + key % 26);
+                context.FeedTerminalOutput(std::string_view(&glyph, 1));
+                context.PumpPartialFrame(wake);
+                context.FeedTerminalOutput("\b \b");
+                context.PumpPartialFrame(wake);
+              }
+            });
+            context.CloseAllTerminals();
+          },
+  });
   PerfHarness::RegisterScenario(Scenario{
       .name = "long_soak_8h",
       .smoke = false,

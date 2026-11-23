@@ -341,7 +341,10 @@ void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
          "terminal caret dirty rects should have a visible size");
 }
 
-void TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation() {
+// A key sent to the terminal owes a frame and names no rect: what it changes --
+// its echo's row, the caret -- is derived at frame prep. It named the panel's
+// body, so every key repainted every row of the terminal, and the echo again.
+void TestWorkspaceShellTerminalKeysOweAFrame() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -350,16 +353,10 @@ void TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation() {
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_UP;
   const auto result = shell.HandleEvent(event);
-  const SDL_FRect panel_content = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
-  const auto redraw_rect = result.redraw.SingleRectIfOnlyOne();
 
   Expect(result.handled, "terminal navigation keys should be handled");
-  Expect(!result.redraw.full && redraw_rect.has_value(),
-         "terminal navigation should request a partial redraw");
-  Expect(RectsIntersect(*redraw_rect, panel_content),
-         "terminal key redraws should include the terminal content area");
-  Expect(redraw_rect->y >= panel_content.y,
-         "terminal key redraws should avoid repainting the terminal tab strip");
+  Expect(result.redraw.frame && !result.redraw.full && result.redraw.rects.empty(),
+         "a terminal key owes a frame and names no rect: rects=" + std::to_string(result.redraw.rects.size()));
 }
 
 void TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering() {
@@ -3703,8 +3700,7 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor);
   AddTest(tests, "WorkspaceShell/TerminalCaretCoversAWideGlyphWhole",
           TestWorkspaceShellTerminalCaretCoversAWideGlyphWhole);
-  AddTest(tests, "WorkspaceShell/TerminalKeysReturnPartialPanelInvalidation",
-          TestWorkspaceShellTerminalKeysReturnPartialPanelInvalidation);
+  AddTest(tests, "WorkspaceShell/TerminalKeysOweAFrame", TestWorkspaceShellTerminalKeysOweAFrame);
   AddTest(tests, "WorkspaceShell/TerminalAsciiPromptMatchesDirectStringRendering",
           TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering);
   AddTest(tests, "WorkspaceShell/TerminalCaretBlinkRetainedRedrawPreservesGlyphEdges",

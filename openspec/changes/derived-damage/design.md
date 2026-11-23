@@ -64,8 +64,12 @@ TU's paint reads only its view-model parameters and immutable resources.
 - Per item: tab strips (per tab), bottom-panel tab row, debug-pane rows, sidebar
   rows (visible rows only).
 - Per row: editor panes (visible rows, gutter included), compare/merge panes.
-- Terminal bodies keep their existing row damage (already derived from the grid's
-  dirty rows); their chrome (find bar, tab row) is per surface.
+- Terminal bodies: per row (`DerivedSurface::BottomPanelTerminalGrid`). The session
+  keeps one generation, not a dirty bit per row, so a pane hashes its visible
+  lines' cells when it takes a new snapshot (`KeyTerminalGridRows`, never per
+  frame) and each row's unit folds that key with what the frame paints over the
+  row: its slice of the selection, its find matches, the hovered link. Their
+  chrome (find bar, tab row) is per surface.
 
 Coarser grain costs extra paint when a unit changes; finer grain costs more hashing
 per frame. The spike (D5) picks the editor's grain by measurement.

@@ -46,7 +46,11 @@ struct TerminalSessionTestAccess {
     session.wake_event_pending_ = false;
     session.backend_.reset();
     session.scrollback_trim_total_ = 0;
-    session.snapshot_generation_.Reset(1);
+    // Forward, never back to a fixed value: a pane that sampled this session
+    // before the reset holds its generation, and a reset to 1 plus one append
+    // landed on that same number -- the pane kept the snapshot of the session it
+    // was before, and a redraw test over it painted an empty grid.
+    session.snapshot_generation_.Bump();
 #ifdef MICROIDE_TESTING
     session.test_sent_bytes_.clear();
 #endif

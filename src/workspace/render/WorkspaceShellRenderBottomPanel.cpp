@@ -27,6 +27,7 @@
 #include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/BottomPanelOutputPaint.h"
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
+#include "workspace/render/BottomPanelTerminalGridPaint.h"
 #include "workspace/render/TerminalRowPaint.h"
 
 namespace microide::workspace {
@@ -508,105 +509,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   util::PerformanceTrace::Scope bottom_panel_scope("WorkspaceShell::RenderBottomPanel");
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
 
-  // Each pane sets its DECSCNM flag and selection strength before its rows paint;
-  // TerminalRowPaint resolves every cell against this once per row.
-  TerminalPaintPalette terminal_palette{
-      .foreground = theme_.text_primary,
-      .background = theme_.surface_background,
-      .selection = theme_.selection_fill,
-      .find_match = theme_.search_match,
-      .find_current = theme_.search_match_active,
-  };
-  const auto draw_terminal_line = [&](float x,
-                                      float y,
-                                      float width,
-                                      const terminal::TerminalLine& line,
-                                      const TerminalRowEmphasis& emphasis,
-                                      std::span<const terminal::TerminalUnderlineColor> underline_colors) {
-    const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
-    if (width < char_width) {
-      return;
-    }
-    const auto columns = static_cast<std::size_t>(std::floor(width / char_width));
-    PlanTerminalRow(line, columns, emphasis, terminal_palette, terminal_row_plan_, underline_colors);
-    const float line_height = terminal_text_renderer_.LineHeight();
-    const auto column_x = [&](std::size_t column) { return x + static_cast<float>(column) * char_width; };
-    const auto span_w = [&](std::size_t begin, std::size_t end) {
-      return static_cast<float>(end - begin) * char_width;
-    };
-    for (const TerminalRowPaintPlan::Fill& fill : terminal_row_plan_.fills) {
-      DrawFilledRect(renderer, MakeRect(column_x(fill.begin), y - 1.0f, span_w(fill.begin, fill.end), line_height),
-                     fill.color);
-    }
-    for (const TerminalRowPaintPlan::TextRun& run : terminal_row_plan_.text_runs) {
-      // SGR 1 / 3 in the family's bold / italic face (TextRenderer::Face). A face
-      // whose advance is not the grid's -- a synthesized bold is wider -- would
-      // drift across a run, so its glyphs are placed one cell at a time.
-      const render::TextRenderer& face = terminal_text_renderer_.Face(run.face);
-      if (run.face == render::FontStyle::Regular || std::fabs(face.CharWidth() - char_width) < 0.01f) {
-        face.DrawString(renderer, column_x(run.column), y, run.color, terminal_row_plan_.RunText(run));
-        continue;
-      }
-      for (std::size_t column = run.column; column < run.end && column < line.cells.size(); ++column) {
-        const std::string_view glyph = line.cells[column].DisplayText();
-        if (!glyph.empty() && glyph != " ") {
-          face.DrawString(renderer, column_x(column), y, run.color, glyph);
-        }
-      }
-    }
-    const float thickness = std::max(1.0f, std::round(line_height / 14.0f));
-    for (const TerminalRowPaintPlan::Decoration& stroke : terminal_row_plan_.decorations) {
-      const float run_x = column_x(stroke.begin);
-      const float run_w = span_w(stroke.begin, stroke.end);
-      if (stroke.bits & terminal::cell_attr::kStrikethrough) {
-        DrawFilledRect(renderer, MakeRect(run_x, y + std::round(line_height * 0.45f), run_w, thickness),
-                       stroke.color);
-      }
-      const float underline_y = y + line_height - thickness - 1.0f;
-      if (stroke.bits & terminal::cell_attr::kUnderline) {
-        switch (stroke.variant) {
-          case terminal::TerminalUnderlineVariant::Straight:
-            DrawFilledRect(renderer, MakeRect(run_x, underline_y, run_w, thickness), stroke.underline_color);
-            break;
-          case terminal::TerminalUnderlineVariant::Curly: {
-            // A zig-zag two strokes tall, its period a few strokes wide, as the
-            // editor's own squiggles read at this size.
-            const float amplitude = thickness * 1.5f;
-            const float half = std::max(2.0f, thickness * 2.0f);
-            const float top = underline_y - amplitude + thickness;
-            SDL_SetRenderDrawColor(renderer, stroke.underline_color.r, stroke.underline_color.g,
-                                   stroke.underline_color.b, stroke.underline_color.a);
-            bool up = true;
-            for (float px = run_x; px < run_x + run_w; px += half, up = !up) {
-              const float next = std::min(px + half, run_x + run_w);
-              for (float row = 0.0f; row < thickness; row += 1.0f) {
-                render::RenderClipStableLine(renderer, px, (up ? top + amplitude : top) + row, next,
-                               (up ? top : top + amplitude) + row);
-              }
-            }
-            break;
-          }
-          case terminal::TerminalUnderlineVariant::Dotted:
-          case terminal::TerminalUnderlineVariant::Dashed: {
-            const bool dotted = stroke.variant == terminal::TerminalUnderlineVariant::Dotted;
-            const float mark = dotted ? thickness : std::max(3.0f, char_width * 0.5f);
-            const float pitch = dotted ? thickness * 2.0f : mark + std::max(2.0f, char_width * 0.25f);
-            for (float px = run_x; px < run_x + run_w; px += pitch) {
-              DrawFilledRect(renderer, MakeRect(px, underline_y, std::min(mark, run_x + run_w - px), thickness),
-                             stroke.underline_color);
-            }
-            break;
-          }
-        }
-      }
-      if (stroke.bits & terminal::cell_attr::kDoubleUnderline) {
-        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness * 3.0f - 1.0f, run_w, thickness),
-                       stroke.underline_color);
-        DrawFilledRect(renderer, MakeRect(run_x, underline_y, run_w, thickness), stroke.underline_color);
-      }
-    }
-  };
-
   // The header -- tabs, chevrons, label, buttons -- as prep settled it.
   PaintBottomPanelHeader(renderer, frame_state_, theme_, text_renderer_);
 
@@ -662,100 +564,17 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         continue;
       }
       const bool is_active = pane_index == tab->active_pane;
-      terminal_palette.reverse_video = pane->frame_reverse_video;
-      terminal_palette.selection = pane->frame_selection_live
-                                       ? theme_.selection_fill
-                                       : InactiveTerminalSelection(theme_.selection_fill);
       const SDL_FRect& body = rects.panes[pane_index];
-      if (terminal_palette.reverse_video) {
-        // The blank the rows do not cover takes the default foreground too.
-        FillRect(renderer, body, theme_.text_primary);
-      }
       const std::size_t line_count = pane->frame_line_count;
       const LogSurfaceLayout pane_layout =
           ComputeTerminalPaneLogLayout(body, panel_height, *pane, line_count);
       const std::size_t first_row =
           static_cast<std::size_t>(std::max(0, pane_layout.scroll.vertical_scroll));
       const std::vector<terminal::TerminalLine>& terminal_lines = pane->visible_lines_snapshot.lines;
-
-      // Find highlights (active pane only): the match list is (row, column)-ordered,
-      // so seek once to the first hit at or after the top visible row and then walk
-      // forward with the row loop, instead of searching the whole list per row.
-      const std::vector<terminal::TerminalSearchMatch>* find_matches =
-          is_active ? panel_vm.find_matches : nullptr;
-      std::size_t find_cursor = 0;
-      if (find_matches != nullptr && !find_matches->empty()) {
-        find_cursor = static_cast<std::size_t>(
-            std::lower_bound(find_matches->begin(), find_matches->end(), first_row,
-                             [](const terminal::TerminalSearchMatch& match, std::size_t row) {
-                               return match.row < row;
-                             }) -
-            find_matches->begin());
-      }
-
-      for (int row = 0; row < pane_layout.scroll.visible_rows; ++row) {
-        const int index = pane_layout.scroll.vertical_scroll + row;
-        if (index >= static_cast<int>(line_count)) {
-          break;
-        }
-        const float line_y = pane_layout.text_y + static_cast<float>(row) * pane_layout.line_height;
-        // The selection (only the active pane has one) and this row's slice of
-        // the find matches, walked forward alongside the rows.
-        TerminalRowEmphasis emphasis =
-            TerminalRowSelectionEmphasis(pane->frame_selection, static_cast<std::size_t>(index));
-        if (find_matches != nullptr) {
-          const auto absolute_row = static_cast<std::size_t>(index);
-          while (find_cursor < find_matches->size() &&
-                 (*find_matches)[find_cursor].row < absolute_row) {
-            ++find_cursor;
-          }
-          std::size_t row_end = find_cursor;
-          while (row_end < find_matches->size() && (*find_matches)[row_end].row == absolute_row) {
-            ++row_end;
-          }
-          if (row_end > find_cursor) {
-            emphasis.matches = find_matches->data() + find_cursor;
-            emphasis.match_count = row_end - find_cursor;
-            if (panel_vm.find_selected_index >= find_cursor &&
-                panel_vm.find_selected_index < row_end) {
-              emphasis.current_match = panel_vm.find_selected_index - find_cursor;
-            }
-          }
-        }
-        // line_count comes from `session.LineCount()` sampled outside the session
-        // mutex, while `terminal_lines` is the locked snapshot. They can disagree
-        // when scrollback is trimmed between the two calls — the snapshot is the
-        // source of truth for what to draw. Guard against that skew before indexing.
-        const std::size_t snapshot_index = static_cast<std::size_t>(index) - first_row;
-        if (snapshot_index >= terminal_lines.size()) {
-          break;
-        }
-        draw_terminal_line(pane_layout.text_x, line_y, pane_layout.text_width, terminal_lines[snapshot_index],
-                           emphasis, pane->visible_lines_snapshot.underline_colors);
-        if (pane->hovered_link.has_value() &&
-            pane->hovered_link->row <= static_cast<std::size_t>(index) &&
-            static_cast<std::size_t>(index) <= pane->hovered_link->end_row) {
-          // The hovered link's underline, in the text's own colour; a link the
-          // terminal wrapped is underlined to the end of each row but its last.
-          const TerminalLinkSpan& link = *pane->hovered_link;
-          const std::size_t row = static_cast<std::size_t>(index);
-          const std::size_t begin_column = row == link.row ? link.begin_column : 0;
-          const std::size_t end_column =
-              row == link.end_row ? link.end_column : terminal_lines[snapshot_index].cells.size();
-          const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
-          const float thickness = std::max(1.0f, std::round(pane_layout.line_height / 14.0f));
-          const float link_x = pane_layout.text_x + static_cast<float>(begin_column) * char_width;
-          const float link_w = std::min(
-              static_cast<float>(end_column - std::min(begin_column, end_column)) * char_width,
-              std::max(0.0f, pane_layout.text_x + pane_layout.text_width - link_x));
-          const std::vector<terminal::TerminalCell>& cells = terminal_lines[snapshot_index].cells;
-          if (link_w > 0.0f && begin_column < cells.size()) {
-            DrawFilledRect(renderer,
-                           MakeRect(link_x, line_y + pane_layout.line_height - thickness - 1.0f, link_w, thickness),
-                           ResolveTerminalCellColors(cells[begin_column].style, terminal_palette).foreground);
-          }
-        }
-      }
+      // The body's fill and the rows -- cells, selection, find highlights, the
+      // hovered link -- as prep settled them, a unit each.
+      PaintTerminalGridPane(renderer, frame_state_, pane_index, theme_, terminal_text_renderer_,
+                            terminal_row_plan_);
 
       PaintTerminalPaneHint(renderer, frame_state_, pane_index, theme_, text_renderer_);
 
@@ -788,7 +607,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
               const auto display_text = cell.DisplayText();
               if (!display_text.empty()) {
                 const SDL_Color cursor_foreground =
-                    ResolveTerminalCellColors(cell.style, terminal_palette).background;
+                    ResolveTerminalCellColors(
+                        cell.style, TerminalGridPanePalette(frame_state_, pane_index, theme_))
+                        .background;
                 // The glyph is drawn at the caret's own origin; the rect carries a
                 // 1px lift, so undo it here to keep the text on the row baseline.
                 terminal_text_renderer_.DrawString(renderer, caret_rect->x, caret_rect->y + 1.0f,

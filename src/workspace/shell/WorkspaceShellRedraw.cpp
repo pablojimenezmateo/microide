@@ -492,9 +492,9 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
 void WorkspaceShell::RequestBottomPanelRedraw() {
   // "The bottom panel changed." What it shows is derived, whoever changed it: its
   // header's tabs and buttons, an output channel's rows, the terminal's chrome,
-  // each pane's rows (frame prep repaints a pane whose snapshot is new:
-  // PrepareTerminalPanesForFrame), and the body itself when another kind of
-  // content or another terminal tab takes it (the chrome's body unit). So the
+  // each pane's rows (a unit each: PrepareTerminalGridFrame), its find bar, and
+  // the body itself when another kind of content or another terminal tab takes
+  // it (the chrome's body unit). So the
   // change owes a frame. It named the panel's rect -- for every chunk of terminal
   // output, whichever tab was in front -- and, with the panel closed, the WHOLE
   // WINDOW (as the hidden sidebar's fallback did, TD-2026-10-15-341): nothing of
@@ -526,11 +526,18 @@ void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
 }
 
 void WorkspaceShell::RequestBottomPanelContentRedraw() {
-  if (const auto rect = CurrentBottomPanelContentRedrawRect(); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
+  // "The panel's body changed": a key sent to the terminal, a scroll, an edit in
+  // its find bar. All of it is derived -- the grid's rows, the find bar, the
+  // caret, an output channel's rows -- so it owes a frame. It named the body's
+  // rect: every key typed into a terminal repainted all its rows, then the echo
+  // repainted them again. A plugin's surface is not derived and keeps the rect.
+  if (context_.current_project_state.panel.content == PanelContentKind::PluginSurface) {
+    if (const auto rect = CurrentBottomPanelContentRedrawRect(); rect.has_value()) {
+      RequestRedrawRect(*rect);
+      return;
+    }
   }
-  RequestBottomPanelRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RequestOverlayRedraw() {

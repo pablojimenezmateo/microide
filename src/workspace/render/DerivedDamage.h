@@ -36,6 +36,8 @@ enum class DerivedSurface : std::uint8_t {
   BottomPanelHeader,
   BottomPanelOutput,
   BottomPanelTerminalChrome,
+  // The terminal's grid: each pane's body, then a unit per visible row.
+  BottomPanelTerminalGrid,
   NotificationToasts,
   DebugPane,
   // One per editor group (kMaxEditorGroups): each pane's visible rows.

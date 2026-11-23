@@ -4,6 +4,7 @@
 #include "workspace/render/BottomPanelHeaderPaint.h"
 #include "workspace/render/BottomPanelOutputPaint.h"
 #include "workspace/render/BottomPanelTerminalChromePaint.h"
+#include "workspace/render/BottomPanelTerminalGridPaint.h"
 #include "workspace/render/NotificationToastPaint.h"
 #include "workspace/render/DebugPanePaint.h"
 #include "workspace/git/CompareTabReview.h"
@@ -551,12 +552,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     chrome_unit(region, 0);  // a region that appears, vanishes or moves: rect-only
   }
   // The bottom panel's body, keyed on WHAT it shows: a terminal tab, an output
-  // channel's rows, a plugin's surface. Each kind repaints its own changes (a
-  // pane its new snapshot, the output its rows' units); one taking the body from
+  // channel's rows, a plugin's surface. Each kind repaints its own changes (the
+  // terminal's and the output's rows are units); one taking the body from
   // another leaves nothing of the other's -- an output of three rows over a
   // terminal's grid -- so the body repaints whole. Which terminal tab too, and
-  // its pane layout: a tab not touched since it was last in front has no new
-  // snapshot to say so. (Every such switch named the panel's rect.)
+  // its pane layout. (Every such switch named the panel's rect.)
   {
     const PanelState& panel = project_state.panel;
     std::uint64_t shows = static_cast<std::uint64_t>(panel.content) + 1;
@@ -564,11 +564,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       const TerminalTabState* tab = project_state.active_terminal_tab_index < project_state.terminal_tabs.size()
                                         ? project_state.terminal_tabs[project_state.active_terminal_tab_index].get()
                                         : nullptr;
-      // (And which pane has the keyboard: the find bar's highlights are that
-      // pane's, and nothing else says they moved.)
-      shows = MixRowKey(MixRowKey(MixRowKey(shows, reinterpret_cast<std::uintptr_t>(tab)),
-                                  tab != nullptr ? tab->layout_revision : 0),
-                        tab != nullptr ? tab->active_pane : 0);
+      // (Which pane has the keyboard is not the body's: the find highlights that
+      // move with it are in each row's key.)
+      shows = MixRowKey(MixRowKey(shows, reinterpret_cast<std::uintptr_t>(tab)),
+                        tab != nullptr ? tab->layout_revision : 0);
     } else if (panel.content == PanelContentKind::PluginSurface) {
       shows = MixRowKeyBytes(MixRowKeyBytes(shows, panel.surface_owner.data(), panel.surface_owner.size()),
                              panel.surface_id.data(), panel.surface_id.size());
@@ -762,6 +761,35 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // Ownership changes the terminal caret's style (steady outline vs blinking block)
   // at the same place, which the caret-region comparison below cannot see.
   chrome_unit(ActiveTerminalCaretRect(layout), frame_state_.terminal_owns_caret ? 1u : 2u);
+  {
+    // The terminal's find bar, a card over the active pane, keyed on all it
+    // paints: the query's visible tail, the match count (which the terminal's
+    // own output moves under an open bar), the toggles, the button under the
+    // pointer. Its edits named the panel's body; the grid's rows were repainted
+    // with it for a character typed in the bar.
+    const BottomPanelSurfaceViewModel& panel = *prepare_cached_bottom_panel_vm_;
+    std::optional<SDL_FRect> bar;
+    PaintFingerprint key;
+    if (panel.content == PanelContentKind::Terminal && panel.find_visible) {
+      const OverlayFindWidgetViewModel& find = panel.find;
+      const FindWidgetLayout& fw = find.fw;
+      bar = fw.widget;
+      key.Add(fw.search_field)
+          .Add(find.search_focused)
+          .Add(find.search_display_text)
+          .Add(fw.count_rect)
+          .Add(find.count_text)
+          .Add(find.has_matches)
+          .Add(find.has_query);
+      for (std::size_t index = 0; index < fw.toggle_count; ++index) {
+        key.Add(fw.toggle_buttons[index]).Add(find.toggles[index].active).Add(PointerOver(fw.toggle_buttons[index]));
+      }
+      for (const SDL_FRect* button : {&fw.prev_button, &fw.next_button, &fw.close_button}) {
+        key.Add(*button).Add(PointerOver(*button));
+      }
+    }
+    chrome_unit(bar, key.value());
+  }
   // Whatever moves the caret away -- focus to another surface, a menu or prompt
   // that suspends the blink, the blink's own phase -- this frame repaints both the
   // caret region the last frame painted and the one it paints now. Each such
@@ -2080,7 +2108,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   {
     // The terminal's chrome, the same way: each pane's hint and scrollbar and the
     // dividers are units, so a drag lights its thumb or divider whoever set it.
-    // The grid's rows keep their own damage (the pane snapshot's generation).
+    // The grid's rows are the next surface.
     const BottomPanelSurfaceViewModel& panel = *prepare_cached_bottom_panel_vm_;
     TerminalChromeInputs inputs{
         .renderer = renderer,
@@ -2123,6 +2151,56 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
     PrepareTerminalChromeFrame(frame_state_, inputs);
+  }
+  {
+    // The terminal's grid: every visible row of every pane is a unit, keyed on its
+    // cells (the pane's content keys, hashed when it took its snapshot) and on the
+    // selection, find matches and hovered link this frame paints over them.
+    const BottomPanelSurfaceViewModel& panel = *prepare_cached_bottom_panel_vm_;
+    const TerminalTabState* tab = panel.terminal_tab;
+    TerminalGridInputs inputs{
+        .renderer = renderer,
+        .visible = panel.content == PanelContentKind::Terminal && layout.bottom_panel.h > 0.0f && tab != nullptr &&
+                   !tab->panes.empty(),
+        .theme = &theme_,
+        .text_metrics = terminal_text_renderer_.MetricsGeneration(),
+        .char_width = terminal_text_renderer_.CharWidth(),
+        .damage = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
+    };
+    if (inputs.visible) {
+      const TerminalPaneRectsLayout& rects = panel.terminal_panes;
+      for (std::size_t index = 0; index < tab->panes.size() && index < rects.panes.size(); ++index) {
+        const TerminalPaneState* pane = tab->panes[index].get();
+        TerminalGridPaneInputs& grid = inputs.panes.emplace_back();
+        if (pane == nullptr) {
+          continue;
+        }
+        const SDL_FRect& body = rects.panes[index];
+        const LogSurfaceLayout log =
+            ComputeTerminalPaneLogLayout(body, layout.bottom_panel.h, *pane, pane->frame_line_count);
+        grid.body = body;
+        grid.text_x = log.text_x;
+        grid.text_y = log.text_y;
+        grid.text_width = log.text_width;
+        grid.line_height = log.line_height;
+        grid.first_row = static_cast<std::size_t>(std::max(0, log.scroll.vertical_scroll));
+        grid.visible_rows = static_cast<std::size_t>(std::max(0, log.scroll.visible_rows));
+        grid.line_count = pane->frame_line_count;
+        grid.lines = pane->visible_lines_snapshot.lines;
+        grid.row_keys = pane->visible_row_keys;
+        grid.underline_colors = pane->visible_lines_snapshot.underline_colors;
+        grid.reverse_video = pane->frame_reverse_video;
+        grid.selection = pane->frame_selection;
+        grid.selection_live = pane->frame_selection_live;
+        grid.hovered_link = pane->hovered_link;
+        // The find highlights are the active pane's.
+        if (index == tab->active_pane && panel.find_matches != nullptr) {
+          grid.find_matches = *panel.find_matches;
+          grid.find_selected = panel.find_selected_index;
+        }
+      }
+    }
+    PrepareTerminalGridFrame(frame_state_, inputs);
   }
   // The notification toasts, the same way: each toast is a unit, so a row a
   // publisher updates -- its progress, its text -- repaints whoever updated it.

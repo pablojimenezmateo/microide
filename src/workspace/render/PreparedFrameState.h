@@ -26,8 +26,10 @@
 #include <vector>
 
 #include "editor/EditorViewRenderer.h"
+#include "terminal/TerminalCell.h"
 #include "workspace/render/DerivedDamage.h"
 #include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/render/TerminalRowPaint.h"
 #include "workspace/EditorHoverTypes.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
@@ -50,6 +52,28 @@ struct TerminalHintPaint {
 struct TerminalDividerPaint {
   SDL_FRect rect{};
   bool active = false;  // being dragged
+};
+// The terminal's grid (BottomPanelTerminalGridPaint.h): a row is its line in the
+// pane's frame snapshot, the emphasis the frame paints over it and the hovered
+// link's columns on it. `rect` is its unit and its paint element.
+struct TerminalGridRowPaint {
+  SDL_FRect rect{};
+  float text_y = 0.0f;
+  const terminal::TerminalLine* line = nullptr;  // in the pane's snapshot, alive for the frame
+  TerminalRowEmphasis emphasis;
+  std::size_t link_begin = 0;  // the hovered link's columns on this row; none when equal
+  std::size_t link_end = 0;
+};
+struct TerminalGridPanePaint {
+  SDL_FRect body{};
+  float text_x = 0.0f;
+  float text_width = 0.0f;
+  float line_height = 0.0f;
+  bool reverse_video = false;   // DECSCNM: every cell's colours swapped, and the body's fill
+  bool selection_live = false;  // the selection's wash at full strength
+  std::span<const terminal::TerminalUnderlineColor> underline_colors;
+  std::size_t first = 0;  // its rows in TerminalGridPaint::rows
+  std::size_t count = 0;
 };
 // The debug pane (derived-damage 3.1): a row is its band and up to four text runs,
 // each drawn at `x` truncated to `width` on the band's colour.
@@ -477,10 +501,9 @@ struct PreparedFrameState {
   OutputBodyPaint output_body;
 
   // ---- the terminal's chrome (derived-damage 3.1, clip-discipline stage 3) ----
-  // Around the grid, whose rows keep their own damage (the pane snapshot's
-  // generation): each pane's empty hint and scrollbar, the dividers between panes,
-  // and the hint over a panel with no session. Settled at prep
-  // (PrepareTerminalChromeFrame); paint reads only this.
+  // Around the grid (its own surface, below): each pane's empty hint and
+  // scrollbar, the dividers between panes, and the hint over a panel with no
+  // session. Settled at prep (PrepareTerminalChromeFrame); paint reads only this.
   using TerminalHintPaint = workspace::TerminalHintPaint;
   using TerminalDividerPaint = workspace::TerminalDividerPaint;
   struct TerminalChromePaint {
@@ -491,6 +514,16 @@ struct PreparedFrameState {
     util::InlineVector<TerminalDividerPaint, kMaxTerminalPanes> dividers;
   };
   TerminalChromePaint terminal_chrome;
+
+  // ---- the terminal's grid (derived damage: a unit per visible row) ----
+  // Settled at prep (PrepareTerminalGridFrame) from each pane's frame snapshot;
+  // PaintTerminalGridPane draws only this.
+  struct TerminalGridPaint {
+    bool visible = false;
+    util::InlineVector<TerminalGridPanePaint, kMaxTerminalPanes> panes;  // one per pane of the tab
+    std::vector<TerminalGridRowPaint> rows;  // every pane's, capacity kept across frames
+  };
+  TerminalGridPaint terminal_grid;
 
   // ---- the debug pane (derived-damage 3.1, clip-discipline stage 3) ----
   // Its mode tabs, rows, empty hint and scrollbar, laid out at prep

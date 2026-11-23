@@ -913,6 +913,7 @@ RuleResult CheckDerivedSurfacePaintReadsOnlyItsSnapshot(const std::filesystem::p
       {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintTerminalNoSessionHint("},
       {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintTerminalPaneHint("},
       {"src/workspace/render/WorkspaceShellRenderBottomPanel.cpp", "void PaintTerminalChrome("},
+      {"src/workspace/render/BottomPanelTerminalGridPaint.cpp", "void PaintTerminalGridPane("},
       {"src/workspace/render/NotificationToastPaint.cpp", "void PaintNotificationToasts("},
       {"src/workspace/render/DebugPaneRender.cpp", "void PaintDebugPaneBody("},
       {"src/workspace/render/GitSidebarPaint.cpp", "void PaintGitPanel("},
