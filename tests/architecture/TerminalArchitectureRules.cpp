@@ -156,7 +156,9 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
   // interns both, replacing the link id) and DECSC's copy of the colour. The
   // table, its interning and the snapshot's colour walk live in
   // TerminalCellExtraTable.
-  constexpr std::size_t kCap = 314;
+  // 335: +21, the escape parser's handlers by name (see the Locked-helper cap's 66):
+  // declarations that replaced two 400-line bodies, not new state or API.
+  constexpr std::size_t kCap = 335;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::size_t lines = CountFileLines(path);
   if (lines > kCap) {
@@ -208,7 +210,14 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // mid-CSI path each carried their own C0 switch, and the mid-CSI copy had
   // drifted: it lost the backspace's pending-wrap clamp and SO/SI. One copy now
   // serves both (TerminalSession/MidCsiC0MatchesGroundState).
-  constexpr std::size_t kCap = 46;
+  // 66: +20, on the same "earns its slot" terms, for the escape parser itself.
+  // HandleEscapeSequenceLocked (469 lines) and AppendOutputLocked (397) were the
+  // two largest functions in the terminal: one inline body per CSI final and per
+  // escape state. Each state now has its Consume*ByteLocked, the OSC and
+  // DCS/SOS/PM/APC string states share one (they were near-copies), and the
+  // longer CSI bodies (DECSTR, IL/DL, DCH, ECH, SU, DECSTBM, REP, DECSCUSR) and
+  // ESC's RIS and RI are named. No new state.
+  constexpr std::size_t kCap = 66;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");

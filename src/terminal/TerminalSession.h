@@ -360,7 +360,31 @@ class TerminalSession {
   // Reset escape-parsing state after an over-length / malformed sequence so the
   // stream recovers to normal text instead of growing the buffer unbounded.
   void AbandonEscapeSequenceLocked();
+  // AppendOutputLocked's parser, one member per escape state.
+  void EnterEscapeModeLocked(EscapeMode mode);
+  void ConsumeGroundByteLocked(unsigned char byte);
+  void ConsumeUtf8ByteLocked(unsigned char byte);
+  void ConsumeAfterEscapeByteLocked(unsigned char byte);
+  void ConsumeCharsetDesignateByteLocked(unsigned char byte);
+  void ConsumeCsiByteLocked(unsigned char byte);
+  enum class ControlStringByte { Consumed, Reprocess };
+  ControlStringByte ConsumeControlStringByteLocked(unsigned char byte);
+  void FullResetLocked();
+  void ReverseIndexLocked();
   void HandleEscapeSequenceLocked(std::string_view sequence);
+  // The CSI handlers HandleEscapeSequenceLocked dispatches to (TerminalSessionCsi.cpp).
+  std::size_t AddressingOriginRowLocked() const;
+  std::size_t CursorRowUpLocked(std::size_t count) const;
+  void HandlePrivateCsiLocked(char final, char intermediate, const std::vector<int>& params);
+  void SoftResetLocked();
+  void InsertLinesLocked(std::size_t count);
+  void DeleteLinesLocked(std::size_t count);
+  void DeleteCharactersLocked(std::size_t count);
+  void EraseCharactersLocked(std::size_t count);
+  void ScrollUpLocked(std::size_t count);
+  void SetScrollMarginsLocked(const std::vector<int>& params);
+  void RepeatLastGlyphLocked(int requested);
+  void SetCursorStyleLocked(int style);
   void HandleOscSequenceLocked(std::string_view sequence);
   // Interns (uri, underline colour), freeing ids no buffer references when the
   // table is full.
