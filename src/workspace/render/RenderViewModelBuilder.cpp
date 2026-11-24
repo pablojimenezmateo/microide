@@ -2209,6 +2209,154 @@ std::string_view SettingsSubsectionLabel(std::string_view group) {
 }
 constexpr float kSettingsControlGap = 6.0f;
 
+// The Help / About card: two read-only columns (the label column sized to the
+// widest label, bounded) with a word-wrapped detail, scrolled a whole entry at a time.
+void LayoutHelpAboutOverlay(SettingsOverlayViewModel& vm, const SettingsOverlayService& service,
+                            const render::TextRenderer& text_renderer) {
+  vm.title = "Help / About";
+  vm.filter_placeholder = "Type to filter commands and shortcuts…";
+  vm.help_rows = std::span<const HelpAboutRow>(service.HelpRows());
+
+  // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
+  // a time. The label column sizes to the widest label, bounded so a long one
+  // cannot starve the detail column.
+  const float content_x = vm.rect.x + kSettingsHelpPadX;
+  const float content_right = vm.rect.x + vm.rect.w - kSettingsHelpPadRight;
+  const float inner_width = std::max(1.0f, content_right - content_x);
+  float label_column = 0.0f;
+  for (const HelpAboutRow& row : vm.help_rows) {
+    label_column = std::max(label_column, text_renderer.MeasureWidth(row.label));
+  }
+  // The 40% cap wins over the 100 px floor: on a card narrower than 250 px the
+  // floor would exceed the cap, and std::clamp with lo > hi is undefined (an
+  // assertion abort with libstdc++ assertions on; soak 56b6f01f2cf7).
+  vm.help_label_column = std::min(std::max(label_column, 100.0f), inner_width * 0.40f);
+  vm.help_detail_x = content_x + vm.help_label_column + kSettingsHelpColumnGap;
+  vm.help_detail_width = std::max(40.0f, content_right - vm.help_detail_x);
+  vm.help_entry_gap = kSettingsHelpEntryGap;
+
+  const float list_top = vm.filter_rect.y + vm.filter_rect.h + kSettingsHelpPadY;
+  const float list_bottom = vm.footer_rect.y - kSettingsHelpPadY;
+  const float available_height = std::max(0.0f, list_bottom - list_top);
+  vm.help_list_rect = MakeRect(vm.rect.x, list_top, vm.rect.w, std::max(1.0f, available_height));
+
+  // Entries are variable-height, so the count that fits is measured from the
+  // bottom up: that is exactly the window shown at max scroll.
+  const float line_height = text_renderer.LineHeight();
+  const int total_rows = static_cast<int>(vm.help_rows.size());
+  float accumulated = 0.0f;
+  int fit = 0;
+  for (int i = total_rows - 1; i >= 0; --i) {
+    int wrapped_lines = 0;
+    text_renderer.ForEachWrappedLine(vm.help_rows[static_cast<std::size_t>(i)].detail, vm.help_detail_width,
+                                     [&](std::string_view) { ++wrapped_lines; });
+    accumulated += static_cast<float>(std::max(1, wrapped_lines)) * line_height + vm.help_entry_gap;
+    if (accumulated > available_height) {
+      break;
+    }
+    ++fit;
+  }
+  vm.visible_rows = std::max(1, fit);
+  vm.max_scroll = std::max(0, total_rows - vm.visible_rows);
+  vm.scroll_row = std::clamp(vm.scroll_row, 0, vm.max_scroll);
+  if (vm.max_scroll > 0) {
+    vm.scrollbar =
+        MakeVerticalScrollbarGeometry(vm.help_list_rect, static_cast<float>(total_rows),
+                                      static_cast<float>(vm.visible_rows), static_cast<float>(vm.scroll_row), false);
+  }
+}
+
+// A settings row's controls, right to left from `content_right` in its head band:
+// the value control, the reset affordance and the scope chip. Returns where they
+// begin, which is where the description column ends.
+float LayoutSettingsRowControls(SettingsRowViewModel& rvm, const SettingsOverlayRow& row, float head_top,
+                                float head_band, float content_right, const SettingsOverlayService& service,
+                                const render::TextRenderer& text_renderer) {
+  const float cy = head_top + (head_band - kSettingsBtnH) * 0.5f;
+  float leftmost = content_right;
+
+  SettingsControlViewModel& control = rvm.control;
+  control.kind = row.control_kind;
+  control.display_value = row.value_display;
+  switch (row.control_kind) {
+    case SettingsControlKind::Checkbox: {
+      const float box_y = head_top + (head_band - kSettingsCheckBox) * 0.5f;
+      control.checkbox_rect = MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
+      // The predicate the toggle and every reader use: a private token list here
+      // drew "no" checked (a click then wrote "true": still checked) and ""
+      // unchecked (a click wrote "false": still unchecked).
+      // (SettingFlagEnabled of a present value, without copying it per row).
+      control.checkbox_on = !util::IsFalseyToken(row.value);
+      leftmost = control.checkbox_rect.x;
+      break;
+    }
+    case SettingsControlKind::Segmented: {
+      control.value_rect = MakeRect(content_right - kSettingsSegW, cy, kSettingsSegW, kSettingsBtnH);
+      leftmost = control.value_rect.x;
+      break;
+    }
+    case SettingsControlKind::TextEdit: {
+      control.value_rect = MakeRect(content_right - kSettingsTextEditW, cy, kSettingsTextEditW, kSettingsBtnH);
+      if (service.EditingValue() && service.EditingRowId() == row.id) {
+        control.editing = true;
+        control.display_value = service.ValueEditor().text();
+        control.edit_caret = service.ValueEditor().caret();
+      }
+      leftmost = control.value_rect.x;
+      break;
+    }
+    case SettingsControlKind::Stepper: {
+      control.inc_rect = MakeRect(content_right - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
+      control.value_rect = MakeRect(control.inc_rect.x - kSettingsValueSlotW, cy, kSettingsValueSlotW, kSettingsBtnH);
+      control.dec_rect = MakeRect(control.value_rect.x - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
+      leftmost = control.dec_rect.x;
+      break;
+    }
+    case SettingsControlKind::None:
+      break;
+  }
+
+  // Precompute the value string + caret the render TU draws, so painting the
+  // settings overlay never constructs "(default)", truncates the value to the box,
+  // or measures a caret prefix per frame (TD-2026-07-17A-007). The truncation width
+  // matches the render TU's `value_rect.w - 12` for all three drawn kinds.
+  if (control.kind == SettingsControlKind::Segmented || control.kind == SettingsControlKind::Stepper ||
+      control.kind == SettingsControlKind::TextEdit) {
+    if (control.kind == SettingsControlKind::TextEdit && control.display_value.empty() && !control.editing) {
+      control.shown_value = "(default)";
+      control.value_is_placeholder = true;
+    } else {
+      control.shown_value = text_renderer.TruncateToWidth(control.display_value, control.value_rect.w - 12.0f);
+    }
+    if (control.editing) {
+      const std::size_t caret = std::min(control.edit_caret, control.display_value.size());
+      // display_value is a string_view, so this substr allocates nothing.
+      control.caret_offset_x = text_renderer.MeasureWidth(control.display_value.substr(0, caret));
+    }
+  }
+
+  if (row.resettable) {
+    rvm.reset_rect = MakeRect(leftmost - kSettingsControlGap - kSettingsResetW, cy, kSettingsResetW, kSettingsBtnH);
+    leftmost = rvm.reset_rect.x;
+  }
+  // Per-row scope chip ("Project" / "Default") for built-in project-scoped
+  // settings, placed to the left of the reset affordance. The active write
+  // target is "Project" (this project) unless a user-level default exists with
+  // no per-project override, in which case edits flow to the shared default.
+  if (row.scope_selectable) {
+    const bool target_project = row.project_override || !row.has_user_default;
+    rvm.scope_is_project = target_project;
+    rvm.scope_text = target_project ? "Project" : "Default";
+    // Explain what the chip does and which way clicking it will flip the value.
+    rvm.scope_help = target_project ? "Saved for this project only, overriding your user default. "
+                                      "Click to make it your user-wide default instead."
+                                    : "Following your user-wide default. "
+                                      "Click to override it for this project only.";
+    rvm.scope_rect = MakeRect(leftmost - kSettingsControlGap - kSettingsScopeW, cy, kSettingsScopeW, kSettingsBtnH);
+  }
+  return leftmost;
+}
+
 }  // namespace
 
 SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
@@ -2272,59 +2420,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   }
 
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
-    vm.title = "Help / About";
-    vm.filter_placeholder = "Type to filter commands and shortcuts…";
-    vm.help_rows = std::span<const HelpAboutRow>(service.HelpRows());
-
-    // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
-    // a time. The label column sizes to the widest label, bounded so a long one
-    // cannot starve the detail column.
-    const float content_x = vm.rect.x + kSettingsHelpPadX;
-    const float content_right = vm.rect.x + vm.rect.w - kSettingsHelpPadRight;
-    const float inner_width = std::max(1.0f, content_right - content_x);
-    float label_column = 0.0f;
-    for (const HelpAboutRow& row : vm.help_rows) {
-      label_column = std::max(label_column, text_renderer.MeasureWidth(row.label));
-    }
-    // The 40% cap wins over the 100 px floor: on a card narrower than 250 px the
-    // floor would exceed the cap, and std::clamp with lo > hi is undefined (an
-    // assertion abort with libstdc++ assertions on; soak 56b6f01f2cf7).
-    vm.help_label_column = std::min(std::max(label_column, 100.0f), inner_width * 0.40f);
-    vm.help_detail_x = content_x + vm.help_label_column + kSettingsHelpColumnGap;
-    vm.help_detail_width = std::max(40.0f, content_right - vm.help_detail_x);
-    vm.help_entry_gap = kSettingsHelpEntryGap;
-
-    const float list_top = vm.filter_rect.y + vm.filter_rect.h + kSettingsHelpPadY;
-    const float list_bottom = vm.footer_rect.y - kSettingsHelpPadY;
-    const float available_height = std::max(0.0f, list_bottom - list_top);
-    vm.help_list_rect = MakeRect(vm.rect.x, list_top, vm.rect.w, std::max(1.0f, available_height));
-
-    // Entries are variable-height, so the count that fits is measured from the
-    // bottom up: that is exactly the window shown at max scroll.
-    const float line_height = text_renderer.LineHeight();
-    const int total_rows = static_cast<int>(vm.help_rows.size());
-    float accumulated = 0.0f;
-    int fit = 0;
-    for (int i = total_rows - 1; i >= 0; --i) {
-      int wrapped_lines = 0;
-      text_renderer.ForEachWrappedLine(vm.help_rows[static_cast<std::size_t>(i)].detail,
-                                       vm.help_detail_width,
-                                       [&](std::string_view) { ++wrapped_lines; });
-      accumulated +=
-          static_cast<float>(std::max(1, wrapped_lines)) * line_height + vm.help_entry_gap;
-      if (accumulated > available_height) {
-        break;
-      }
-      ++fit;
-    }
-    vm.visible_rows = std::max(1, fit);
-    vm.max_scroll = std::max(0, total_rows - vm.visible_rows);
-    vm.scroll_row = std::clamp(vm.scroll_row, 0, vm.max_scroll);
-    if (vm.max_scroll > 0) {
-      vm.scrollbar = MakeVerticalScrollbarGeometry(
-          vm.help_list_rect, static_cast<float>(total_rows),
-          static_cast<float>(vm.visible_rows), static_cast<float>(vm.scroll_row), false);
-    }
+    LayoutHelpAboutOverlay(vm, service, text_renderer);
     return vm;
   }
 
@@ -2439,99 +2535,8 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const float head_top = natural_y + subheader_h;
 
     rvm.row_rect = MakeRect(vm.right_pane_rect.x, head_top, row_w, head_band);
-    const float cy = head_top + (head_band - kSettingsBtnH) * 0.5f;
-    float leftmost = content_right;
-
-    SettingsControlViewModel& control = rvm.control;
-    control.kind = row.control_kind;
-    control.display_value = row.value_display;
-    switch (row.control_kind) {
-      case SettingsControlKind::Checkbox: {
-        const float box_y = head_top + (head_band - kSettingsCheckBox) * 0.5f;
-        control.checkbox_rect =
-            MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
-        // The predicate the toggle and every reader use: a private token list here
-        // drew "no" checked (a click then wrote "true": still checked) and ""
-        // unchecked (a click wrote "false": still unchecked).
-        // (SettingFlagEnabled of a present value, without copying it per row).
-        control.checkbox_on = !util::IsFalseyToken(row.value);
-        leftmost = control.checkbox_rect.x;
-        break;
-      }
-      case SettingsControlKind::Segmented: {
-        control.value_rect = MakeRect(content_right - kSettingsSegW, cy, kSettingsSegW, kSettingsBtnH);
-        leftmost = control.value_rect.x;
-        break;
-      }
-      case SettingsControlKind::TextEdit: {
-        control.value_rect = MakeRect(content_right - kSettingsTextEditW, cy, kSettingsTextEditW,
-                                      kSettingsBtnH);
-        if (service.EditingValue() && service.EditingRowId() == row.id) {
-          control.editing = true;
-          control.display_value = service.ValueEditor().text();
-          control.edit_caret = service.ValueEditor().caret();
-        }
-        leftmost = control.value_rect.x;
-        break;
-      }
-      case SettingsControlKind::Stepper: {
-        control.inc_rect = MakeRect(content_right - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
-        control.value_rect =
-            MakeRect(control.inc_rect.x - kSettingsValueSlotW, cy, kSettingsValueSlotW, kSettingsBtnH);
-        control.dec_rect =
-            MakeRect(control.value_rect.x - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
-        leftmost = control.dec_rect.x;
-        break;
-      }
-      case SettingsControlKind::None:
-        break;
-    }
-
-    // Precompute the value string + caret the render TU draws, so painting the
-    // settings overlay never constructs "(default)", truncates the value to the box,
-    // or measures a caret prefix per frame (TD-2026-07-17A-007). The truncation width
-    // matches the render TU's `value_rect.w - 12` for all three drawn kinds.
-    if (control.kind == SettingsControlKind::Segmented ||
-        control.kind == SettingsControlKind::Stepper ||
-        control.kind == SettingsControlKind::TextEdit) {
-      if (control.kind == SettingsControlKind::TextEdit && control.display_value.empty() &&
-          !control.editing) {
-        control.shown_value = "(default)";
-        control.value_is_placeholder = true;
-      } else {
-        control.shown_value =
-            text_renderer.TruncateToWidth(control.display_value, control.value_rect.w - 12.0f);
-      }
-      if (control.editing) {
-        const std::size_t caret = std::min(control.edit_caret, control.display_value.size());
-        // display_value is a string_view, so this substr allocates nothing.
-        control.caret_offset_x = text_renderer.MeasureWidth(control.display_value.substr(0, caret));
-      }
-    }
-
-    if (row.resettable) {
-      rvm.reset_rect =
-          MakeRect(leftmost - kSettingsControlGap - kSettingsResetW, cy, kSettingsResetW, kSettingsBtnH);
-      leftmost = rvm.reset_rect.x;
-    }
-    // Per-row scope chip ("Project" / "Default") for built-in project-scoped
-    // settings, placed to the left of the reset affordance. The active write
-    // target is "Project" (this project) unless a user-level default exists with
-    // no per-project override, in which case edits flow to the shared default.
-    if (row.scope_selectable) {
-      const bool target_project = row.project_override || !row.has_user_default;
-      rvm.scope_is_project = target_project;
-      rvm.scope_text = target_project ? "Project" : "Default";
-      // Explain what the chip does and which way clicking it will flip the value.
-      rvm.scope_help =
-          target_project
-              ? "Saved for this project only, overriding your user default. "
-                "Click to make it your user-wide default instead."
-              : "Following your user-wide default. "
-                "Click to override it for this project only.";
-      rvm.scope_rect =
-          MakeRect(leftmost - kSettingsControlGap - kSettingsScopeW, cy, kSettingsScopeW, kSettingsBtnH);
-    }
+    const float leftmost =
+        LayoutSettingsRowControls(rvm, row, head_top, head_band, content_right, service, text_renderer);
 
     // Description column: everything left of the controls (and the scope chip, if
     // present). The dim scope label ("User"/"Project") is right-aligned on the
