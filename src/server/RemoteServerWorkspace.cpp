@@ -583,123 +583,10 @@ std::filesystem::path RemoteServer::WorkspaceStateDirectory(const std::filesyste
 
 void RemoteServer::InstallFileHandlers(Connection& connection) {
   remote::RemotePeer& peer = connection.peer;
-  peer.OnRequest(remote::method::kObjectFetch, [this, &connection](std::uint64_t id,
-                                                                   const util::JsonValue& params) {
-    const std::shared_ptr<ServedTree> served = TreeOf(connection);
-    const util::JsonValue& objects = params["objects"];
-    if (!served || !objects.IsArray() || objects.AsArray().size() > 4096) {
-      ReplyInvalidParams(connection.peer, id, served != nullptr,
-                         "objects must be an array of at most 4096");
-      return;
-    }
-    std::vector<std::string> paths;
-    std::vector<std::string> bases;  // hex; "" = the client holds no base
-    for (const util::JsonValue& object : objects.AsArray()) {
-      paths.push_back(object["path"].AsString());
-      bases.push_back(object["base"].AsString());
-    }
-    const std::int64_t asked_max = params["max_bytes"].AsInt(0);
-    // Objects stream from disk in chunks, so a client that writes them to disk as
-    // they come (RemoteWorkspace::FetchObjectToFile) may ask past the 64 MiB a
-    // client holding them in memory gets by default.
-    const std::uint64_t max_bytes =
-        asked_max > 0 ? std::min<std::uint64_t>(static_cast<std::uint64_t>(asked_max),
-                                                remote::RemoteWorkspace::kMaxStreamedObjectBytes)
-                      : kMaxObjectBytes;
-    // Content and the reply travel on the lane the request came on: the file the
-    // user just opened is interactive, backfill is bulk.
-    const remote::Lane lane = params["bulk"].AsBool(false) ? remote::Lane::Bulk
-                                                           : remote::Lane::Interactive;
-    ServedTree* tree = served.get();
-    const std::uint64_t connection_id = connection.id;
-    tree->io_queue.Post([this, tree, connection_id, id, paths = std::move(paths),
-                         bases = std::move(bases), max_bytes, lane]() {
-      util::JsonArray results;
-      std::uint64_t sent_bytes = 0;
-      for (std::size_t index = 0; index < paths.size(); ++index) {
-        if (tree->closing.load() || !RequestLive(connection_id, id)) {
-          WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-            peer.ReplyError(id, remote::kErrorCancelled, "cancelled");
-          });
-          return;
-        }
-        const auto send = [&](std::string_view frame) {
-          sent_bytes += frame.size();
-          WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-            peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
-          });
-        };
-        // The client holds `base` (the version this server last sent it): send
-        // what changed since, when that is smaller (remote-projects.md § 6.2).
-        if (!bases[index].empty()) {
-          std::string content;
-          const remote::FileOpResult read = remote::ReadTreeFile(
-              tree->tree.root(), paths[index], kMaxDeltaBaseBytes,
-              [&](std::string_view chunk) { content.append(chunk); });
-          if (read.ok()) {
-            const std::string hash = read.current->Hex();
-            const bool unchanged = hash == bases[index];
-            std::optional<std::string> delta;
-            if (!unchanged) {
-              std::optional<std::string> base = tree->recent_objects.Get(bases[index]);
-              if (!base.has_value() && content.size() >= kIndexBaseMinBytes) {
-                base = IndexBlobWithHash(tree->tree.root(), paths[index], bases[index]);
-              }
-              if (base.has_value()) {
-                delta = util::ZstdDelta(*base, content);
-              }
-            }
-            util::JsonValue entry;
-            if (unchanged || (delta.has_value() && delta->size() < content.size() - content.size() / 8)) {
-              util::JsonObject object;
-              object["hash"] = util::JsonValue(hash);
-              object["delta"] = util::JsonValue(true);
-              (void)StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
-                if (!unchanged) {
-                  sink(*delta);
-                }
-                return remote::FileOpResult{};
-              });
-              entry = util::JsonValue(std::move(object));
-            } else {
-              // Whole, from the bytes already read.
-              entry = StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
-                sink(content);
-                return read;
-              });
-            }
-            // A path the client asks about with a base is one that changes: its next
-            // change wants this version as the base.
-            tree->recent_objects.Put(hash, std::move(content));
-            results.push_back(std::move(entry));
-            continue;
-          }
-          // Over the delta-base limit, or not readable: whole (or its error) below.
-        }
-        // A first fetch (the backfill, a file new to the client) is not kept: most
-        // of a content set is never fetched again, and keeping it pinned the whole
-        // set in this process (TD-2026-10-28-417). Its first change finds its base
-        // in the git index instead.
-        results.push_back(StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
-          return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
-        }));
-      }
-      util::JsonObject reply;
-      reply["objects"] = util::JsonValue(std::move(results));
-      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-        peer.Reply(id, util::JsonValue(std::move(reply)), lane);
-      });
-      // Keyed, so it moves behind every fetch queued after this one and runs once
-      // the burst has drained.
-      tree->served_since_trim.fetch_add(sent_bytes);
-      tree->io_queue.PostLatest("heap-trim", [tree]() {
-        if (tree->served_since_trim.load() >= kTrimAfterServedBytes) {
-          tree->served_since_trim.store(0);
-          util::ReleaseFreedHeap();
-        }
-      });
-    });
-  });
+  peer.OnRequest(remote::method::kObjectFetch,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   HandleObjectFetch(connection, id, params);
+                 });
 
   peer.OnRequest(remote::method::kFileRead, [this, &connection](std::uint64_t id,
                                                                 const util::JsonValue& params) {
@@ -771,48 +658,10 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     });
   });
 
-  peer.OnRequest(remote::method::kFileUpload, [this, &connection](std::uint64_t id,
-                                                                  const util::JsonValue& params) {
-    std::string content;  // claimed first, as file/write's
-    if (const auto upload = connection.uploads.find(id); upload != connection.uploads.end()) {
-      content = std::move(upload->second);
-      connection.upload_bytes -= content.size();
-      connection.uploads.erase(upload);
-    }
-    const std::shared_ptr<ServedTree> served = TreeOf(connection);
-    const std::string name = params["name"].AsString();
-    // A file NAME, never a path: it cannot reach outside its own directory. Any
-    // length the filesystem takes (NAME_MAX), and a name past it says why.
-    constexpr std::size_t kMaxNameBytes = 255;
-    const bool named = !name.empty() && name != "." && name != ".." &&
-                       name.find_first_of(std::string_view("/\0", 2)) == std::string::npos;
-    if (!served || !named) {
-      ReplyInvalidParams(connection.peer, id, served != nullptr, "file/upload needs a file name");
-      return;
-    }
-    if (name.size() > kMaxNameBytes) {
-      ReplyInvalidParams(connection.peer, id, true,
-                         "the file's name is " + std::to_string(name.size()) +
-                             " bytes; a name on the host can be at most 255");
-      return;
-    }
-    const std::filesystem::path root = UploadsDirectory();
-    ServedTree* tree = served.get();
-    const std::uint64_t connection_id = connection.id;
-    tree->io_queue.Post([this, root, connection_id, id, name, content = std::move(content)]() {
-      std::string error;
-      const std::optional<std::filesystem::path> path = platform::StoreTransientFile(root, name, content, &error);
-      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-        if (!path.has_value()) {
-          peer.ReplyError(id, remote::kErrorInvalidParams, error);
-          return;
-        }
-        util::JsonObject reply;
-        reply["path"] = util::JsonValue(path->string());
-        peer.Reply(id, util::JsonValue(std::move(reply)));
-      });
-    });
-  });
+  peer.OnRequest(remote::method::kFileUpload,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   HandleFileUpload(connection, id, params);
+                 });
 
   // A text one client leaves for the next (remote::method::kStatePut): written
   // and read on the tree's own queue, like every other file of the workspace.
@@ -901,6 +750,168 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
           peer.Reply(id, OpResultJson(result));
         }
       });
+    });
+  });
+}
+
+
+void RemoteServer::HandleObjectFetch(Connection& connection, std::uint64_t id,
+                                     const util::JsonValue& params) {
+  const std::shared_ptr<ServedTree> served = TreeOf(connection);
+  const util::JsonValue& objects = params["objects"];
+  if (!served || !objects.IsArray() || objects.AsArray().size() > 4096) {
+    ReplyInvalidParams(connection.peer, id, served != nullptr,
+                       "objects must be an array of at most 4096");
+    return;
+  }
+  std::vector<std::string> paths;
+  std::vector<std::string> bases;  // hex; "" = the client holds no base
+  for (const util::JsonValue& object : objects.AsArray()) {
+    paths.push_back(object["path"].AsString());
+    bases.push_back(object["base"].AsString());
+  }
+  const std::int64_t asked_max = params["max_bytes"].AsInt(0);
+  // Objects stream from disk in chunks, so a client that writes them to disk as
+  // they come (RemoteWorkspace::FetchObjectToFile) may ask past the 64 MiB a
+  // client holding them in memory gets by default.
+  const std::uint64_t max_bytes =
+      asked_max > 0 ? std::min<std::uint64_t>(static_cast<std::uint64_t>(asked_max),
+                                              remote::RemoteWorkspace::kMaxStreamedObjectBytes)
+                    : kMaxObjectBytes;
+  // Content and the reply travel on the lane the request came on: the file the
+  // user just opened is interactive, backfill is bulk.
+  const remote::Lane lane = params["bulk"].AsBool(false) ? remote::Lane::Bulk
+                                                         : remote::Lane::Interactive;
+  ServedTree* tree = served.get();
+  const std::uint64_t connection_id = connection.id;
+  tree->io_queue.Post([this, tree, connection_id, id, paths = std::move(paths),
+                       bases = std::move(bases), max_bytes, lane]() {
+    util::JsonArray results;
+    std::uint64_t sent_bytes = 0;
+    for (std::size_t index = 0; index < paths.size(); ++index) {
+      if (tree->closing.load() || !RequestLive(connection_id, id)) {
+        WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+          peer.ReplyError(id, remote::kErrorCancelled, "cancelled");
+        });
+        return;
+      }
+      const auto send = [&](std::string_view frame) {
+        sent_bytes += frame.size();
+        WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+          peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
+        });
+      };
+      // The client holds `base` (the version this server last sent it): send
+      // what changed since, when that is smaller (remote-projects.md § 6.2).
+      if (!bases[index].empty()) {
+        std::string content;
+        const remote::FileOpResult read = remote::ReadTreeFile(
+            tree->tree.root(), paths[index], kMaxDeltaBaseBytes,
+            [&](std::string_view chunk) { content.append(chunk); });
+        if (read.ok()) {
+          const std::string hash = read.current->Hex();
+          const bool unchanged = hash == bases[index];
+          std::optional<std::string> delta;
+          if (!unchanged) {
+            std::optional<std::string> base = tree->recent_objects.Get(bases[index]);
+            if (!base.has_value() && content.size() >= kIndexBaseMinBytes) {
+              base = IndexBlobWithHash(tree->tree.root(), paths[index], bases[index]);
+            }
+            if (base.has_value()) {
+              delta = util::ZstdDelta(*base, content);
+            }
+          }
+          util::JsonValue entry;
+          if (unchanged || (delta.has_value() && delta->size() < content.size() - content.size() / 8)) {
+            util::JsonObject object;
+            object["hash"] = util::JsonValue(hash);
+            object["delta"] = util::JsonValue(true);
+            (void)StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+              if (!unchanged) {
+                sink(*delta);
+              }
+              return remote::FileOpResult{};
+            });
+            entry = util::JsonValue(std::move(object));
+          } else {
+            // Whole, from the bytes already read.
+            entry = StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+              sink(content);
+              return read;
+            });
+          }
+          // A path the client asks about with a base is one that changes: its next
+          // change wants this version as the base.
+          tree->recent_objects.Put(hash, std::move(content));
+          results.push_back(std::move(entry));
+          continue;
+        }
+        // Over the delta-base limit, or not readable: whole (or its error) below.
+      }
+      // A first fetch (the backfill, a file new to the client) is not kept: most
+      // of a content set is never fetched again, and keeping it pinned the whole
+      // set in this process (TD-2026-10-28-417). Its first change finds its base
+      // in the git index instead.
+      results.push_back(StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+        return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
+      }));
+    }
+    util::JsonObject reply;
+    reply["objects"] = util::JsonValue(std::move(results));
+    WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+      peer.Reply(id, util::JsonValue(std::move(reply)), lane);
+    });
+    // Keyed, so it moves behind every fetch queued after this one and runs once
+    // the burst has drained.
+    tree->served_since_trim.fetch_add(sent_bytes);
+    tree->io_queue.PostLatest("heap-trim", [tree]() {
+      if (tree->served_since_trim.load() >= kTrimAfterServedBytes) {
+        tree->served_since_trim.store(0);
+        util::ReleaseFreedHeap();
+      }
+    });
+  });
+}
+
+void RemoteServer::HandleFileUpload(Connection& connection, std::uint64_t id,
+                                    const util::JsonValue& params) {
+  std::string content;  // claimed first, as file/write's
+  if (const auto upload = connection.uploads.find(id); upload != connection.uploads.end()) {
+    content = std::move(upload->second);
+    connection.upload_bytes -= content.size();
+    connection.uploads.erase(upload);
+  }
+  const std::shared_ptr<ServedTree> served = TreeOf(connection);
+  const std::string name = params["name"].AsString();
+  // A file NAME, never a path: it cannot reach outside its own directory. Any
+  // length the filesystem takes (NAME_MAX), and a name past it says why.
+  constexpr std::size_t kMaxNameBytes = 255;
+  const bool named = !name.empty() && name != "." && name != ".." &&
+                     name.find_first_of(std::string_view("/\0", 2)) == std::string::npos;
+  if (!served || !named) {
+    ReplyInvalidParams(connection.peer, id, served != nullptr, "file/upload needs a file name");
+    return;
+  }
+  if (name.size() > kMaxNameBytes) {
+    ReplyInvalidParams(connection.peer, id, true,
+                       "the file's name is " + std::to_string(name.size()) +
+                           " bytes; a name on the host can be at most 255");
+    return;
+  }
+  const std::filesystem::path root = UploadsDirectory();
+  ServedTree* tree = served.get();
+  const std::uint64_t connection_id = connection.id;
+  tree->io_queue.Post([this, root, connection_id, id, name, content = std::move(content)]() {
+    std::string error;
+    const std::optional<std::filesystem::path> path = platform::StoreTransientFile(root, name, content, &error);
+    WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+      if (!path.has_value()) {
+        peer.ReplyError(id, remote::kErrorInvalidParams, error);
+        return;
+      }
+      util::JsonObject reply;
+      reply["path"] = util::JsonValue(path->string());
+      peer.Reply(id, util::JsonValue(std::move(reply)));
     });
   });
 }

@@ -158,6 +158,9 @@ class RemoteServer {
   void InstallTerminalForwarders();
   void InstallTreeHandlers(Connection& connection);
   void InstallFileHandlers(Connection& connection);
+  // The two file requests too large to sit inline in InstallFileHandlers.
+  void HandleObjectFetch(Connection& connection, std::uint64_t id, const util::JsonValue& params);
+  void HandleFileUpload(Connection& connection, std::uint64_t id, const util::JsonValue& params);
   // file/upload's home: private to the user, beside the socket (whose directory
   // is 0700); a server with no socket (serve-stdio, tests) uses one under $TMPDIR.
   std::filesystem::path UploadsDirectory() const;
