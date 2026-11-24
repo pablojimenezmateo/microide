@@ -15,6 +15,7 @@
 #include "compare/MergeModel.h"
 #include "util/InlineVector.h"
 #include "workspace/EditorSplitTree.h"
+#include "workspace/RectsEqual.h"
 
 namespace microide::workspace {
 
@@ -447,10 +448,6 @@ std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
 // the LTO build kept it as a call (TD-2026-10-13-338).
 inline bool Contains(const SDL_FRect& rect, float x, float y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
-}
-// Exact four-float equality for SDL_FRect.
-inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
 }
 // Union of an optional accumulator rect with another rect. The result spans
 // both inputs; if the accumulator is nullopt, the result is simply `rhs`.

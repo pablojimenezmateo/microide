@@ -6,6 +6,8 @@
 #include <cmath>
 #include <string>
 
+#include "workspace/RectsEqual.h"
+
 namespace microide::workspace {
 
 // One resolved hover tooltip: the (already truncated) text to draw and the card
@@ -17,10 +19,6 @@ struct HoverTooltip {
   std::string text;
   SDL_FRect rect{};
 };
-
-inline bool SameTooltipRect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
-}
 
 // The shell's one tooltip placement rule: horizontally centered on the control
 // the tooltip describes, below it when the card fits, flipped above it when it

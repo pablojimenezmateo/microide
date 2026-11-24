@@ -27,6 +27,7 @@
 
 #include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
+#include "workspace/RectsEqual.h"
 
 namespace microide::workspace {
 
@@ -169,7 +170,7 @@ class DerivedDamage {
         const Unit* now = i < table.current.size() ? &table.current[i] : nullptr;
         const Unit* was = i < table.painted.size() ? &table.painted[i] : nullptr;
         if (now != nullptr && was != nullptr && now->fingerprint == was->fingerprint &&
-            SameRect(now->rect, was->rect)) {
+            RectsEqual(now->rect, was->rect)) {
           continue;
         }
         util::AddPerformanceCounter(util::PerfCounterId::WorkspaceDerivedDamageChanged, 1);
@@ -184,7 +185,7 @@ class DerivedDamage {
           add(was->rect);
         }
         if (now != nullptr && now->rect.w > 0.0f && now->rect.h > 0.0f &&
-            (was == nullptr || !SameRect(now->rect, was->rect))) {
+            (was == nullptr || !RectsEqual(now->rect, was->rect))) {
           add(now->rect);
         }
       }
@@ -249,9 +250,6 @@ class DerivedDamage {
     std::vector<Unit> painted;
     bool painted_once = false;
   };
-  static bool SameRect(const SDL_FRect& a, const SDL_FRect& b) {
-    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-  }
   Surface& Table(DerivedSurface surface) { return surfaces_[static_cast<std::size_t>(surface)]; }
   std::array<Surface, static_cast<std::size_t>(DerivedSurface::Count)> surfaces_{};
 };

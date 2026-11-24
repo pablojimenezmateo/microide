@@ -136,33 +136,21 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   const bool previous_mouse_position_valid = last_mouse_position_valid_;
   const float previous_mouse_x = last_mouse_x_;
   const float previous_mouse_y = last_mouse_y_;
-  const auto capture_blocked_hover_visuals = [this, &layout]() {
-    struct HoverVisuals {
-      std::optional<SDL_FRect> tooltip_rect;
-      std::optional<SDL_FRect> editor_hover_popup_rect;
-    };
+  if (const auto decided = MotionDuringDrag(event, layout, mark)) {
+    return *decided;
+  }
+  if (const auto decided = MotionDuringPointerGesture(event, layout, mark)) {
+    return *decided;
+  }
+  if (const auto decided = MotionOverOpenMenus(event, layout)) {
+    return *decided;
+  }
+  return MotionHover(event, layout, mark, previous_mouse_position_valid, previous_mouse_x, previous_mouse_y);
+}
 
-    HoverVisuals visuals;
-    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
-      visuals.tooltip_rect = tooltip->rect;
-    }
-    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
-      visuals.editor_hover_popup_rect = popup->rect;
-    }
-    return visuals;
-  };
-  const auto invalidate_blocked_hover_visuals = [this](const auto& visuals) {
-    const auto request = [this](const std::optional<SDL_FRect>& rect) {
-      if (rect.has_value()) {
-        RequestRedrawRect(*rect);
-      }
-    };
-    request(visuals.tooltip_rect);
-    request(visuals.editor_hover_popup_rect);
-  };
-  const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
-    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
-  };
+// A drag in progress owns the pointer: dividers, scrollbars, selections, the panels' own drags.
+std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                     DamageMark mark) {
   if (context_.interaction_state.drag_target != DragTarget::None) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
@@ -309,7 +297,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     ClearDragState();
     return false;
   }
+  return std::nullopt;
+}
 
+// A tree row or tab being dragged, or a text selection being swept.
+std::optional<bool> WorkspaceShell::MotionDuringPointerGesture(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                               DamageMark mark) {
   // A tree row pressed and moved: the tree drag owns the pointer too (its ghost
   // and drop preview follow it across the window, so the window repaints).
   if (context_.interaction_state.path_drag.armed) {
@@ -371,7 +364,35 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
     return handled;
   }
+  return std::nullopt;
+}
 
+// An open menu takes the pointer: its rows light, and what it blocks stops hovering.
+std::optional<bool> WorkspaceShell::MotionOverOpenMenus(const SDL_Event& event, const WorkspaceLayout& layout) {
+  const auto capture_blocked_hover_visuals = [this, &layout]() {
+    struct HoverVisuals {
+      std::optional<SDL_FRect> tooltip_rect;
+      std::optional<SDL_FRect> editor_hover_popup_rect;
+    };
+
+    HoverVisuals visuals;
+    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
+      visuals.tooltip_rect = tooltip->rect;
+    }
+    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
+      visuals.editor_hover_popup_rect = popup->rect;
+    }
+    return visuals;
+  };
+  const auto invalidate_blocked_hover_visuals = [this](const auto& visuals) {
+    const auto request = [this](const std::optional<SDL_FRect>& rect) {
+      if (rect.has_value()) {
+        RequestRedrawRect(*rect);
+      }
+    };
+    request(visuals.tooltip_rect);
+    request(visuals.editor_hover_popup_rect);
+  };
   if (MenuSurfaceCapturingMouse()) {
     static const bool menu_hover_trace =
         util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MENU_HOVER");
@@ -436,7 +457,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
     return true;
   }
+  return std::nullopt;
+}
 
+// Plain motion: hover, tooltips, then the chrome, panel and diff coordinators.
+bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark,
+                                 bool previous_mouse_position_valid, float previous_mouse_x, float previous_mouse_y) {
   bool hover_visual_changed = false;
   bool sidebar_hover_button_changed = false;
   bool status_segment_hover_changed = false;
@@ -472,7 +498,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const SDL_FRect current_interactive = current_interactive_rect.value_or(SDL_FRect{});
     if (previous_interactive_present != current_interactive_present ||
         (previous_interactive_present && current_interactive_present &&
-         !rects_equal(previous_interactive, current_interactive))) {
+         !RectsEqual(previous_interactive, current_interactive))) {
       // One pixel past the element: a button's hover outline sits on its edge.
       const auto request = [this](const SDL_FRect& rect) {
         RequestRedrawRect(MakeRect(rect.x - 1.0f, rect.y - 1.0f, rect.w + 2.0f, rect.h + 2.0f));
@@ -529,7 +555,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       const std::optional<SDL_FRect> current_close =
           hovered_tab_close(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
       if (previous_close.has_value() != current_close.has_value() ||
-          (previous_close.has_value() && !rects_equal(*previous_close, *current_close))) {
+          (previous_close.has_value() && !RectsEqual(*previous_close, *current_close))) {
         for (const auto& close : {previous_close, current_close}) {
           if (close.has_value()) {
             RequestRedrawRect(MakeRect(close->x - 1.0f, close->y - 1.0f, close->w + 2.0f, close->h + 2.0f));
@@ -561,7 +587,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const SDL_FRect current_status_segment = current_status_segment_rect.value_or(SDL_FRect{});
     if (previous_status_segment_present != current_status_segment_present ||
         (previous_status_segment_present && current_status_segment_present &&
-         !rects_equal(previous_status_segment, current_status_segment))) {
+         !RectsEqual(previous_status_segment, current_status_segment))) {
       const auto request_status_redraw = [this](const SDL_FRect& rect) {
         RequestRedrawRect(MakeRect(rect.x - 6.0f, rect.y - 1.0f, rect.w + 12.0f, rect.h + 2.0f));
       };
@@ -584,9 +610,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const std::optional<HoverTooltip> current_tooltip = HoveredTooltip(layout);
     const bool unchanged =
         previous_tooltip.has_value() == current_tooltip.has_value() &&
-        (!previous_tooltip.has_value() ||
-         (previous_tooltip->text == current_tooltip->text &&
-          SameTooltipRect(previous_tooltip->rect, current_tooltip->rect)));
+        (!previous_tooltip.has_value() || (previous_tooltip->text == current_tooltip->text &&
+                                           RectsEqual(previous_tooltip->rect, current_tooltip->rect)));
     if (unchanged) {
       return false;
     }

@@ -222,6 +222,24 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
   const WorkspaceLayout layout = *layout_state;
 
+  if (const auto kind = CursorKindOverModalsAndMenus(x, y, layout)) {
+    return *kind;
+  }
+  if (const auto kind = CursorKindOverChrome(x, y, layout)) {
+    return *kind;
+  }
+  if (const auto kind = CursorKindOverSidebar(x, y, layout)) {
+    return *kind;
+  }
+  if (const auto kind = CursorKindOverPanels(x, y, layout)) {
+    return *kind;
+  }
+  return CursorKindOverEditorArea(x, y, layout);
+}
+
+// Toasts, the Settings card, the open menus and the menu bar: what floats above the surfaces.
+std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverModalsAndMenus(
+    float x, float y, const WorkspaceLayout& layout) const {
   // Toasts float above every surface and a click dismisses one, so the pointer has
   // to say so — probed ahead of the modal surfaces for the same reason it is
   // probed first on the click path.
@@ -349,6 +367,12 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
+  return std::nullopt;
+}
+
+// The overlay card, the resize edges, the status bar, the breadcrumb band and the tab strips.
+std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverChrome(float x, float y,
+                                                                               const WorkspaceLayout& layout) const {
   if (context_.current_project_state.overlay.visible) {
     const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
     // The find / replace widget is non-modal: it only governs the cursor while the
@@ -485,6 +509,12 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
+  return std::nullopt;
+}
+
+// The sidebar: its views' rows, buttons, fields and scrollbars.
+std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverSidebar(float x, float y,
+                                                                                const WorkspaceLayout& layout) const {
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
     const SidebarMode sidebar_mode = ActiveSidebarMode();
     const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
@@ -615,6 +645,12 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                : CursorKind::Default;
   }
 
+  return std::nullopt;
+}
+
+// The debug pane and the bottom panel.
+std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverPanels(float x, float y,
+                                                                               const WorkspaceLayout& layout) const {
   if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
       Contains(layout.right_pane, x, y)) {
     // Mode-row tab buttons are always clickable.
@@ -771,6 +807,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
+  return std::nullopt;
+}
+
+// The editor area: the hover card, the debug toolbar, a compare or merge in front, the
+// home surface, the split dividers and the focused pane's scrollbars, blame and gutter.
+WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverEditorArea(float x, float y,
+                                                                    const WorkspaceLayout& layout) const {
   if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
     if (popup->primary_action_rect.has_value() &&
         Contains(EditorHoverPopupPrimaryActionHitRect(*popup), x, y)) {
@@ -803,108 +846,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   const SDL_FRect view_surface = ActiveTabSurface(layout);
   const bool over_view_surface = Contains(view_surface, x, y);
   if (ActiveTabIsCompare() && over_view_surface) {
-    const CompareTabState* compare_tab = ActiveCompareTab();
-    if (compare_tab == nullptr) {
-      return CursorKind::Default;
-    }
-    const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(view_surface, *compare_tab);
-    const auto scroll_layout =
-        ComputeCompareScrollLayout(view_surface, surface_layout, *compare_tab);
-    if (scroll_layout.vertical_scrollbar.has_value() &&
-        Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
-    if (scroll_layout.horizontal_scrollbar.has_value() &&
-        Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
-    const SDL_FRect divider_rect =
-        CompareDividerHitRect(view_surface, surface_layout);
-    if (Contains(divider_rect, x, y)) {
-      return CursorKind::EwResize;
-    }
-    // Resolved through the same helpers the click and the hover highlight use,
-    // so the hand cursor cannot appear over a button the click will ignore.
-    if (CompareControlAt(editor_text_renderer_, MakeCompareControlGeometry(view_surface, surface_layout), *compare_tab,
-                         x, y)
-            .has_value()) {
-      return CursorKind::Pointer;
-    }
-    if (const auto hit = CompareCollapsedContextRowAt(
-            *compare_tab, view_surface, surface_layout.rows_y,
-            surface_layout.line_height, surface_layout.show_vertical, y);
-        hit.has_value()) {
-      const auto action_rects =
-          BuildCollapsedContextActionRects(editor_text_renderer_, hit->block_rect,
-                                           hit->row->previous_hunk_index >= 0,
-                                           hit->row->next_hunk_index >= 0);
-      if (CompareCollapsedContextActionAt(action_rects, x, y).has_value()) {
-        return CursorKind::Pointer;
-      }
-    }
-    if (compare_tab->right_editable && x >= surface_layout.right_x) {
-      return CursorKind::Text;
-    }
-    return CursorKind::Pointer;
+    return CursorKindOverCompare(x, y, view_surface);
   }
   if (ActiveTabIsMerge() && over_view_surface) {
-    const MergeTabState* merge_tab = ActiveMergeTab();
-    if (merge_tab == nullptr) {
-      return CursorKind::Default;
-    }
-    const MergeSurfaceLayout surface_layout =
-        ComputeMergeSurfaceLayout(view_surface, *merge_tab);
-    const auto scroll_layout =
-        ComputeMergeScrollLayout(view_surface, surface_layout, *merge_tab);
-    const auto divider_rects = MergeDividerHitRects(view_surface, surface_layout);
-    if (Contains(divider_rects[0], x, y) || Contains(divider_rects[1], x, y)) {
-      return CursorKind::EwResize;
-    }
-    const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(view_surface, surface_layout);
-    if (Contains(toolbar.prev_rect, x, y) || Contains(toolbar.next_rect, x, y) ||
-        Contains(toolbar.save_rect, x, y) || Contains(toolbar.open_rect, x, y)) {
-      return CursorKind::Pointer;
-    }
-    if (scroll_layout.vertical_scrollbar.has_value() &&
-        Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
-    if (scroll_layout.horizontal_scrollbar.has_value() &&
-        Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
-    // BuildMergeResultInteractionLayout, not a third hand-written copy of it. The
-    // two copies that grew here and in the render TU both passed `line_count()`
-    // as the grid's row total where the canonical builder passes
-    // `VisualRowCount()` -- and the scroll they pair it with is a visual row, so
-    // the layout clamped it back down and every hit test past
-    // (line_count - visible_rows) named the wrong row on a wrapped result pane.
-    const MergeInteractionLayout interaction = {
-        .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
-        .result = BuildMergeResultInteractionLayout(view_surface, surface_layout,
-                                                    *merge_tab),
-        .incoming_accept_button_width =
-            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Remote")),
-        .current_accept_button_width =
-            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Local")),
-        .result_action_widths =
-            {
-                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Base")),
-                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Remote")),
-                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Local")),
-                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Both")),
-            },
-    };
-    if (const auto hover = ClassifyMergeHoverState(surface_layout, interaction, *merge_tab, x, y);
-        hover.has_value() && hover->kind == MergeHoverState::Kind::ResultAction) {
-      return CursorKind::Pointer;
-    }
-    if (Contains(interaction.result.rect, x, y) ||
-        (x >= surface_layout.center_x && x < surface_layout.right_x && y >= surface_layout.rows_y)) {
-      return CursorKind::Text;
-    }
-    return CursorKind::Pointer;
+    return CursorKindOverMerge(x, y, view_surface);
   }
 
   // Welcome home surface: with no project open there are no editor panes, so the
@@ -995,6 +940,98 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
   return CursorKind::Text;
+}
+
+WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverCompare(float x, float y,
+                                                                 const SDL_FRect& view_surface) const {
+  const CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr) {
+    return CursorKind::Default;
+  }
+  const CompareSurfaceLayout surface_layout = ComputeCompareSurfaceLayout(view_surface, *compare_tab);
+  const auto scroll_layout = ComputeCompareScrollLayout(view_surface, surface_layout, *compare_tab);
+  if (scroll_layout.vertical_scrollbar.has_value() && Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
+    return CursorKind::Default;
+  }
+  if (scroll_layout.horizontal_scrollbar.has_value() && Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
+    return CursorKind::Default;
+  }
+  const SDL_FRect divider_rect = CompareDividerHitRect(view_surface, surface_layout);
+  if (Contains(divider_rect, x, y)) {
+    return CursorKind::EwResize;
+  }
+  // Resolved through the same helpers the click and the hover highlight use,
+  // so the hand cursor cannot appear over a button the click will ignore.
+  if (CompareControlAt(editor_text_renderer_, MakeCompareControlGeometry(view_surface, surface_layout), *compare_tab, x,
+                       y)
+          .has_value()) {
+    return CursorKind::Pointer;
+  }
+  if (const auto hit = CompareCollapsedContextRowAt(*compare_tab, view_surface, surface_layout.rows_y,
+                                                    surface_layout.line_height, surface_layout.show_vertical, y);
+      hit.has_value()) {
+    const auto action_rects = BuildCollapsedContextActionRects(
+        editor_text_renderer_, hit->block_rect, hit->row->previous_hunk_index >= 0, hit->row->next_hunk_index >= 0);
+    if (CompareCollapsedContextActionAt(action_rects, x, y).has_value()) {
+      return CursorKind::Pointer;
+    }
+  }
+  if (compare_tab->right_editable && x >= surface_layout.right_x) {
+    return CursorKind::Text;
+  }
+  return CursorKind::Pointer;
+}
+
+WorkspaceShell::CursorKind WorkspaceShell::CursorKindOverMerge(float x, float y, const SDL_FRect& view_surface) const {
+  const MergeTabState* merge_tab = ActiveMergeTab();
+  if (merge_tab == nullptr) {
+    return CursorKind::Default;
+  }
+  const MergeSurfaceLayout surface_layout = ComputeMergeSurfaceLayout(view_surface, *merge_tab);
+  const auto scroll_layout = ComputeMergeScrollLayout(view_surface, surface_layout, *merge_tab);
+  const auto divider_rects = MergeDividerHitRects(view_surface, surface_layout);
+  if (Contains(divider_rects[0], x, y) || Contains(divider_rects[1], x, y)) {
+    return CursorKind::EwResize;
+  }
+  const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(view_surface, surface_layout);
+  if (Contains(toolbar.prev_rect, x, y) || Contains(toolbar.next_rect, x, y) || Contains(toolbar.save_rect, x, y) ||
+      Contains(toolbar.open_rect, x, y)) {
+    return CursorKind::Pointer;
+  }
+  if (scroll_layout.vertical_scrollbar.has_value() && Contains(scroll_layout.vertical_scrollbar->track, x, y)) {
+    return CursorKind::Default;
+  }
+  if (scroll_layout.horizontal_scrollbar.has_value() && Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
+    return CursorKind::Default;
+  }
+  // BuildMergeResultInteractionLayout, not a third hand-written copy of it. The
+  // two copies that grew here and in the render TU both passed `line_count()`
+  // as the grid's row total where the canonical builder passes
+  // `VisualRowCount()` -- and the scroll they pair it with is a visual row, so
+  // the layout clamped it back down and every hit test past
+  // (line_count - visible_rows) named the wrong row on a wrapped result pane.
+  const MergeInteractionLayout interaction = {
+      .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
+      .result = BuildMergeResultInteractionLayout(view_surface, surface_layout, *merge_tab),
+      .incoming_accept_button_width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Remote")),
+      .current_accept_button_width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Local")),
+      .result_action_widths =
+          {
+              ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Base")),
+              ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Remote")),
+              ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Local")),
+              ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Both")),
+          },
+  };
+  if (const auto hover = ClassifyMergeHoverState(surface_layout, interaction, *merge_tab, x, y);
+      hover.has_value() && hover->kind == MergeHoverState::Kind::ResultAction) {
+    return CursorKind::Pointer;
+  }
+  if (Contains(interaction.result.rect, x, y) ||
+      (x >= surface_layout.center_x && x < surface_layout.right_x && y >= surface_layout.rows_y)) {
+    return CursorKind::Text;
+  }
+  return CursorKind::Pointer;
 }
 
 void WorkspaceShell::SdlCursorDeleter::operator()(SDL_Cursor* cursor) const {

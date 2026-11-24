@@ -1466,11 +1466,26 @@
                           std::size_t line,
                           std::size_t column);
   bool HandleMouseButtonDown(const SDL_Event& event);
+  // HandleMouseButtonDown's steps, in the order it tries them.
+  std::optional<bool> MouseDownOnModals(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark,
+                                        const std::optional<SDL_FRect>& window_rect);
+  std::optional<bool> MouseDownOnChrome(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
+  std::optional<bool> MouseDownOnDividersAndPanels(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                   DamageMark mark);
+  std::optional<bool> MouseDownOpensContextMenu(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
+  bool MouseDownOnEditorArea(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
   bool HandleMouseButtonUp(const SDL_Event& event);
   // Ends every pointer gesture in flight without its effect (no drop, no move):
   // for a release that will not reach it (focus loss) or that a modal takes.
   void AbandonPointerGestures();
   bool HandleMouseMotion(const SDL_Event& event);
+  // HandleMouseMotion's steps, in the order it tries them.
+  std::optional<bool> MotionDuringDrag(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark);
+  std::optional<bool> MotionDuringPointerGesture(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                 DamageMark mark);
+  std::optional<bool> MotionOverOpenMenus(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool MotionHover(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark,
+                   bool previous_mouse_position_valid, float previous_mouse_x, float previous_mouse_y);
   bool HandleMouseWheel(const SDL_Event& event);
   // Cached for the shell's lifetime, like MakeActionContext: ActionAvailability is
   // 26 std::functions over a const WorkspaceContext& and holds no per-query state,
@@ -1825,6 +1840,14 @@
   void RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRect& editor_surface,
                              MergeTabState& merge_tab, const DiffSurfacePaint& paint);
   CursorKind CursorKindForPosition(float x, float y) const;
+  // CursorKindForPosition's surfaces, in the priority order it asks them.
+  std::optional<CursorKind> CursorKindOverModalsAndMenus(float x, float y, const WorkspaceLayout& layout) const;
+  std::optional<CursorKind> CursorKindOverChrome(float x, float y, const WorkspaceLayout& layout) const;
+  std::optional<CursorKind> CursorKindOverSidebar(float x, float y, const WorkspaceLayout& layout) const;
+  std::optional<CursorKind> CursorKindOverPanels(float x, float y, const WorkspaceLayout& layout) const;
+  CursorKind CursorKindOverEditorArea(float x, float y, const WorkspaceLayout& layout) const;
+  CursorKind CursorKindOverCompare(float x, float y, const SDL_FRect& view_surface) const;
+  CursorKind CursorKindOverMerge(float x, float y, const SDL_FRect& view_surface) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
   // during_frame_prepare is true only for the render-path call (PrepareFrameOnce),

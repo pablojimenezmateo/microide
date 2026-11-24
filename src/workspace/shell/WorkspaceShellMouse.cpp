@@ -121,7 +121,24 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
   mark = MarkDamage();
+  if (const auto decided = MouseDownOnModals(event, layout, mark, window_rect)) {
+    return *decided;
+  }
+  if (const auto decided = MouseDownOnChrome(event, layout, mark)) {
+    return *decided;
+  }
+  if (const auto decided = MouseDownOnDividersAndPanels(event, layout, mark)) {
+    return *decided;
+  }
+  if (const auto decided = MouseDownOpensContextMenu(event, layout, mark)) {
+    return *decided;
+  }
+  return MouseDownOnEditorArea(event, layout, mark);
+}
 
+// The prompts and a single-line field own a press first; past them, no selection or text drag survives one.
+std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                      DamageMark mark, const std::optional<SDL_FRect>& window_rect) {
   if (context_.prompts.dirty_visible) {
     const SDL_FRect dialog = ComputeDirtyPromptRect(*window_rect);
     const auto buttons = ComputeDirtyPromptButtonRects(dialog);
@@ -200,7 +217,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   context_.interaction_state.text_drag = InteractionState::TextDragState::None;
   context_.interaction_state.text_drag_has_drop = false;
   selection_autoscroll::Disarm(context_.interaction_state);
+  return std::nullopt;
+}
 
+// The Settings card, the status bar, the menu bar and window chrome, and the breadcrumb band.
+std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                      DamageMark mark) {
   if (HandleSettingsOverlayButtonDown(event, layout)) {
     EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
     return true;
@@ -355,7 +377,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       return true;
     }
   }
+  return std::nullopt;
+}
 
+// The resize dividers, then the debug pane, the sidebar and the bottom panel.
+std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                                 DamageMark mark) {
   // Every resize divider answers a double-click by restoring its default size, the
   // way a window-manager sash does (and VS Code). One rule for all four dividers:
   // sidebar, right pane, editor split, bottom panel (the last lives in
@@ -455,7 +482,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
     return true;
   }
+  return std::nullopt;
+}
 
+// A right-click that opens a context menu: the breakpoint gutter's or the editor's.
+std::optional<bool> WorkspaceShell::MouseDownOpensContextMenu(const SDL_Event& event, const WorkspaceLayout& layout,
+                                                              DamageMark mark) {
   // Breakpoint gutter right-click opens the breakpoint context menu (Phase 6),
   // taking precedence over the editor context menu. Declines (returns false)
   // for any non-gutter right-click, so the editor context menu still works.
@@ -541,7 +573,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
+  return std::nullopt;
+}
 
+// The editor area: a pane's focus, a compare or merge in front, the debug toolbar, the home surface, the editor.
+bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const WorkspaceLayout& layout, DamageMark mark) {
   if (!Contains(layout.editor_surface, event.button.x, event.button.y) ||
       (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE)) {
     return false;
@@ -685,10 +721,6 @@ thread_local struct WelcomeProbeLayoutCache {
   editor::WelcomeLayout layout;
 } g_welcome_probe_layout_cache;
 
-bool SameRect(const SDL_FRect& a, const SDL_FRect& b) {
-  return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-}
-
 }  // namespace
 
 bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_out,
@@ -723,8 +755,8 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
   if (!cache.valid || cache.recents_instance != recents_service_.instance_id() ||
       cache.recents_revision != recents_service_.revision() ||
       cache.remote_revision != context_.current_project_state.remote_status_revision ||
-      cache.root != context_.current_project_state.root ||
-      !SameRect(cache.surface, surface) || cache.line_height != line_height) {
+      cache.root != context_.current_project_state.root || !RectsEqual(cache.surface, surface) ||
+      cache.line_height != line_height) {
     cache.valid = true;
     cache.recents_instance = recents_service_.instance_id();
     cache.recents_revision = recents_service_.revision();
