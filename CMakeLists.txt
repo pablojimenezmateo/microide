@@ -786,6 +786,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePluginRuntime.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinatorConfig.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp
+  src/workspace/persistence/WorkspacePersistenceCoordinatorDebug.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinatorWorkspaceSession.cpp
   src/workspace/coordinators/WorkspaceProjectDialogCoordinator.cpp
   src/workspace/shell/WorkspaceShellPrompts.cpp
