@@ -143,6 +143,25 @@ class EditorViewRenderer {
   const std::vector<FoldGutterMark>& last_fold_gutter_marks() const { return last_fold_gutter_marks_; }
 
  private:
+  // The frame-level inputs Render's passes share.
+  struct FramePaint {
+    SDL_Renderer* renderer = nullptr;
+    const render::TextRenderer& text_renderer;
+    const render::Theme& theme;
+    TextViewport& viewport;
+    const SDL_FRect& rect;
+    const EditorViewMetrics& metrics;
+    const SDL_FRect& gutter;
+    std::span<const PublishedDiagnostic> diagnostics;
+    const FileDecorations* plugin_decorations = nullptr;
+    const FoldingModel* folding_model = nullptr;
+    bool show_line_numbers = true;
+  };
+  const std::vector<IndentGuideRun>* ResolveIndentGuides(
+      const TextViewport& viewport, const std::vector<std::size_t>& visible_rows_for_guides,
+      const FoldingModel* folding_model) const;
+  void RenderStickyRows(const FramePaint& frame, std::span<const std::size_t> sticky_lines) const;
+
   // Borrowed lookup key: the per-row paint loop probes the cache with the
   // frame's lowered-query string_view, so a cache hit allocates nothing. The
   // owning std::string is materialized only when a miss inserts (see CacheKey).

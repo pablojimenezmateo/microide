@@ -367,6 +367,199 @@ std::optional<BracketMatchPair> EditorViewRenderer::BracketMatch(const TextViewp
   return bracket_match_pair;
 }
 
+// The indent guides for the visible window: from the small per-viewport cache
+// when nothing they depend on changed, else computed into it.
+const std::vector<IndentGuideRun>* EditorViewRenderer::ResolveIndentGuides(
+    const TextViewport& viewport, const std::vector<std::size_t>& visible_rows_for_guides,
+    const FoldingModel* folding_model) const {
+  // Cache probe plus, on a miss, the whole visible-window guide computation.
+  // Both live between the row loop and the frame setup, so without a scope they
+  // land in Render's self time with everything else that is not a row.
+  util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::IndentGuides");
+  const auto& lines = viewport.lines();
+  const std::size_t scroll_line = viewport.scroll_line();
+  const std::size_t cursor_line = viewport.cursor_line();
+  const std::vector<IndentGuideRun>* indent_guides_to_paint = nullptr;
+  const std::size_t indent_width =
+      viewport.indent_width() == 0 ? 1 : viewport.indent_width();
+  const std::size_t fold_emphasis_revision =
+      folding_model != nullptr ? folding_model->revision() : std::size_t{0};
+  auto cache_it = std::find_if(
+      indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
+      [&](const IndentGuidesCacheEntry& entry) {
+        return entry.viewport == &viewport &&
+               entry.content_revision == viewport.content_revision() &&
+               entry.layout_shape_revision == viewport.layout_shape_revision() &&
+               entry.fold_revision == viewport.folding_revision() &&
+               entry.fold_emphasis_revision == fold_emphasis_revision &&
+               entry.scroll_line == scroll_line &&
+               entry.visible_rows_count == visible_rows_for_guides.size() &&
+               entry.indent_width == indent_width && entry.caret_line == cursor_line;
+      });
+  if (cache_it != indent_guides_cache_entries_.end()) {
+    indent_guides_to_paint = &cache_it->runs;
+    indent_guides_cache_last_runs_ = indent_guides_to_paint;
+    ++indent_guides_cache_hits_;
+    if (cache_it != indent_guides_cache_entries_.begin()) {
+      std::iter_swap(indent_guides_cache_entries_.begin(), cache_it);
+      indent_guides_to_paint = &indent_guides_cache_entries_.front().runs;
+      indent_guides_cache_last_runs_ = indent_guides_to_paint;
+    }
+  } else {
+    const std::size_t caret_indent =
+        cursor_line < lines.size()
+            ? LeadingVisualIndent(lines, cursor_line, viewport.tab_size())
+            : 0;
+    auto same_viewport_it = std::find_if(
+        indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
+        [&](const IndentGuidesCacheEntry& entry) { return entry.viewport == &viewport; });
+    IndentGuidesCacheEntry* target_entry = nullptr;
+    if (same_viewport_it != indent_guides_cache_entries_.end()) {
+      target_entry = &*same_viewport_it;
+    } else if (indent_guides_cache_entries_.size() < kIndentGuidesCacheLimit) {
+      indent_guides_cache_entries_.push_back(IndentGuidesCacheEntry{});
+      target_entry = &indent_guides_cache_entries_.back();
+    } else {
+      target_entry = &indent_guides_cache_entries_.back();
+    }
+    target_entry->viewport = &viewport;
+    target_entry->content_revision = viewport.content_revision();
+    target_entry->layout_shape_revision = viewport.layout_shape_revision();
+    target_entry->fold_revision = viewport.folding_revision();
+    target_entry->fold_emphasis_revision = fold_emphasis_revision;
+    target_entry->scroll_line = scroll_line;
+    target_entry->visible_rows_count = visible_rows_for_guides.size();
+    target_entry->indent_width = indent_width;
+    target_entry->caret_line = cursor_line;
+    ComputeIndentGuides(lines, visible_rows_for_guides, viewport.tab_size(),
+                        indent_width, cursor_line, caret_indent, &target_entry->runs,
+                        folding_model);
+    indent_guides_to_paint = &target_entry->runs;
+    indent_guides_cache_last_runs_ = indent_guides_to_paint;
+    if (target_entry != &indent_guides_cache_entries_.front()) {
+      std::iter_swap(indent_guides_cache_entries_.begin(),
+                     indent_guides_cache_entries_.begin() +
+                         static_cast<std::ptrdiff_t>(target_entry -
+                                                     indent_guides_cache_entries_.data()));
+      indent_guides_to_paint = &indent_guides_cache_entries_.front().runs;
+      indent_guides_cache_last_runs_ = indent_guides_to_paint;
+    }
+    ++indent_guides_cache_misses_;
+  }
+  return indent_guides_to_paint;
+}
+
+// The sticky-scroll band: the openers of the scopes the first visible line is in,
+// pinned above the text, with their gutters, and the divider under them.
+void EditorViewRenderer::RenderStickyRows(const FramePaint& frame,
+                                          std::span<const std::size_t> sticky_lines) const {
+  SDL_Renderer* const renderer = frame.renderer;
+  const render::TextRenderer& text_renderer = frame.text_renderer;
+  const render::Theme& theme = frame.theme;
+  TextViewport& viewport = frame.viewport;
+  const SDL_FRect& rect = frame.rect;
+  const EditorViewMetrics& metrics = frame.metrics;
+  const SDL_FRect& gutter = frame.gutter;
+  const std::span<const PublishedDiagnostic> diagnostics = frame.diagnostics;
+  const FileDecorations* const plugin_decorations = frame.plugin_decorations;
+  const FoldingModel* const folding_model = frame.folding_model;
+  const bool show_line_numbers = frame.show_line_numbers;
+  const auto& lines = viewport.lines();
+  const std::size_t cursor_line = viewport.cursor_line();
+  const bool soft_wrap = viewport.soft_wrap();
+  char line_number_buf[20];
+  util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::StickyRows");
+  for (std::size_t si = 0; si < sticky_lines.size(); ++si) {
+    const std::size_t line_index = sticky_lines[si];
+    if (line_index >= lines.size()) {
+      continue;
+    }
+    const float y =
+        metrics.sticky_band_top_y + static_cast<float>(si) * metrics.line_height;
+    const bool selected = line_index == cursor_line;
+    const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
+    const std::size_t opener_visual = viewport.VisualRowForLine(line_index);
+    if (opener_visual >= viewport.visual_line_count()) {
+      continue;
+    }
+    const auto row_meta = viewport.WrappedVisualRowLayout(opener_visual);
+    const LayoutLine& row_layout = soft_wrap
+                                       ? viewport.VisibleWrappedRowLayoutRef(opener_visual)
+                                       : viewport.VisibleLineLayoutRef(line_index);
+
+    DecoratedTextRow& sticky_row = sticky_scratch_row_;
+    const std::vector<SyntaxTokenKind>* sticky_tokens = nullptr;
+    {
+      util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::StickyHighlightedLineTokens");
+      sticky_tokens = &viewport.HighlightedLineTokens(line_index);
+    }
+    RowDecorationInput sticky_input;
+    sticky_input.text_x = metrics.text_x;
+    sticky_input.y = y;
+    sticky_input.char_width = text_renderer.CharWidth();
+    sticky_input.line_height = metrics.line_height;
+    sticky_input.row_visual_start = row_meta.visual_start;
+    sticky_input.row_visual_end = row_meta.visual_end;
+    sticky_input.line_length = lines.LineLength(line_index);
+    // Same rule as the ordinary row path below: the line's bytes are only read
+    // when a diagnostic on this row needs them.
+    sticky_input.text = AnyDiagnosticCoversLine(diagnostics, line_index)
+                            ? lines.LineView(line_index)
+                            : std::string_view{};
+    sticky_input.tokens = sticky_tokens;
+    sticky_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
+    sticky_input.layout = &row_layout;
+    sticky_input.has_background_fill = true;
+    sticky_input.background_fill = DecoratedTextFill{
+        .rect = MakeRowBackgroundRect(rect, y, metrics.line_height),
+        .color = row_background,
+    };
+    sticky_input.diagnostics = diagnostics;
+    sticky_input.diagnostic_line_index = line_index;
+    sticky_input.diagnostic_horizontal_scroll = row_meta.visual_start;
+    sticky_input.diagnostic_visible_columns = row_meta.visual_end - row_meta.visual_start;
+    sticky_input.tab_size = viewport.tab_size();
+    if (plugin_decorations != nullptr) {
+      sticky_input.text_styles =
+          plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(line_index));
+    }
+    sticky_input.text_renderer = &text_renderer;
+    sticky_input.theme = &theme;
+    BuildDecoratedRow(sticky_row, sticky_input);
+    {
+      util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::StickyDecoratedRow");
+      kDecoratedRowRenderer.RenderRow(renderer, text_renderer, sticky_row);
+    }
+    if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
+        severity.has_value()) {
+      DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+                                 *severity);
+    }
+    if (show_line_numbers && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
+      const auto [end_sticky, _] =
+          std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
+                        line_index + 1);
+      text_renderer.DrawStringOn(
+          renderer, gutter.x + kGutterLineNumberInset, y,
+          selected ? theme.current_line_number : theme.line_number,
+          selected ? theme.row_highlight : theme.gutter_background,
+          std::string_view{line_number_buf, end_sticky});
+    }
+    if (folding_model != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start) &&
+        folding_model->FoldStartingAt(line_index).has_value()) {
+      DrawFoldGutterMarker(renderer,
+                           selected ? theme.current_line_number : theme.line_number,
+                           theme.row_highlight, theme.border,
+                           FoldGutterMarkerRect(gutter.x, gutter.w, y, metrics.line_height),
+                           folding_model->IsCollapsedAtOpener(line_index));
+    }
+  }
+  render::SetDrawColor(renderer, theme.border);
+  const SDL_FRect sticky_divider =
+      SDL_FRect{rect.x, metrics.first_line_y - 1.0f, rect.w, 1.0f};
+  SDL_RenderFillRect(renderer, &sticky_divider);
+}
+
 void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 const render::TextRenderer& text_renderer,
                                 const render::Theme& theme,
@@ -478,174 +671,29 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
   }
 
-  const std::vector<IndentGuideRun>* indent_guides_to_paint = nullptr;
-  if (indent_guides_enabled) {
-    // Cache probe plus, on a miss, the whole visible-window guide computation.
-    // Both live between the row loop and the frame setup, so without a scope they
-    // land in Render's self time with everything else that is not a row.
-    util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::IndentGuides");
-    const std::size_t indent_width =
-        viewport.indent_width() == 0 ? 1 : viewport.indent_width();
-    const std::size_t fold_emphasis_revision =
-        folding_model != nullptr ? folding_model->revision() : std::size_t{0};
-    auto cache_it = std::find_if(
-        indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
-        [&](const IndentGuidesCacheEntry& entry) {
-          return entry.viewport == &viewport &&
-                 entry.content_revision == viewport.content_revision() &&
-                 entry.layout_shape_revision == viewport.layout_shape_revision() &&
-                 entry.fold_revision == viewport.folding_revision() &&
-                 entry.fold_emphasis_revision == fold_emphasis_revision &&
-                 entry.scroll_line == scroll_line &&
-                 entry.visible_rows_count == visible_rows_for_guides.size() &&
-                 entry.indent_width == indent_width && entry.caret_line == cursor_line;
-        });
-    if (cache_it != indent_guides_cache_entries_.end()) {
-      indent_guides_to_paint = &cache_it->runs;
-      indent_guides_cache_last_runs_ = indent_guides_to_paint;
-      ++indent_guides_cache_hits_;
-      if (cache_it != indent_guides_cache_entries_.begin()) {
-        std::iter_swap(indent_guides_cache_entries_.begin(), cache_it);
-        indent_guides_to_paint = &indent_guides_cache_entries_.front().runs;
-        indent_guides_cache_last_runs_ = indent_guides_to_paint;
-      }
-    } else {
-      const std::size_t caret_indent =
-          cursor_line < lines.size()
-              ? LeadingVisualIndent(lines, cursor_line, viewport.tab_size())
-              : 0;
-      auto same_viewport_it = std::find_if(
-          indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
-          [&](const IndentGuidesCacheEntry& entry) { return entry.viewport == &viewport; });
-      IndentGuidesCacheEntry* target_entry = nullptr;
-      if (same_viewport_it != indent_guides_cache_entries_.end()) {
-        target_entry = &*same_viewport_it;
-      } else if (indent_guides_cache_entries_.size() < kIndentGuidesCacheLimit) {
-        indent_guides_cache_entries_.push_back(IndentGuidesCacheEntry{});
-        target_entry = &indent_guides_cache_entries_.back();
-      } else {
-        target_entry = &indent_guides_cache_entries_.back();
-      }
-      target_entry->viewport = &viewport;
-      target_entry->content_revision = viewport.content_revision();
-      target_entry->layout_shape_revision = viewport.layout_shape_revision();
-      target_entry->fold_revision = viewport.folding_revision();
-      target_entry->fold_emphasis_revision = fold_emphasis_revision;
-      target_entry->scroll_line = scroll_line;
-      target_entry->visible_rows_count = visible_rows_for_guides.size();
-      target_entry->indent_width = indent_width;
-      target_entry->caret_line = cursor_line;
-      ComputeIndentGuides(lines, visible_rows_for_guides, viewport.tab_size(),
-                          indent_width, cursor_line, caret_indent, &target_entry->runs,
-                          folding_model);
-      indent_guides_to_paint = &target_entry->runs;
-      indent_guides_cache_last_runs_ = indent_guides_to_paint;
-      if (target_entry != &indent_guides_cache_entries_.front()) {
-        std::iter_swap(indent_guides_cache_entries_.begin(),
-                       indent_guides_cache_entries_.begin() +
-                           static_cast<std::ptrdiff_t>(target_entry -
-                                                       indent_guides_cache_entries_.data()));
-        indent_guides_to_paint = &indent_guides_cache_entries_.front().runs;
-        indent_guides_cache_last_runs_ = indent_guides_to_paint;
-      }
-      ++indent_guides_cache_misses_;
-    }
-  } else {
+  const std::vector<IndentGuideRun>* indent_guides_to_paint =
+      indent_guides_enabled ? ResolveIndentGuides(viewport, visible_rows_for_guides, folding_model)
+                            : nullptr;
+  if (!indent_guides_enabled) {
     indent_guides_cache_last_runs_ = nullptr;
   }
 
+  const FramePaint frame{
+      .renderer = renderer,
+      .text_renderer = text_renderer,
+      .theme = theme,
+      .viewport = viewport,
+      .rect = rect,
+      .metrics = metrics,
+      .gutter = gutter,
+      .diagnostics = diagnostics,
+      .plugin_decorations = plugin_decorations,
+      .folding_model = folding_model,
+      .show_line_numbers = show_line_numbers,
+  };
   if (metrics.sticky_scroll_rows > 0 && view_model != nullptr &&
       !view_model->sticky_lines.empty()) {
-    util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::StickyRows");
-    for (std::size_t si = 0; si < view_model->sticky_lines.size(); ++si) {
-      const std::size_t line_index = view_model->sticky_lines[si];
-      if (line_index >= lines.size()) {
-        continue;
-      }
-      const float y =
-          metrics.sticky_band_top_y + static_cast<float>(si) * metrics.line_height;
-      const bool selected = line_index == cursor_line;
-      const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
-      const std::size_t opener_visual = viewport.VisualRowForLine(line_index);
-      if (opener_visual >= viewport.visual_line_count()) {
-        continue;
-      }
-      const auto row_meta = viewport.WrappedVisualRowLayout(opener_visual);
-      const LayoutLine& row_layout = soft_wrap
-                                         ? viewport.VisibleWrappedRowLayoutRef(opener_visual)
-                                         : viewport.VisibleLineLayoutRef(line_index);
-
-      DecoratedTextRow& sticky_row = sticky_scratch_row_;
-      const std::vector<SyntaxTokenKind>* sticky_tokens = nullptr;
-      {
-        util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::StickyHighlightedLineTokens");
-        sticky_tokens = &viewport.HighlightedLineTokens(line_index);
-      }
-      RowDecorationInput sticky_input;
-      sticky_input.text_x = metrics.text_x;
-      sticky_input.y = y;
-      sticky_input.char_width = text_renderer.CharWidth();
-      sticky_input.line_height = metrics.line_height;
-      sticky_input.row_visual_start = row_meta.visual_start;
-      sticky_input.row_visual_end = row_meta.visual_end;
-      sticky_input.line_length = lines.LineLength(line_index);
-      // Same rule as the ordinary row path below: the line's bytes are only read
-      // when a diagnostic on this row needs them.
-      sticky_input.text = AnyDiagnosticCoversLine(diagnostics, line_index)
-                              ? lines.LineView(line_index)
-                              : std::string_view{};
-      sticky_input.tokens = sticky_tokens;
-      sticky_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
-      sticky_input.layout = &row_layout;
-      sticky_input.has_background_fill = true;
-      sticky_input.background_fill = DecoratedTextFill{
-          .rect = MakeRowBackgroundRect(rect, y, metrics.line_height),
-          .color = row_background,
-      };
-      sticky_input.diagnostics = diagnostics;
-      sticky_input.diagnostic_line_index = line_index;
-      sticky_input.diagnostic_horizontal_scroll = row_meta.visual_start;
-      sticky_input.diagnostic_visible_columns = row_meta.visual_end - row_meta.visual_start;
-      sticky_input.tab_size = viewport.tab_size();
-      if (plugin_decorations != nullptr) {
-        sticky_input.text_styles =
-            plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(line_index));
-      }
-      sticky_input.text_renderer = &text_renderer;
-      sticky_input.theme = &theme;
-      BuildDecoratedRow(sticky_row, sticky_input);
-      {
-        util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::StickyDecoratedRow");
-        kDecoratedRowRenderer.RenderRow(renderer, text_renderer, sticky_row);
-      }
-      if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
-          severity.has_value()) {
-        DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
-                                   *severity);
-      }
-      if (show_line_numbers && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
-        const auto [end_sticky, _] =
-            std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
-                          line_index + 1);
-        text_renderer.DrawStringOn(
-            renderer, gutter.x + kGutterLineNumberInset, y,
-            selected ? theme.current_line_number : theme.line_number,
-            selected ? theme.row_highlight : theme.gutter_background,
-            std::string_view{line_number_buf, end_sticky});
-      }
-      if (folding_model != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start) &&
-          folding_model->FoldStartingAt(line_index).has_value()) {
-        DrawFoldGutterMarker(renderer,
-                             selected ? theme.current_line_number : theme.line_number,
-                             theme.row_highlight, theme.border,
-                             FoldGutterMarkerRect(gutter.x, gutter.w, y, metrics.line_height),
-                             folding_model->IsCollapsedAtOpener(line_index));
-      }
-    }
-    render::SetDrawColor(renderer, theme.border);
-    const SDL_FRect sticky_divider =
-        SDL_FRect{rect.x, metrics.first_line_y - 1.0f, rect.w, 1.0f};
-    SDL_RenderFillRect(renderer, &sticky_divider);
+    RenderStickyRows(frame, view_model->sticky_lines);
   }
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
