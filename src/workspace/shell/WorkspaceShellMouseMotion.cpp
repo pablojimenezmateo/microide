@@ -23,6 +23,39 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// When the pointer moved from one hover-lit element to another (or onto or off
+// one), the rects of both, grown by the hover fill's overhang (`pad_x`, `pad_y`),
+// for `damage`. True when the hovered element changed.
+template <typename Damage>
+bool DamageHoverChange(const std::optional<SDL_FRect>& previous,
+                       const std::optional<SDL_FRect>& current, float pad_x, float pad_y,
+                       const Damage& damage) {
+  // value_or yields fully-initialized locals so the comparison never touches
+  // optional storage GCC cannot prove engaged.
+  const bool previous_present = previous.has_value();
+  const bool current_present = current.has_value();
+  const SDL_FRect previous_rect = previous.value_or(SDL_FRect{});
+  const SDL_FRect current_rect = current.value_or(SDL_FRect{});
+  if (previous_present == current_present &&
+      (!previous_present || RectsEqual(previous_rect, current_rect))) {
+    return false;
+  }
+  const auto pad = [pad_x, pad_y](const SDL_FRect& rect) {
+    return MakeRect(rect.x - pad_x, rect.y - pad_y, rect.w + 2.0f * pad_x, rect.h + 2.0f * pad_y);
+  };
+  if (previous_present) {
+    damage(pad(previous_rect));
+  }
+  if (current_present) {
+    damage(pad(current_rect));
+  }
+  return true;
+}
+
+}  // namespace
+
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseMotion");
   const DamageMark mark = MarkDamage();
@@ -486,29 +519,14 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
     // debug pane's mode tabs and rows). Rendering is surface-granular,
     // so damaging the changed element's rect re-renders that surface with the new
     // hover. One unified probe keeps every list/tab hover affordance in lockstep.
-    const std::optional<SDL_FRect> previous_interactive_rect =
-        previous_mouse_position_valid
-            ? HoveredInteractiveRect(layout, previous_mouse_x, previous_mouse_y)
-            : std::nullopt;
-    const std::optional<SDL_FRect> current_interactive_rect = HoveredInteractiveRect(
-        layout, static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-    const bool previous_interactive_present = previous_interactive_rect.has_value();
-    const bool current_interactive_present = current_interactive_rect.has_value();
-    const SDL_FRect previous_interactive = previous_interactive_rect.value_or(SDL_FRect{});
-    const SDL_FRect current_interactive = current_interactive_rect.value_or(SDL_FRect{});
-    if (previous_interactive_present != current_interactive_present ||
-        (previous_interactive_present && current_interactive_present &&
-         !RectsEqual(previous_interactive, current_interactive))) {
-      // One pixel past the element: a button's hover outline sits on its edge.
-      const auto request = [this](const SDL_FRect& rect) {
-        RequestRedrawRect(MakeRect(rect.x - 1.0f, rect.y - 1.0f, rect.w + 2.0f, rect.h + 2.0f));
-      };
-      if (previous_interactive_present) {
-        request(previous_interactive);
-      }
-      if (current_interactive_present) {
-        request(current_interactive);
-      }
+    const auto request_redraw = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); };
+    // One pixel past the element: a button's hover outline sits on its edge.
+    if (DamageHoverChange(previous_mouse_position_valid
+                              ? HoveredInteractiveRect(layout, previous_mouse_x, previous_mouse_y)
+                              : std::nullopt,
+                          HoveredInteractiveRect(layout, static_cast<float>(event.motion.x),
+                                                 static_cast<float>(event.motion.y)),
+                          1.0f, 1.0f, request_redraw)) {
       sidebar_hover_button_changed = true;  // reuse the "redraw was requested" return signal
     }
     // A tab's close glyph lights on its own while the pointer is on it. Moving from
@@ -570,33 +588,14 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
     hover_visual_changed = !(previous_hover_target == active_editor_hover_target_) ||
                            previous_action_hovered != current_action_hovered;
 
-    // Clickable status-bar segments repaint their hover background on enter/leave. The
-    // hover fill extends a few px past the text rect, so the redraw rect is padded wider.
-    const std::optional<SDL_FRect> previous_status_segment_rect =
-        previous_mouse_position_valid
-            ? HoveredStatusBarSegmentRect(layout, previous_mouse_x, previous_mouse_y)
-            : std::nullopt;
-    const std::optional<SDL_FRect> current_status_segment_rect = HoveredStatusBarSegmentRect(
-        layout, static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-    // value_or yields fully-initialized locals so the rect comparison/redraw paths never
-    // touch optional storage GCC cannot prove engaged (the values matter only when the
-    // matching has_value() flag below is true).
-    const bool previous_status_segment_present = previous_status_segment_rect.has_value();
-    const bool current_status_segment_present = current_status_segment_rect.has_value();
-    const SDL_FRect previous_status_segment = previous_status_segment_rect.value_or(SDL_FRect{});
-    const SDL_FRect current_status_segment = current_status_segment_rect.value_or(SDL_FRect{});
-    if (previous_status_segment_present != current_status_segment_present ||
-        (previous_status_segment_present && current_status_segment_present &&
-         !RectsEqual(previous_status_segment, current_status_segment))) {
-      const auto request_status_redraw = [this](const SDL_FRect& rect) {
-        RequestRedrawRect(MakeRect(rect.x - 6.0f, rect.y - 1.0f, rect.w + 12.0f, rect.h + 2.0f));
-      };
-      if (previous_status_segment_present) {
-        request_status_redraw(previous_status_segment);
-      }
-      if (current_status_segment_present) {
-        request_status_redraw(current_status_segment);
-      }
+    // Clickable status-bar segments repaint their hover background on enter/leave;
+    // the fill extends a few px past the text rect, so the damage is wider.
+    if (DamageHoverChange(previous_mouse_position_valid
+                              ? HoveredStatusBarSegmentRect(layout, previous_mouse_x, previous_mouse_y)
+                              : std::nullopt,
+                          HoveredStatusBarSegmentRect(layout, static_cast<float>(event.motion.x),
+                                                      static_cast<float>(event.motion.y)),
+                          6.0f, 1.0f, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); })) {
       status_segment_hover_changed = true;
     }
 
