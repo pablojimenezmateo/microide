@@ -569,7 +569,7 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
                 return BuildMergeSourceActionButtonRect(surface, interaction, conflict, incoming);
               },
           .build_merge_result_action_button_rects =
-              [this](const MergeSurfaceLayout& surface, const MergeInteractionLayout& interaction,
+              [](const MergeSurfaceLayout& surface, const MergeInteractionLayout& interaction,
                      const MergeTrackedConflict& conflict) {
                 return BuildMergeResultActionButtonRects(surface, interaction, conflict);
               },

@@ -184,10 +184,8 @@ void DrawLane(SDL_Renderer* renderer, const render::Theme& theme, const SDL_FRec
     return;
   }
 
-  render::SetDrawColor(renderer, theme.surface_raised);
-  SDL_RenderFillRect(renderer, &lane);
-  render::SetDrawColor(renderer, theme.border);
-  SDL_RenderRect(renderer, &lane);
+  render::FillRect(renderer, lane, theme.surface_raised);
+  render::OutlineRect(renderer, lane, theme.border);
 
   for (const Marker& marker : markers) {
     render::SetDrawColor(renderer, marker.color);

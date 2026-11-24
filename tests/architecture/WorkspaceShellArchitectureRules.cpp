@@ -83,7 +83,7 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
 // moves into the primitives; an entry that no longer draws (or no longer exists)
 // fails, so the list cannot go stale.
 namespace {
-constexpr std::array<std::string_view, 17> kSdlDrawAllowlist = {
+constexpr std::array<std::string_view, 16> kSdlDrawAllowlist = {
     // Hooked primitives (NotePaint) and the text front end's backends.
     "src/workspace/render/WorkspaceShellRenderPrimitives.h",
     "src/render/SurfacePrimitives.h",
@@ -102,7 +102,6 @@ constexpr std::array<std::string_view, 17> kSdlDrawAllowlist = {
     "src/workspace/render/OverviewRuler.cpp",
     "src/workspace/render/WorkspaceShellRenderBottomPanel.cpp",
     "src/workspace/render/WorkspaceShellRenderFrame.cpp",
-    "src/workspace/render/WorkspaceShellRenderSettingsOverlay.cpp",
     // Presenting the finished scene texture: not an element's paint.
     "src/app/Application.cpp",
 };

@@ -84,10 +84,8 @@ void DrawFoldGutterMarker(SDL_Renderer* renderer,
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
-  render::SetDrawColor(renderer, background);
-  SDL_RenderFillRect(renderer, &rect);
-  render::SetDrawColor(renderer, border);
-  SDL_RenderRect(renderer, &rect);
+  render::FillRect(renderer, rect, background);
+  render::OutlineRect(renderer, rect, border);
 
   render::SetDrawColor(renderer, glyph);
   const float thickness = std::max(2.0f, std::floor(rect.h * 0.18f));

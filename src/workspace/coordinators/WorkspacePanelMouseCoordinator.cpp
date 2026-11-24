@@ -783,7 +783,7 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .terminal_viewport_position_for_point = [this](int x,
                                                          int y) { return TerminalViewportPositionForPoint(x, y); },
-          .terminal_mouse_button_for_sdl = [this](Uint8 button) { return TerminalMouseButtonFromSdl(button); },
+          .terminal_mouse_button_for_sdl = [](Uint8 button) { return TerminalMouseButtonFromSdl(button); },
           .output_channel_entries =
               [this]() { return OutputChannelEntries(context_.current_project_state.panel.output.channel_id); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },

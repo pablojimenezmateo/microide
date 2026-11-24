@@ -51,9 +51,8 @@ void DrawFocusRing(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color colo
   if (renderer == nullptr) {
     return;
   }
-  render::SetDrawColor(renderer, color);
   const SDL_FRect inner = {rect.x + 1.0f, rect.y + 1.0f, rect.w - 2.0f, rect.h - 2.0f};
-  SDL_RenderRect(renderer, &inner);
+  render::OutlineRect(renderer, inner, color);
 }
 
 // Help / About is a two-column read-only list with word-wrapped detail and

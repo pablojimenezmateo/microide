@@ -327,8 +327,9 @@ void WorkspaceShell::DrawSurfaceFocusRing(SDL_Renderer* renderer, const SDL_FRec
 void WorkspaceShell::DrawRect(SDL_Renderer* renderer,
                               const SDL_FRect& rect,
                               SDL_Color color) const {
-  render::SetDrawColor(renderer, color);
-  SDL_RenderRect(renderer, &rect);
+  // Through the primitive the paint-overrun recorder sees (clip-discipline D5), as
+  // DrawFilledRect does: a raw stroke here was invisible to that check.
+  render::OutlineRect(renderer, rect, color);
 }
 
 std::string_view WorkspaceShell::TruncateLabelView(std::string_view text, float max_width) const {
