@@ -7,6 +7,7 @@
 #include "util/StringUtil.h"
 #include "workspace/SettingFlags.h"
 #include "util/ErrorOut.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -91,9 +92,7 @@ void AssistHost::MaybeLogLspUnavailable(const std::string& language_id,
 void AssistHost::Report(const char* channel_id, const char* channel_title,
                         const std::string& message) const {
   output_channels_->AppendLine(channel_id, channel_title, message);
-  if (operations_.notify_info) {
-    operations_.notify_info(message);
-  }
+  util::InvokeIfSet(operations_.notify_info, message);
 }
 
 AssistHost::EditSnapshot AssistHost::CaptureEditSnapshot(const editor::TextViewport& viewport) {

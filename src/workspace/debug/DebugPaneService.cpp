@@ -1,6 +1,7 @@
 #include "workspace/debug/DebugPaneService.h"
 
 #include <utility>
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -16,9 +17,7 @@ void DebugPaneService::Activate(DebugPaneMode mode) {
   if (!was_visible && operations_.note_layout_inputs_changed) {
     operations_.note_layout_inputs_changed();
   }
-  if (operations_.request_frame) {
-    operations_.request_frame();
-  }
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 void DebugPaneService::ShowMode(DebugPaneMode mode) { Activate(mode); }
@@ -33,12 +32,8 @@ void DebugPaneService::Close() {
   if (state_.surface.focus == FocusTarget::DebugPane) {
     state_.surface.focus = FocusTarget::Editor;
   }
-  if (operations_.note_layout_inputs_changed) {
-    operations_.note_layout_inputs_changed();
-  }
-  if (operations_.request_frame) {
-    operations_.request_frame();
-  }
+  util::InvokeIfSet(operations_.note_layout_inputs_changed);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 void DebugPaneService::Toggle() {

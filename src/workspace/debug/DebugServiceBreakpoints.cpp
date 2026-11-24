@@ -12,6 +12,7 @@
 #include "util/DebugTrace.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/state/WorkspaceProjectState.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -117,9 +118,7 @@ void DebugService::ResendFunctionBreakpointsAndSync() {
       session != nullptr && session->IsActive()) {
     session->ResendFunctionBreakpoints();
   }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 void DebugService::ResendExceptionFiltersAndSync() {
@@ -129,9 +128,7 @@ void DebugService::ResendExceptionFiltersAndSync() {
       session != nullptr && session->IsActive()) {
     session->ResendExceptionFilters();
   }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 bool DebugService::ShiftBreakpointsForAppliedEdit(const std::filesystem::path& path,

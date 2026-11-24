@@ -6,6 +6,7 @@
 #include "editor/ShapingActions.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/SettingFlags.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -181,9 +182,7 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::ResetCaretBlink");
     operations.reset_caret_blink();
   }
-  if (operations.mark_active_editor_folding_dirty) {
-    operations.mark_active_editor_folding_dirty();
-  }
+  util::InvokeIfSet(operations.mark_active_editor_folding_dirty);
   {
     util::PerformanceTrace::Scope scope(
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::RequestLastChangeRedraw");
@@ -468,9 +467,7 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
         if (selection.empty()) {
           return true;
         }
-        if (operations_.commit_body_write_clipboard_text) {
-          operations_.commit_body_write_clipboard_text(selection);
-        }
+        util::InvokeIfSet(operations_.commit_body_write_clipboard_text, selection);
         viewport.DeleteSelectedText();
         ClearCommitBodyHint(viewport);
         return after_edit();
@@ -664,9 +661,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
 
   const auto after_editor_caret_motion = [this]() {
     operations_.reset_caret_blink();
-    if (operations_.notify_snippet_session_caret_moved) {
-      operations_.notify_snippet_session_caret_moved();
-    }
+    util::InvokeIfSet(operations_.notify_snippet_session_caret_moved);
   };
 
   // Ctrl+Up/Down scroll the view one line and leave the caret where it is

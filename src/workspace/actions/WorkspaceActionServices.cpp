@@ -34,6 +34,7 @@
 #include "workspace/git/CommitPick.h"
 #include "workspace/git/WorktreePick.h"
 #include "util/ErrorOut.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -154,9 +155,7 @@ void WorkspaceActionContext::ShowSidebarSurface() {
   // to a sidebar nobody could see (QA monkey, seed 44 at 600 steps).
   if (state_.surface.focus != FocusTarget::Sidebar) {
     state_.surface.focus = FocusTarget::Sidebar;
-    if (operations_.request_window_redraw) {
-      operations_.request_window_redraw();
-    }
+    util::InvokeIfSet(operations_.request_window_redraw);
   }
 }
 
@@ -254,9 +253,7 @@ void WorkspaceActionContext::ReloadCleanOpenBuffersFromDisk() {
 }
 
 void WorkspaceActionContext::RequestGitRefresh() {
-  if (operations_.request_git_refresh) {
-    operations_.request_git_refresh();
-  }
+  util::InvokeIfSet(operations_.request_git_refresh);
 }
 
 std::string WorkspaceActionContext::DispatchGitOperation(const ActionId id,
@@ -769,9 +766,7 @@ void WorkspaceActionContext::ShowProjectReplace(std::string query) {
 }
 
 void WorkspaceActionContext::BeginProjectSearchEdit(ProjectSearchEditField field) {
-  if (operations_.begin_project_search_edit) {
-    operations_.begin_project_search_edit(field);
-  }
+  util::InvokeIfSet(operations_.begin_project_search_edit, field);
 }
 
 void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
@@ -790,9 +785,7 @@ void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
     default:
       break;
   }
-  if (operations_.refresh_project_search) {
-    operations_.refresh_project_search();
-  }
+  util::InvokeIfSet(operations_.refresh_project_search);
 }
 
 std::string WorkspaceActionContext::OpenGitCommitWorkflow() {
@@ -1814,15 +1807,11 @@ void WorkspaceActionContext::PasteClipboard() {
 }
 
 void WorkspaceActionContext::PressKey(SDL_Keycode key, SDL_Keymod modifiers) {
-  if (operations_.press_key) {
-    operations_.press_key(key, modifiers);
-  }
+  util::InvokeIfSet(operations_.press_key, key, modifiers);
 }
 
 void WorkspaceActionContext::InjectPointerEvent(const SDL_Event& event, SDL_Keymod modifiers) {
-  if (operations_.inject_pointer_event) {
-    operations_.inject_pointer_event(event, modifiers);
-  }
+  util::InvokeIfSet(operations_.inject_pointer_event, event, modifiers);
 }
 
 bool WorkspaceActionContext::ShowHoverAtCaret() {
@@ -1876,12 +1865,8 @@ void WorkspaceActionContext::ReportColorschemeNames() {
 }
 
 void WorkspaceActionContext::RequestLiveConfigRedraw() {
-  if (operations_.note_layout_inputs_changed) {
-    operations_.note_layout_inputs_changed();
-  }
-  if (operations_.request_window_redraw) {
-    operations_.request_window_redraw();
-  }
+  util::InvokeIfSet(operations_.note_layout_inputs_changed);
+  util::InvokeIfSet(operations_.request_window_redraw);
 }
 
 bool WorkspaceActionContext::FocusNotifications() {
@@ -1931,9 +1916,7 @@ bool WorkspaceActionContext::ActivateEditorBanner(std::string_view label, std::s
 }
 
 void WorkspaceActionContext::ToggleWindowFullscreen() {
-  if (operations_.request_toggle_fullscreen) {
-    operations_.request_toggle_fullscreen();
-  }
+  util::InvokeIfSet(operations_.request_toggle_fullscreen);
 }
 
 bool WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
@@ -2144,9 +2127,7 @@ bool WorkspaceActionContext::SetSettingValue(std::string_view id, std::string va
 }
 
 void WorkspaceActionContext::Notify(NotificationService::Tone tone, std::string message) {
-  if (operations_.notify) {
-    operations_.notify(tone, std::move(message));
-  }
+  util::InvokeIfSet(operations_.notify, tone, std::move(message));
 }
 
 void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {

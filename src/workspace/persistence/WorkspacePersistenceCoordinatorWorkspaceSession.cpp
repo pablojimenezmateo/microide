@@ -5,6 +5,7 @@
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "util/InvokeIfSet.h"
 namespace microide::workspace {
 
 namespace {
@@ -45,9 +46,7 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
   context_.project_catalog.entries.clear();
   context_.project_catalog.active_index = 0;
   context_.project_catalog.tab_scroll_index = 0;
-  if (operations_.restore_host_view_collapsed) {
-    operations_.restore_host_view_collapsed(persisted_session.host_view_collapsed);
-  }
+  util::InvokeIfSet(operations_.restore_host_view_collapsed, persisted_session.host_view_collapsed);
 
   // The identity records when the file has them; a file written before them names
   // its projects by path alone, and each is named here as a typed path would be.

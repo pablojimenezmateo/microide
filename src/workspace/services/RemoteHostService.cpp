@@ -21,6 +21,7 @@
 #include "workspace/WorkspaceUiText.h"
 
 #include <unistd.h>
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 namespace {
@@ -166,9 +167,7 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   }
   config.git_status_changed = [this, tree]() {
     mailbox_.PostLatest("remote-git:" + tree.string(), [this, tree]() {
-      if (operations_.git_status_pushed) {
-        operations_.git_status_pushed(tree);
-      }
+      util::InvokeIfSet(operations_.git_status_pushed, tree);
     });
   };
   auto project = std::make_unique<remote::RemoteProject>(std::move(config), [this, tree]() {
@@ -325,9 +324,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
     }
   };
   const auto dismiss = [&]() {
-    if (operations_.dismiss_notification) {
-      operations_.dismiss_notification(key);
-    }
+    util::InvokeIfSet(operations_.dismiss_notification, key);
   };
   switch (status.state) {
     case State::Connecting:
@@ -420,9 +417,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
                                                              project.session().SshCommandText(), ServerRelease(project));
       block != entry.status_block) {
     entry.status_block = std::move(block);
-    if (operations_.project_status_changed) {
-      operations_.project_status_changed(tree, entry.status_block);
-    }
+    util::InvokeIfSet(operations_.project_status_changed, tree, entry.status_block);
   }
   if (sync.pending_revision != entry.pending_revision) {
     entry.pending_revision = sync.pending_revision;
@@ -440,9 +435,7 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
   }
   const bool grew = sync.host_changes > entry.seen_host_changes;
   entry.seen_host_changes = sync.host_changes;
-  if (operations_.host_changes_updated) {
-    operations_.host_changes_updated(tree);
-  }
+  util::InvokeIfSet(operations_.host_changes_updated, tree);
   // § 7.6: never a row per file — agents rewrite hundreds at a time. One counted
   // row, replaced by key, raised at most every 30 s; the list itself is always
   // current in the view it opens.
@@ -766,9 +759,7 @@ bool RemoteHostService::OpenHostChange(const std::filesystem::path& root, const 
     mailbox_.Post([this, current, deleted, host, copy = std::move(copy), error = std::move(error)]() {
       std::string why = error;
       if (copy.has_value() && deleted) {
-        if (operations_.open_file) {
-          operations_.open_file(*copy);
-        }
+        util::InvokeIfSet(operations_.open_file, *copy);
       } else if (copy.has_value() && operations_.compare_files) {
         const std::string name = current.filename().string();
         why = operations_.compare_files(*copy, name + " (before)", current, name + " (on " + host + ")");
@@ -1104,9 +1095,7 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
                                                                         : entry.selected_conflicts.erase(it);
     }
     entry.conflicts = std::move(conflicts);
-    if (operations_.conflicts_updated) {
-      operations_.conflicts_updated(tree);
-    }
+    util::InvokeIfSet(operations_.conflicts_updated, tree);
   }
   const std::vector<std::string>& current = entry.conflicts;
   const bool own_row = current.size() == 1;
@@ -1173,9 +1162,7 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
                                .keep_open = true},
         },
     });
-  } else if (operations_.dismiss_notification) {
-    operations_.dismiss_notification(summary_key);
-  }
+  } else util::InvokeIfSet(operations_.dismiss_notification, summary_key);
 }
 
 void RemoteHostService::PublishBlockedRows(const std::filesystem::path& tree, Project& entry) {
@@ -1226,9 +1213,7 @@ void RemoteHostService::PublishBlockedRows(const std::filesystem::path& tree, Pr
                                .args = {tree.string(), "replace"}},
         },
     });
-  } else if (operations_.dismiss_notification) {
-    operations_.dismiss_notification(summary_key);
-  }
+  } else util::InvokeIfSet(operations_.dismiss_notification, summary_key);
 }
 
 bool RemoteHostService::SettleBlockedSaves(const std::filesystem::path& target, bool replace) {
@@ -1340,9 +1325,7 @@ bool RemoteHostService::ActivateConflictRow(const std::filesystem::path& root, s
   Project& entry = it->second;
   const std::vector<std::string> conflicts = entry.project->engine().Conflicts();
   const auto changed = [&]() {
-    if (operations_.conflicts_updated) {
-      operations_.conflicts_updated(root);
-    }
+    util::InvokeIfSet(operations_.conflicts_updated, root);
   };
   if (id == kConflictSelectAll) {
     if (entry.selected_conflicts.size() == conflicts.size()) {
@@ -1479,9 +1462,7 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
       entry.project->engine().Prioritize(
           {std::move(relative)}, [this, key, file = path.lexically_normal(), opened = std::move(opened)]() {
             mailbox_.Post([this, key, file, opened]() {
-              if (operations_.dismiss_notification) {
-                operations_.dismiss_notification(key);
-              }
+              util::InvokeIfSet(operations_.dismiss_notification, key);
               fetching_copy_ = file;
               opened(file);
               fetching_copy_.clear();
@@ -2317,9 +2298,7 @@ void RemoteHostService::OnHostTerminals(const std::filesystem::path& tree,
   const std::string adopted_text =
       adopted == 0 ? std::string() : count(adopted, "terminal", "terminals") + " left running with no tab, reopened";
   if (fresh == 0 && entry.unclaimed_terminals.empty()) {
-    if (operations_.dismiss_notification) {
-      operations_.dismiss_notification(key);
-    }
+    util::InvokeIfSet(operations_.dismiss_notification, key);
     if (claims.reattached > 0 || adopted > 0) {
       std::string message = "Reattached to " + record.host + InProject(record.host, record.host_root) + ": ";
       if (claims.reattached > 0) {

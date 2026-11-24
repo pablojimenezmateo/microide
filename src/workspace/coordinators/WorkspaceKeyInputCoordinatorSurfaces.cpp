@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "workspace/ListSelection.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -98,9 +99,7 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     }
     viewport->SetSecondaryCaretsWithRanges(others);
     state_.surface.focus = FocusTarget::Editor;
-    if (operations_.reset_caret_blink) {
-      operations_.reset_caret_blink();
-    }
+    util::InvokeIfSet(operations_.reset_caret_blink);
     operations_.request_frame();
     return true;
   }
@@ -252,9 +251,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
     if (nav_delta.has_value()) {
       MoveOverlayListSelection(picker.selected_index, picker.matches.size(), *nav_delta);
-      if (operations_.quick_pick_selection_changed) {
-        operations_.quick_pick_selection_changed();
-      }
+      util::InvokeIfSet(operations_.quick_pick_selection_changed);
       return true;
     }
     return operations_.text_input_handle_single_line_key_down(event, modifiers);

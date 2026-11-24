@@ -12,6 +12,7 @@
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ShellGlueCache.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -129,15 +130,9 @@ void CompareReviewService::MarksChanged() {
       }
     }
   }
-  if (operations_.persist) {
-    operations_.persist();
-  }
-  if (operations_.request_frame) {
-    operations_.request_frame();
-  }
-  if (operations_.request_sidebar_redraw) {
-    operations_.request_sidebar_redraw();
-  }
+  util::InvokeIfSet(operations_.persist);
+  util::InvokeIfSet(operations_.request_frame);
+  util::InvokeIfSet(operations_.request_sidebar_redraw);
 }
 
 void CompareReviewService::SetHunkReviewed(CompareTabState& compare_tab, int hunk, bool reviewed) {

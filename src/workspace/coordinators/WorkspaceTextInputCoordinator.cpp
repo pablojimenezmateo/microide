@@ -8,6 +8,7 @@
 #include "editor/SingleLineKeyHandler.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -406,9 +407,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         } else {
           viewport->InsertText(input);
         }
-        if (operations_.mark_active_editor_folding_dirty) {
-          operations_.mark_active_editor_folding_dirty();
-        }
+        util::InvokeIfSet(operations_.mark_active_editor_folding_dirty);
         if (auto* compare_tab = operations_.active_compare_tab();
             compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
           operations_.refresh_compare_tab_derived_state(*compare_tab);

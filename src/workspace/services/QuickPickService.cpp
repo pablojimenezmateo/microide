@@ -8,6 +8,7 @@
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/debug/LaunchConfig.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -29,9 +30,7 @@ void QuickPickService::Open(QuickPickState picker) {
   *state_ = std::move(picker);
   Refilter();
   state_->selected_index = std::min(selected, state_->matches.empty() ? 0 : state_->matches.size() - 1);
-  if (operations_.show_overlay) {
-    operations_.show_overlay();
-  }
+  util::InvokeIfSet(operations_.show_overlay);
 }
 
 void QuickPickService::Refilter() {
@@ -75,9 +74,7 @@ void QuickPickService::Refilter() {
   picker.summary_line = picker.loading ? "Loading " + picker.noun + "…"
                                        : BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
                                                                    picker.noun);
-  if (operations_.list_changed) {
-    operations_.list_changed();
-  }
+  util::InvokeIfSet(operations_.list_changed);
   // Typing a filter previews its top match, as VS Code's theme pick does; an
   // empty query (the open) keeps what is in use.
   if (!query.empty()) {
@@ -121,9 +118,7 @@ void QuickPickService::Accept() {
   const std::optional<QuickPickState::View> view = std::exchange(state_->revert_view, std::nullopt);
   switch (state_->kind) {
     case QuickPickKind::LaunchConfig:
-      if (operations_.start_launch_config) {
-        operations_.start_launch_config(item.index);
-      }
+      util::InvokeIfSet(operations_.start_launch_config, item.index);
       break;
     case QuickPickKind::ColorTheme:
       if (operations_.apply_colorscheme) {
@@ -136,24 +131,16 @@ void QuickPickService::Accept() {
       }
       break;
     case QuickPickKind::WorkspaceSymbol:
-      if (operations_.open_workspace_symbol) {
-        operations_.open_workspace_symbol(item.value, item.line, item.column);
-      }
+      util::InvokeIfSet(operations_.open_workspace_symbol, item.value, item.line, item.column);
       break;
     case QuickPickKind::LanguageMode:
-      if (operations_.set_language) {
-        operations_.set_language(item.value);
-      }
+      util::InvokeIfSet(operations_.set_language, item.value);
       break;
     case QuickPickKind::RecentEditor:
-      if (operations_.activate_tab) {
-        operations_.activate_tab(item.index);
-      }
+      util::InvokeIfSet(operations_.activate_tab, item.index);
       break;
     case QuickPickKind::RunCommand:
-      if (operations_.run_command_line) {
-        operations_.run_command_line(item.value);
-      }
+      util::InvokeIfSet(operations_.run_command_line, item.value);
       break;
   }
 }
@@ -198,9 +185,7 @@ void QuickPickService::Fail(QuickPickKind kind, std::string reason) {
   state_->items.clear();
   state_->matches.clear();
   state_->summary_line = std::move(reason);
-  if (operations_.list_changed) {
-    operations_.list_changed();
-  }
+  util::InvokeIfSet(operations_.list_changed);
 }
 
 void QuickPickService::ShowItemsAsTheyAre() {
@@ -210,9 +195,7 @@ void QuickPickService::ShowItemsAsTheyAre() {
   picker.summary_line = picker.loading ? "Loading " + picker.noun + "…"
                                        : BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
                                                                    picker.noun);
-  if (operations_.list_changed) {
-    operations_.list_changed();
-  }
+  util::InvokeIfSet(operations_.list_changed);
 }
 
 QuickPickState QuickPickService::LaunchConfigs(std::span<const LaunchConfig> configs) {

@@ -18,6 +18,7 @@
 #include "workspace/TabReorder.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -144,9 +145,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   // Reload, Overwrite, or Keep. Checked before formatters run so we don't
   // mutate the buffer for a save we're about to abort.
   if (candidate->SaveWouldOverwriteUnseenDisk()) {
-    if (operations_.request_external_change_banner) {
-      operations_.request_external_change_banner(normalized_path);
-    }
+    util::InvokeIfSet(operations_.request_external_change_banner, normalized_path);
     return false;
   }
   if (!RefuseIfReadOnly(normalized_path, /*banner_shows=*/true)) {
@@ -193,9 +192,7 @@ TabCoordinator::PaneSave TabCoordinator::WritePaneViewport(
     editor::TextViewport& viewport, editor::AsyncBufferWork& pending_format_save, SaveMode mode) {
   const std::filesystem::path normalized_path = viewport.path().lexically_normal();
   if (viewport.SaveWouldOverwriteUnseenDisk()) {
-    if (operations_.request_external_change_banner) {
-      operations_.request_external_change_banner(normalized_path);
-    }
+    util::InvokeIfSet(operations_.request_external_change_banner, normalized_path);
     return PaneSave::Refused;
   }
   if (operations_.prepare_editor_view_for_save) {
@@ -228,9 +225,7 @@ void TabCoordinator::AfterFileSaved(const std::filesystem::path& normalized_path
   operations_.invalidate_editor_blame_path(normalized_path);
   operations_.notify_plugin_buffer_save(normalized_path);
   state_.directory_tree.Refresh();
-  if (operations_.request_automatic_git_sidebar_refresh) {
-    operations_.request_automatic_git_sidebar_refresh();
-  }
+  util::InvokeIfSet(operations_.request_automatic_git_sidebar_refresh);
 }
 
 bool TabCoordinator::ActiveTabIsEditor() const {
@@ -834,9 +829,7 @@ bool TabCoordinator::RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
   if (!viewport.SaveWouldOverwriteUnseenDisk()) {
     return true;
   }
-  if (operations_.request_external_change_banner) {
-    operations_.request_external_change_banner(normalized_path);
-  }
+  util::InvokeIfSet(operations_.request_external_change_banner, normalized_path);
   return false;
 }
 
@@ -850,12 +843,8 @@ bool TabCoordinator::RefuseIfReadOnly(const std::filesystem::path& normalized_pa
   }
   if (banner_shows) {
     SetEditorBanner(state_, EditorBannerState::Kind::ReadOnly, normalized_path);
-    if (operations_.request_editor_surface_redraw) {
-      operations_.request_editor_surface_redraw();
-    }
-  } else if (operations_.notify_save_failed) {
-    operations_.notify_save_failed(normalized_path, "the file is read-only");
-  }
+    util::InvokeIfSet(operations_.request_editor_surface_redraw);
+  } else util::InvokeIfSet(operations_.notify_save_failed, normalized_path, "the file is read-only");
   return false;
 }
 
@@ -937,9 +926,7 @@ void TabCoordinator::Close(std::size_t index) {
   const std::uint64_t closed_id = closing_tab.stable_id;
 
   state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
-  if (operations_.tab_closed) {
-    operations_.tab_closed(closed_id);
-  }
+  util::InvokeIfSet(operations_.tab_closed, closed_id);
 
   if (state_.focused_group().open_tabs.empty()) {
     // Closing the last tab of a split group collapses that group; the surviving

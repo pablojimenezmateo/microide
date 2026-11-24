@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "project/remote/TreeFiles.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::project::remote {
 namespace {
@@ -181,9 +182,7 @@ void MirrorSyncEngine::Changed() {
     pending_ = std::move(built);
     ++status_.pending_revision;
   }
-  if (callbacks_.changed) {
-    callbacks_.changed();
-  }
+  util::InvokeIfSet(callbacks_.changed);
 }
 
 void MirrorSyncEngine::RequestSync() {
@@ -813,9 +812,7 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
     }
     materialized.push_back(path);
   }
-  if (callbacks_.materialized) {
-    callbacks_.materialized(materialized);
-  }
+  util::InvokeIfSet(callbacks_.materialized, materialized);
 }
 
 void MirrorSyncEngine::ApproveHeldDeletes() {

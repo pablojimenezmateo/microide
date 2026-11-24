@@ -15,6 +15,7 @@
 #include "workspace/services/SidebarService.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -265,14 +266,10 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        if (operations_.commit_debug_variable_edit) {
-          operations_.commit_debug_variable_edit();
-        }
+        util::InvokeIfSet(operations_.commit_debug_variable_edit);
         return true;
       case SDLK_ESCAPE:
-        if (operations_.cancel_debug_variable_edit) {
-          operations_.cancel_debug_variable_edit();
-        }
+        util::InvokeIfSet(operations_.cancel_debug_variable_edit);
         return true;
       default:
         // Field navigation/editing (arrows, home/end, backspace, …). Consume the
@@ -312,9 +309,7 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
       if (row != nullptr) {
         if (row->has_children || row->is_show_more) {
           // "show more…" rows page in the next batch via ToggleRow.
-          if (operations_.toggle_debug_variable_row) {
-            operations_.toggle_debug_variable_row(selected);
-          }
+          util::InvokeIfSet(operations_.toggle_debug_variable_row, selected);
         } else if (row->editable && operations_.begin_debug_variable_edit) {
           operations_.begin_debug_variable_edit(selected);
         }
@@ -417,14 +412,10 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        if (operations_.commit_debug_watch_edit) {
-          operations_.commit_debug_watch_edit();
-        }
+        util::InvokeIfSet(operations_.commit_debug_watch_edit);
         return true;
       case SDLK_ESCAPE:
-        if (operations_.cancel_debug_watch_edit) {
-          operations_.cancel_debug_watch_edit();
-        }
+        util::InvokeIfSet(operations_.cancel_debug_watch_edit);
         return true;
       default:
         operations_.text_input_handle_single_line_key_down(event, modifiers);
@@ -461,9 +452,7 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
       }
       return true;
     case SDLK_INSERT:
-      if (operations_.add_debug_watch_expression) {
-        operations_.add_debug_watch_expression();
-      }
+      util::InvokeIfSet(operations_.add_debug_watch_expression);
       return true;
     case SDLK_DELETE:
       if (expr_index.has_value() && operations_.remove_debug_watch_expression) {
@@ -474,14 +463,10 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
     case SDLK_KP_ENTER:
       if (expr_index.has_value()) {
         // Enter on an expression root edits its expression string.
-        if (operations_.edit_debug_watch_expression) {
-          operations_.edit_debug_watch_expression(*expr_index);
-        }
+        util::InvokeIfSet(operations_.edit_debug_watch_expression, *expr_index);
       } else if (row != nullptr) {
         if (row->has_children) {
-          if (operations_.toggle_debug_watch_row) {
-            operations_.toggle_debug_watch_row(selected);
-          }
+          util::InvokeIfSet(operations_.toggle_debug_watch_row, selected);
         } else if (row->editable && operations_.begin_debug_watch_edit) {
           operations_.begin_debug_watch_edit(selected);
         }

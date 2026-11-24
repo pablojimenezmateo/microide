@@ -23,6 +23,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#include "util/InvokeIfSet.h"
 
 extern char** environ;
 
@@ -564,12 +565,8 @@ void ProcessTable::Flush(std::vector<Outgoing>& outgoing) {
             util::JsonValue(static_cast<std::int64_t>(sink_.git_exited(*item.git_cwd)));
         item.params = util::JsonValue(std::move(params));
       }
-      if (sink_.notify) {
-        sink_.notify(item.connection, "proc/exit", item.handle, item.params);
-      }
-    } else if (sink_.content) {
-      sink_.content(item.connection, item.type, item.handle, item.bytes);
-    }
+      util::InvokeIfSet(sink_.notify, item.connection, "proc/exit", item.handle, item.params);
+    } else util::InvokeIfSet(sink_.content, item.connection, item.type, item.handle, item.bytes);
   }
   outgoing.clear();
 }

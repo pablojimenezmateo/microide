@@ -28,6 +28,7 @@
 #include "workspace/debug/DebugPaneService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/services/SidebarService.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -81,13 +82,9 @@ void WorkspaceActionContext::StartDebuggingWithFeedback() {
 }
 
 void WorkspaceActionContext::StopDebuggingWithFeedback() {
-  if (operations_.stop_debugging) {
-    operations_.stop_debugging();
-  }
+  util::InvokeIfSet(operations_.stop_debugging);
   state_.panel.feedback.text = "Debugging stopped";
-  if (operations_.notify) {
-    operations_.notify(NotificationService::Tone::Info, "Debugging stopped");
-  }
+  util::InvokeIfSet(operations_.notify, NotificationService::Tone::Info, "Debugging stopped");
 }
 
 void WorkspaceActionContext::ToggleDebugPane() { services_.debug_pane.Toggle(); }
@@ -97,9 +94,7 @@ void WorkspaceActionContext::ShowDebugPaneSurface(DebugPaneMode mode) {
 }
 
 void WorkspaceActionContext::ShowDebugOutput() {
-  if (operations_.show_debug_output) {
-    operations_.show_debug_output();
-  }
+  util::InvokeIfSet(operations_.show_debug_output);
 }
 
 WorkspaceActionContext::DebugValueRowSelection WorkspaceActionContext::SelectedDebugValueRow()
@@ -150,9 +145,7 @@ void WorkspaceActionContext::StopAllDebugSessions() {
 }
 
 void WorkspaceActionContext::OpenDebugReplPrompt() {
-  if (operations_.open_debug_repl_prompt) {
-    operations_.open_debug_repl_prompt();
-  }
+  util::InvokeIfSet(operations_.open_debug_repl_prompt);
 }
 
 void WorkspaceActionContext::OpenLaunchConfigPicker() {
@@ -177,15 +170,11 @@ void WorkspaceActionContext::OpenColorThemePicker() {
 }
 
 void WorkspaceActionContext::OpenDocumentSymbolPicker(std::string query) {
-  if (operations_.open_document_symbol_picker) {
-    operations_.open_document_symbol_picker(std::move(query));
-  }
+  util::InvokeIfSet(operations_.open_document_symbol_picker, std::move(query));
 }
 
 void WorkspaceActionContext::OpenCommandPalette(std::string seed) {
-  if (operations_.open_command_palette) {
-    operations_.open_command_palette(std::move(seed));
-  }
+  util::InvokeIfSet(operations_.open_command_palette, std::move(seed));
 }
 
 void WorkspaceActionContext::OpenGoToLinePrompt() {
@@ -197,9 +186,7 @@ void WorkspaceActionContext::OpenGoToLinePrompt() {
 }
 
 void WorkspaceActionContext::OpenCommandArgumentsPrompt(std::string_view command_name, std::string prefill) {
-  if (operations_.open_command_arguments_prompt) {
-    operations_.open_command_arguments_prompt(command_name, std::move(prefill));
-  }
+  util::InvokeIfSet(operations_.open_command_arguments_prompt, command_name, std::move(prefill));
 }
 
 void WorkspaceActionContext::OpenRemoteHostPrompt() {
@@ -219,27 +206,19 @@ void WorkspaceActionContext::OpenRenameSymbolPrompt() {
   std::string seed = services_.assist.refactor().SymbolAtCursor();
   operations_.open_prompt_surface(PromptSurfaceState::Action::RenameSymbol,
                                   PromptSurfaceState::Kind::TextInput, std::filesystem::path{}, seed);
-  if (operations_.refine_rename_prompt) {
-    operations_.refine_rename_prompt(std::move(seed));
-  }
+  util::InvokeIfSet(operations_.refine_rename_prompt, std::move(seed));
 }
 
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
-  if (operations_.edit_breakpoint_modifier_from_menu) {
-    operations_.edit_breakpoint_modifier_from_menu(id);
-  }
+  util::InvokeIfSet(operations_.edit_breakpoint_modifier_from_menu, id);
 }
 
 void WorkspaceActionContext::BreakpointQuickActionFromMenu(ActionId id) {
-  if (operations_.breakpoint_quick_action_from_menu) {
-    operations_.breakpoint_quick_action_from_menu(id);
-  }
+  util::InvokeIfSet(operations_.breakpoint_quick_action_from_menu, id);
 }
 
 void WorkspaceActionContext::RemoveBreakpointFromMenu() {
-  if (operations_.remove_breakpoint_from_menu) {
-    operations_.remove_breakpoint_from_menu();
-  }
+  util::InvokeIfSet(operations_.remove_breakpoint_from_menu);
 }
 
 bool WorkspaceActionContext::DispatchSelectedGitSidebarAction(GitSidebarActionId action) {

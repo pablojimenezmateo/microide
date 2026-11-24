@@ -10,6 +10,7 @@
 #include "project/PatchGenerator.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/git/GitRepositoryService.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -261,9 +262,7 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
           callbacks_.invalidate_editor_blame_path(absolute_path);  // keyed by path, not project
         }
         if (!in_front) {
-          if (callbacks_.defer_to_project) {
-            callbacks_.defer_to_project(project_root);
-          }
+          util::InvokeIfSet(callbacks_.defer_to_project, project_root);
         } else {
           if (callbacks_.request_git_refresh != nullptr) {
             callbacks_.request_git_refresh();

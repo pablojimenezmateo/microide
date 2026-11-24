@@ -9,6 +9,7 @@
 #include "project/remote/ServerStatusText.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/services/RemoteHostActivityRows.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 namespace {
@@ -195,9 +196,7 @@ void RemoteHostService::BuildHostRows() {
     host_view_.rows.insert(host_view_.rows.end(), std::make_move_iterator(rows.begin()),
                            std::make_move_iterator(rows.end()));
   }
-  if (operations_.host_activity_updated) {
-    operations_.host_activity_updated();
-  }
+  util::InvokeIfSet(operations_.host_activity_updated);
 }
 
 std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::HostRows() const {

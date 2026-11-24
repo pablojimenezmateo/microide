@@ -40,6 +40,7 @@
 
 #include "util/PosixFd.h"
 #include "util/ThreadName.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::platform {
 
@@ -1297,9 +1298,7 @@ bool FileIndexWatcher::IsNative() const {
 }
 
 void FileIndexWatcher::DispatchBatchForTesting(IndexUpdateBatch batch) {
-  if (impl_->callback) {
-    impl_->callback(std::move(batch));
-  }
+  util::InvokeIfSet(impl_->callback, std::move(batch));
 }
 
 }  // namespace microide::platform

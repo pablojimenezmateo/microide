@@ -22,6 +22,7 @@
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -169,9 +170,7 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
   // via ApplyFileHistoryResult on a later frame.
   picker.loading = true;
   RefreshPicker();
-  if (operations_.request_compare_file_history) {
-    operations_.request_compare_file_history(picker.path);
-  }
+  util::InvokeIfSet(operations_.request_compare_file_history, picker.path);
   operations_.show_compare_picker_overlay();
   return true;
 }
@@ -197,9 +196,7 @@ void CompareInteractionCoordinator::OpenOutgoingBasePicker() {
   // executor and populate via ApplyOutgoingBaseResult.
   picker.loading = true;
   RefreshPicker();
-  if (operations_.request_ref_list) {
-    operations_.request_ref_list(true);
-  }
+  util::InvokeIfSet(operations_.request_ref_list, true);
   operations_.show_compare_picker_overlay();
 }
 
@@ -221,9 +218,7 @@ void CompareInteractionCoordinator::OpenBranchSwitchPicker() {
 
   picker.loading = true;
   RefreshPicker();
-  if (operations_.request_ref_list) {
-    operations_.request_ref_list(false);
-  }
+  util::InvokeIfSet(operations_.request_ref_list, false);
   operations_.show_compare_picker_overlay();
 }
 
@@ -268,15 +263,11 @@ void CompareInteractionCoordinator::OpenSelectedCommit() {
 
   const GitPickerItem& item = picker.matches[picker.selected_index];
   if (picker.purpose == ComparePickerPurpose::OutgoingBaseRef) {
-    if (operations_.set_outgoing_base_ref) {
-      operations_.set_outgoing_base_ref(item.ref, item.apply_label);
-    }
+    util::InvokeIfSet(operations_.set_outgoing_base_ref, item.ref, item.apply_label);
     return;
   }
   if (picker.purpose == ComparePickerPurpose::SwitchBranch) {
-    if (operations_.switch_to_branch) {
-      operations_.switch_to_branch(item.ref);
-    }
+    util::InvokeIfSet(operations_.switch_to_branch, item.ref);
     return;
   }
 
@@ -805,9 +796,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     merge_tab->marker_override_prompt_pending = false;
     merge_tab->allow_conflict_marker_override = false;
     merge_tab->status_message = "Marked resolved (deleted).";
-    if (operations_.refresh_git_sidebar) {
-      operations_.refresh_git_sidebar();
-    }
+    util::InvokeIfSet(operations_.refresh_git_sidebar);
     operations_.request_tab_strip_redraw();
     operations_.request_frame();
     return;
@@ -881,47 +870,33 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   merge_tab->marker_override_prompt_pending = false;
   merge_tab->allow_conflict_marker_override = false;
   merge_tab->status_message = "Marked resolved.";
-  if (operations_.refresh_git_sidebar) {
-    operations_.refresh_git_sidebar();
-  }
+  util::InvokeIfSet(operations_.refresh_git_sidebar);
   operations_.request_tab_strip_redraw();
   operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::StageCompareHunk() {
-  if (operations_.stage_compare_hunk) {
-    operations_.stage_compare_hunk();
-  }
+  util::InvokeIfSet(operations_.stage_compare_hunk);
 }
 
 void CompareInteractionCoordinator::StageCompareSelectedLines() {
-  if (operations_.stage_compare_selected_lines) {
-    operations_.stage_compare_selected_lines();
-  }
+  util::InvokeIfSet(operations_.stage_compare_selected_lines);
 }
 
 void CompareInteractionCoordinator::UnstageCompareHunk() {
-  if (operations_.unstage_compare_hunk) {
-    operations_.unstage_compare_hunk();
-  }
+  util::InvokeIfSet(operations_.unstage_compare_hunk);
 }
 
 void CompareInteractionCoordinator::UnstageCompareSelectedLines() {
-  if (operations_.unstage_compare_selected_lines) {
-    operations_.unstage_compare_selected_lines();
-  }
+  util::InvokeIfSet(operations_.unstage_compare_selected_lines);
 }
 
 void CompareInteractionCoordinator::OpenDiscardCompareHunkPrompt() {
-  if (operations_.open_discard_compare_hunk_prompt) {
-    operations_.open_discard_compare_hunk_prompt();
-  }
+  util::InvokeIfSet(operations_.open_discard_compare_hunk_prompt);
 }
 
 void CompareInteractionCoordinator::OpenDiscardCompareSelectedLinesPrompt() {
-  if (operations_.open_discard_compare_selected_lines_prompt) {
-    operations_.open_discard_compare_selected_lines_prompt();
-  }
+  util::InvokeIfSet(operations_.open_discard_compare_selected_lines_prompt);
 }
 
 }  // namespace microide::workspace

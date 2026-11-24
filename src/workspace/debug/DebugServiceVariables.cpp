@@ -9,6 +9,7 @@
 #include "util/DebugTrace.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/state/WorkspaceProjectState.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -47,9 +48,7 @@ void DebugService::FocusFrame(int frame_id) {
     // serializes requests, that spin would block the *next* execution-control
     // request (continue/step/pause) — i.e. stepping would silently stop working.
     // Lazy expansion keeps the stop cheap and execution control responsive.
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   });
   // Re-evaluate watch expressions in the (now focused) frame's scope. Runs on
   // every stop (top frame) and on a call-stack frame switch.
@@ -63,9 +62,7 @@ void DebugService::ToggleVariableRow(std::size_t row) {
   if (fetch.reference > 0) {
     FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
   }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 template <typename Model>
@@ -107,9 +104,7 @@ void DebugService::FetchTreeChildrenPage(Model ProjectWorkspaceState::*model_mem
         } else {
           (CurrentProjectState().*model_member).MarkChildrenError(reference);
         }
-        if (operations_.request_debug_pane_redraw) {
-          operations_.request_debug_pane_redraw();
-        }
+        util::InvokeIfSet(operations_.request_debug_pane_redraw);
       });
 }
 
@@ -153,23 +148,17 @@ void DebugService::CommitVariableEdit() {
           if (ok) {
             CurrentProjectState().debug_variables.ApplySetVariable(node_id, result);
           }
-          if (operations_.request_debug_pane_redraw) {
-            operations_.request_debug_pane_redraw();
-          }
+          util::InvokeIfSet(operations_.request_debug_pane_redraw);
         });
   }
   // Leave edit mode immediately; the row's value updates when the response lands.
   model.CancelEdit();
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 void DebugService::CancelVariableEdit() {
   CurrentProjectState().debug_variables.CancelEdit();
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 void DebugService::AppendConsoleLine(int session_id, const std::string& label,
@@ -196,18 +185,14 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
   const std::string label = manager.SessionLabel(session_id);
   // Echo the typed expression, then surface the console so the result is visible.
   AppendConsoleLine(session_id, label, "> " + expression);
-  if (operations_.show_debug_console) {
-    operations_.show_debug_console(session_id, label);
-  }
+  util::InvokeIfSet(operations_.show_debug_console, session_id, label);
   // Frame 0 when running (no stopped frame); the adapter evaluates in global scope.
   session->RequestEvaluate(
       expression, FocusedFrameId(), "repl",
       [this, session_id, label](bool ok, dap_protocol::DapEvaluateResult result) {
         if (!ok) {
           AppendConsoleLine(session_id, label, "error: could not evaluate expression");
-          if (operations_.request_debug_pane_redraw) {
-            operations_.request_debug_pane_redraw();
-          }
+          util::InvokeIfSet(operations_.request_debug_pane_redraw);
           return;
         }
         std::string line = result.result.empty() ? std::string("(no value)") : result.result;
@@ -232,19 +217,13 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
                     AppendConsoleLine(session_id, label, "    " + variable.name + ": " +
                                                              variable.value);
                   }
-                  if (operations_.request_debug_pane_redraw) {
-                    operations_.request_debug_pane_redraw();
-                  }
+                  util::InvokeIfSet(operations_.request_debug_pane_redraw);
                 });
           }
         }
-        if (operations_.request_debug_pane_redraw) {
-          operations_.request_debug_pane_redraw();
-        }
+        util::InvokeIfSet(operations_.request_debug_pane_redraw);
       });
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
   return true;
 }
 
@@ -288,15 +267,11 @@ void DebugService::EvaluateWatches(int frame_id) {
             if (ok) {
               CurrentProjectState().debug_watch.ApplyEvaluate(i, result);
             }
-            if (operations_.request_debug_pane_redraw) {
-              operations_.request_debug_pane_redraw();
-            }
+            util::InvokeIfSet(operations_.request_debug_pane_redraw);
           });
     }
   }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 std::size_t DebugService::AddWatch(std::string expression) {
@@ -325,9 +300,7 @@ void DebugService::ToggleWatchRow(std::size_t row) {
   if (fetch.reference > 0) {
     FetchWatchChildren(fetch.reference, fetch.start, fetch.count);
   }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 void DebugService::BeginWatchEdit(std::size_t row) {
@@ -357,22 +330,16 @@ void DebugService::CommitWatchEdit() {
                            if (ok) {
                              CurrentProjectState().debug_watch.ApplySetVariable(node_id, result);
                            }
-                           if (operations_.request_debug_pane_redraw) {
-                             operations_.request_debug_pane_redraw();
-                           }
+                           util::InvokeIfSet(operations_.request_debug_pane_redraw);
                          });
   }
   model.CancelEdit();
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 void DebugService::CancelWatchEdit() {
   CurrentProjectState().debug_watch.CancelEdit();
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
@@ -406,12 +373,8 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
         // Queue a hover refresh first so the redraw re-resolves the now-cached
         // value into an active popup (mirrors ClearDiagnosticsForPath). Without
         // this the value sits in the cache and the tooltip never appears.
-        if (operations_.queue_editor_hover_refresh) {
-          operations_.queue_editor_hover_refresh();
-        }
-        if (operations_.request_editor_redraw) {
-          operations_.request_editor_redraw();
-        }
+        util::InvokeIfSet(operations_.queue_editor_hover_refresh);
+        util::InvokeIfSet(operations_.request_editor_redraw);
       });
 }
 

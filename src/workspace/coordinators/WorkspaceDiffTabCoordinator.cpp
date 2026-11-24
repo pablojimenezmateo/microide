@@ -12,6 +12,7 @@
 #include "util/PathMatch.h"
 #include "util/TextFileIO.h"
 #include "workspace/git/CompareTabReview.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -393,9 +394,7 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
     (void)AdoptLiveBufferForCompareRightSide(state_.editor_groups, *compare_tab->compare);
     // Re-derived either way: the build derived the review header before the refs
     // above existed, so it opened reading "Branch review" until the first edit.
-    if (operations_.refresh_compare_tab_derived_state) {
-      operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
-    }
+    util::InvokeIfSet(operations_.refresh_compare_tab_derived_state, *compare_tab->compare);
   }
 
   return AddCompareTab(std::move(*compare_tab), load_off_thread);
@@ -597,9 +596,7 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       compare.build_options.left_exists = result.built_options.left_exists;
       compare.build_options.right_exists = result.built_options.right_exists;
       compare.right_viewport = std::move(result.right);
-      if (operations_.apply_editor_preferences) {
-        operations_.apply_editor_preferences(compare.right_viewport);
-      }
+      util::InvokeIfSet(operations_.apply_editor_preferences, compare.right_viewport);
       compare.model = std::move(result.model);
       compare.build_options.syntax = result.built_options.syntax;
       MarkCompareModelBuilt(compare, result.built_options, result.left_line_count);
@@ -608,9 +605,7 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       // fingerprint the adoption invalidates makes the refresh rebuild the diff.
       AdoptLiveBufferForCompareRightSide(state_.editor_groups, compare,
                                          &compare.right_viewport);
-      if (operations_.refresh_compare_tab_derived_state) {
-        operations_.refresh_compare_tab_derived_state(compare);
-      }
+      util::InvokeIfSet(operations_.refresh_compare_tab_derived_state, compare);
       SelectFirstChangeOnOpen(tab);
       NotifyBufferOpenForEditableTab(tab, operations_);
       // The loaded diff's rows, header and breadcrumb are derived; its tab keeps
@@ -753,9 +748,7 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
   merge_tab->merge->base_path = normalized_path;
   merge_tab->merge->incoming_path = normalized_path;
   merge_tab->merge->current_path = normalized_path;
-  if (operations_.finalize_git_merge_tab) {
-    operations_.finalize_git_merge_tab(*merge_tab->merge, normalized_path);
-  }
+  util::InvokeIfSet(operations_.finalize_git_merge_tab, *merge_tab->merge, normalized_path);
 
   operations_.sync_active_editor_tab();
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {

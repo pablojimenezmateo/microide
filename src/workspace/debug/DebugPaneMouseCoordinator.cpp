@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "workspace/ListSelection.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -63,9 +64,7 @@ bool DebugPaneMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     const DebugPaneModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
     if (Contains(tab.rect, static_cast<float>(event.button.x),
                  static_cast<float>(event.button.y))) {
-      if (operations_.show_debug_pane_mode) {
-        operations_.show_debug_pane_mode(tab.mode);
-      }
+      util::InvokeIfSet(operations_.show_debug_pane_mode, tab.mode);
       return true;
     }
   }
@@ -101,9 +100,7 @@ void DebugPaneMouseCoordinator::ActivateCallStackRow(std::size_t line_index,
   }
   exec.focused_frame_index = row_ref.index;
   const DebugStackFrameView& frame = exec.frames[row_ref.index];
-  if (operations_.on_debug_frame_focus_changed) {
-    operations_.on_debug_frame_focus_changed(frame.id);
-  }
+  util::InvokeIfSet(operations_.on_debug_frame_focus_changed, frame.id);
   if (frame.source_path.empty()) {
     return;
   }
@@ -130,17 +127,13 @@ void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bo
   }
   const DebugBreakpointRowView& row = rows[line_index];
   if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter) {
-    if (operations_.toggle_debug_exception_filter) {
-      operations_.toggle_debug_exception_filter(row.filter_id);
-    }
+    util::InvokeIfSet(operations_.toggle_debug_exception_filter, row.filter_id);
     state_.surface.focus = FocusTarget::DebugPane;
     return;
   }
   if (row.kind == DebugBreakpointRowView::Kind::FunctionBreakpoint) {
     // No source location to navigate to, so either gesture toggles enabled.
-    if (operations_.toggle_debug_function_breakpoint_enabled) {
-      operations_.toggle_debug_function_breakpoint_enabled(row.function_index);
-    }
+    util::InvokeIfSet(operations_.toggle_debug_function_breakpoint_enabled, row.function_index);
     state_.surface.focus = FocusTarget::DebugPane;
     return;
   }
@@ -149,9 +142,7 @@ void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bo
     return;
   }
   if (toggle) {
-    if (operations_.toggle_debug_breakpoint_enabled) {
-      operations_.toggle_debug_breakpoint_enabled(row.path, row.line);
-    }
+    util::InvokeIfSet(operations_.toggle_debug_breakpoint_enabled, row.path, row.line);
     state_.surface.focus = FocusTarget::DebugPane;
     return;
   }
@@ -208,16 +199,12 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       model.SetSelectedRow(*line_index);
       const DebugVariableRowView& row = rows[*line_index];
       if (event.button.clicks >= 2 && row.editable && !row.has_children) {
-        if (operations_.begin_debug_variable_edit) {
-          operations_.begin_debug_variable_edit(*line_index);
-        }
+        util::InvokeIfSet(operations_.begin_debug_variable_edit, *line_index);
       } else if (event.button.clicks == 1 && (row.has_children || row.is_show_more)) {
         // A "show more…" row has no children but toggling it loads the next page
         // (ToggleRow handles it); without this the row was drawn/cursored as
         // clickable but did nothing, stranding children past the page size.
-        if (operations_.toggle_debug_variable_row) {
-          operations_.toggle_debug_variable_row(*line_index);
-        }
+        util::InvokeIfSet(operations_.toggle_debug_variable_row, *line_index);
       }
     }
     state_.surface.focus = FocusTarget::DebugPane;
@@ -241,22 +228,14 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       const DebugVariableRowView& row = rows[*line_index];
       const std::optional<std::size_t> expr_index = model.ExpressionIndexForRow(*line_index);
       if (event.button.clicks >= 2 && expr_index.has_value()) {
-        if (operations_.edit_debug_watch_expression) {
-          operations_.edit_debug_watch_expression(*expr_index);
-        }
+        util::InvokeIfSet(operations_.edit_debug_watch_expression, *expr_index);
       } else if (event.button.clicks >= 2 && row.editable && !row.has_children) {
-        if (operations_.begin_debug_watch_edit) {
-          operations_.begin_debug_watch_edit(*line_index);
-        }
+        util::InvokeIfSet(operations_.begin_debug_watch_edit, *line_index);
       } else if (event.button.clicks == 1 && (row.has_children || row.is_show_more)) {
         // "show more…" rows page in the next batch via ToggleRow (see Variables above).
-        if (operations_.toggle_debug_watch_row) {
-          operations_.toggle_debug_watch_row(*line_index);
-        }
+        util::InvokeIfSet(operations_.toggle_debug_watch_row, *line_index);
       }
-    } else if (operations_.add_debug_watch_expression) {
-      operations_.add_debug_watch_expression();
-    }
+    } else util::InvokeIfSet(operations_.add_debug_watch_expression);
     state_.surface.focus = FocusTarget::DebugPane;
     return true;
   }
@@ -333,9 +312,7 @@ bool DebugPaneMouseCoordinator::HandleRowContextMenu(const SDL_Event& event,
   } else {
     state_.debug_watch.SetSelectedRow(*line_index);
   }
-  if (operations_.open_debug_value_context_menu) {
-    operations_.open_debug_value_context_menu(anchor);
-  }
+  util::InvokeIfSet(operations_.open_debug_value_context_menu, anchor);
   return true;
 }
 

@@ -25,6 +25,7 @@
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceOutputReference.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -95,9 +96,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         return true;
       }
     }
-    if (operations_.activate_terminal_pane_at) {
-      operations_.activate_terminal_pane_at(layout, x, y);
-    }
+    util::InvokeIfSet(operations_.activate_terminal_pane_at, layout, x, y);
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_visible()) {

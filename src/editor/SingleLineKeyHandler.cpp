@@ -1,6 +1,7 @@
 #include "editor/SingleLineKeyHandler.h"
 
 #include "editor/SingleLineEditor.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::editor {
 
@@ -26,9 +27,7 @@ bool SingleLineKeyHandler::HandleKeyDown(SingleLineEditor& editor,
         if (selection.empty()) {
           return false;
         }
-        if (clipboard.write_text) {
-          clipboard.write_text(selection);
-        }
+        util::InvokeIfSet(clipboard.write_text, selection);
         return true;
       }
       case SDLK_X: {
@@ -36,9 +35,7 @@ bool SingleLineKeyHandler::HandleKeyDown(SingleLineEditor& editor,
         if (!cut_text.has_value()) {
           return false;
         }
-        if (clipboard.write_text) {
-          clipboard.write_text(*cut_text);
-        }
+        util::InvokeIfSet(clipboard.write_text, *cut_text);
         return true;
       }
       case SDLK_V: {

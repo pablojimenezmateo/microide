@@ -6,6 +6,7 @@
 #include <exception>
 #include <future>
 #include <utility>
+#include "util/InvokeIfSet.h"
 
 namespace microide::util {
 
@@ -47,9 +48,7 @@ void SerialWorkQueue::EraseQueuedLocked(JobIter it) {
     }
   }
   queue_.erase(it);
-  if (hooks_.on_complete) {
-    hooks_.on_complete();
-  }
+  util::InvokeIfSet(hooks_.on_complete);
 }
 
 void SerialWorkQueue::ShedIfOverBudgetLocked() {
@@ -78,9 +77,7 @@ void SerialWorkQueue::Post(std::function<void()> task, Shedding shedding) {
     // still have the job run (rather than sit forever in an unstarted queue).
     EnsureStartedLocked();
     ShedIfOverBudgetLocked();
-    if (hooks_.on_enqueue) {
-      hooks_.on_enqueue();
-    }
+    util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(
         Job{.key = {}, .task = std::move(task), .droppable = shedding == Shedding::kDroppable});
   }
@@ -94,9 +91,7 @@ void SerialWorkQueue::PostDurable(std::function<void()> task) {
       return;
     }
     EnsureStartedLocked();
-    if (hooks_.on_enqueue) {
-      hooks_.on_enqueue();
-    }
+    util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(Job{.key = {}, .task = std::move(task), .durable = true});
   }
   cv_.notify_one();
@@ -110,9 +105,7 @@ void SerialWorkQueue::PostFront(std::function<void()> task) {
     }
     EnsureStartedLocked();
     ShedIfOverBudgetLocked();
-    if (hooks_.on_enqueue) {
-      hooks_.on_enqueue();
-    }
+    util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_front(Job{.key = {}, .task = std::move(task)});
   }
   cv_.notify_one();
@@ -136,14 +129,10 @@ void SerialWorkQueue::PostLatest(std::string key, std::function<void()> task, Sh
       // just-erased list iterator is undefined. end() is a stable, comparable value
       // that matches no live node, and the real node is stored a few lines down.
       map_it->second = queue_.end();
-      if (hooks_.on_complete) {
-        hooks_.on_complete();
-      }
+      util::InvokeIfSet(hooks_.on_complete);
     }
     ShedIfOverBudgetLocked();
-    if (hooks_.on_enqueue) {
-      hooks_.on_enqueue();
-    }
+    util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(Job{.key = std::move(key),
                          .task = std::move(task),
                          .droppable = shedding == Shedding::kDroppable});
@@ -185,9 +174,7 @@ void SerialWorkQueue::Drain() {
     ClearKeyIndexLocked();
     // Trailing, non-cancelled barrier: it runs after the current in-flight job and
     // all the now-skipped queued jobs, so its completion means the worker is idle.
-    if (hooks_.on_enqueue) {
-      hooks_.on_enqueue();
-    }
+    util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(Job{.key = {},
                          .task = [&barrier]() { barrier.set_value(); },
                          .cancelled = false,
@@ -210,9 +197,7 @@ void SerialWorkQueue::Flush() {
     }
     // Unlike Drain(), leave the queued jobs alone: the barrier simply goes to the
     // TAIL, so waiting on it waits for all of them to run first.
-    if (hooks_.on_enqueue) {
-      hooks_.on_enqueue();
-    }
+    util::InvokeIfSet(hooks_.on_enqueue);
     queue_.push_back(Job{.key = {},
                          .task = [&barrier]() { barrier.set_value(); },
                          .cancelled = false,
@@ -293,9 +278,7 @@ void SerialWorkQueue::WorkerMain() {
         std::fprintf(stderr, "[work-queue] job threw a non-standard exception\n");
       }
     }
-    if (hooks_.on_complete) {
-      hooks_.on_complete();
-    }
+    util::InvokeIfSet(hooks_.on_complete);
   }
 }
 

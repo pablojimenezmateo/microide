@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "workspace/WorkspaceContext.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -247,9 +248,7 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
       object["cursor"] = util::JsonValue(std::string(cursor));
     }
   }
-  if (operations.details) {
-    operations.details(*layout, object);
-  }
+  util::InvokeIfSet(operations.details, *layout, object);
   return util::JsonValue(std::move(object));
 }
 

@@ -7,6 +7,7 @@
 
 #include "workspace/WorkspaceContext.h"
 #include "workspace/state/WorkspaceProjectState.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -91,9 +92,7 @@ void DebugService::ConsumeDapCallbacks() {
       }
     }
     SyncSessionsPanel();
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   }
 }
 
@@ -127,9 +126,7 @@ int DebugService::LaunchSession(const LaunchConfig& unexpanded, const std::strin
       replace ? manager.ReplaceActiveSession(config, factory, cwd)
               : manager.StartSession(config, factory, cwd);
   if (id != 0) {
-    if (operations_.show_debug_console) {
-      operations_.show_debug_console(id, label);
-    }
+    util::InvokeIfSet(operations_.show_debug_console, id, label);
   }
   // Re-sync unconditionally: on spawn failure the failing session fired a
   // synchronous Failed state-change (and a SyncSessionsPanel) while it was still in
@@ -211,9 +208,7 @@ void DebugService::FocusSession(int session_id) {
   // Drop the previously-active session's projection, then re-project this one.
   ClearTransientDebugViews();
   const std::string label = manager.SessionLabel(session_id);
-  if (operations_.show_debug_console) {
-    operations_.show_debug_console(session_id, label);
-  }
+  util::InvokeIfSet(operations_.show_debug_console, session_id, label);
   SyncSessionsPanel();
   // Re-project the picked session's current stop (no-op if it is running): the
   // stack/threads re-resolve and re-fire on_stopped through the active path.
@@ -333,12 +328,8 @@ void DebugService::ResendBreakpointsForFile(const std::filesystem::path& path) {
     session->ResendBreakpointsForFile(path);
   }
   SyncBreakpointsPanel();
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
-  if (operations_.request_editor_redraw) {
-    operations_.request_editor_redraw();
-  }
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_editor_redraw);
 }
 
 void DebugService::Continue() {

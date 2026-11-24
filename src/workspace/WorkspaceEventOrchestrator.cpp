@@ -4,6 +4,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -203,9 +204,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       // Request a redraw too: the force flag is consumed inside the next prepared
       // frame, so without a queued frame (nothing else dirtied the scene) the
       // reassert would sit latent until unrelated work or motion triggered a paint.
-      if (operations_.force_cursor_reassert) {
-        operations_.force_cursor_reassert();
-      }
+      util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
       return finish(true);
       }
@@ -215,12 +214,8 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       state_.window_has_input_focus = true;
       // Keys pressed or released while another window had the focus sent us nothing.
       state_.key_modifiers = SDL_GetModState();
-      if (operations_.window_focus_gained) {
-        operations_.window_focus_gained();
-      }
-      if (operations_.force_cursor_reassert) {
-        operations_.force_cursor_reassert();
-      }
+      util::InvokeIfSet(operations_.window_focus_gained);
+      util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
       return finish(true);
       }
@@ -233,19 +228,13 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       // "in progress" here would still be in progress on the next click. This
       // also disarms selection autoscroll, which is the one loop that keeps
       // running with no input behind it.
-      if (operations_.end_selection_gesture) {
-        operations_.end_selection_gesture();
-      }
+      util::InvokeIfSet(operations_.end_selection_gesture);
       // Autosave dirty buffers when configured for "on focus change".
-      if (operations_.autosave_on_focus_lost) {
-        operations_.autosave_on_focus_lost();
-      }
+      util::InvokeIfSet(operations_.autosave_on_focus_lost);
       // While unfocused another app or the compositor can repaint the global
       // cursor; force a reassert so regaining focus restores ours even if no
       // pointer-enter (which separately forces) crosses the window edge.
-      if (operations_.force_cursor_reassert) {
-        operations_.force_cursor_reassert();
-      }
+      util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
       return finish(true);
       }

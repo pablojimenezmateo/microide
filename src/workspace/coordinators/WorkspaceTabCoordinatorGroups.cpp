@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceLayout.h"
+#include "util/InvokeIfSet.h"
 
 // The editor-GROUP half of the tab coordinator: everything that creates, feeds,
 // empties or collapses an editor group, plus the two ways a tab crosses from one
@@ -372,9 +373,7 @@ bool TabCoordinator::RelocateEditorGroup(std::size_t from,
 void TabCoordinator::EnsureEveryGroupActiveTabVisible() {
   if (operations_.ensure_all_active_tabs_visible) {
     operations_.ensure_all_active_tabs_visible();
-  } else if (operations_.ensure_active_tab_visible) {
-    operations_.ensure_active_tab_visible();
-  }
+  } else util::InvokeIfSet(operations_.ensure_active_tab_visible);
 }
 
 void TabCoordinator::RefreshFocusedGroupActiveTab(bool editor_redraw) {
@@ -402,9 +401,7 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
   const bool closing_active = index == group.active_tab_index;
   const std::uint64_t closed_id = group.open_tabs[index].stable_id;
   group.open_tabs.erase(group.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
-  if (operations_.tab_closed) {
-    operations_.tab_closed(closed_id);
-  }
+  util::InvokeIfSet(operations_.tab_closed, closed_id);
   if (group.active_tab_index > index) {
     --group.active_tab_index;
   } else if (!group.open_tabs.empty() && group.active_tab_index >= group.open_tabs.size()) {

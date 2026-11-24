@@ -16,6 +16,7 @@
 #include "workspace/lsp/LspPositionEncoding.h"
 #include "workspace/lsp/LspService.h"
 #include "workspace/lsp/LspViewportPositions.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -692,12 +693,8 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
   // refresh the project views once.
   for (const AppliedReconcile& action : applied_reconciles) {
     if (action.is_rename) {
-      if (operations_.reconcile_tabs_after_resource_rename) {
-        operations_.reconcile_tabs_after_resource_rename(action.from, action.to);
-      }
-    } else if (operations_.reconcile_tabs_after_resource_delete) {
-      operations_.reconcile_tabs_after_resource_delete(action.from);
-    }
+      util::InvokeIfSet(operations_.reconcile_tabs_after_resource_rename, action.from, action.to);
+    } else util::InvokeIfSet(operations_.reconcile_tabs_after_resource_delete, action.from);
   }
   if (!applied.staged_directories.empty()) {
     if (operations_.dispose_staged_paths_async) {
@@ -706,9 +703,7 @@ WorkspaceEditService::ResourceOpsResult WorkspaceEditService::ApplyResourceOps(
       state.write_gate().DisposeStaged(applied.staged_directories);
     }
   }
-  if (operations_.refresh_views_after_resource_ops) {
-    operations_.refresh_views_after_resource_ops(last_mutated);
-  }
+  util::InvokeIfSet(operations_.refresh_views_after_resource_ops, last_mutated);
   return result;
 }
 

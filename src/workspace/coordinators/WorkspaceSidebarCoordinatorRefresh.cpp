@@ -15,6 +15,7 @@
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "workspace/WorkspaceUiText.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -373,9 +374,7 @@ bool SidebarCoordinator::RefreshOutline() {
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
     operations_.request_sidebar_redraw();
   }
-  if (operations_.query_outline_symbols) {
-    operations_.query_outline_symbols(*viewport);
-  }
+  util::InvokeIfSet(operations_.query_outline_symbols, *viewport);
   return true;
 }
 

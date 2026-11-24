@@ -6,6 +6,7 @@
 #include "workspace/EditorBodyDrop.h"
 #include "workspace/SidebarMetrics.h"
 #include "util/PathMatch.h"
+#include "util/InvokeIfSet.h"
 
 // The tree drag (TD-2026-10-24-386): a file or folder pressed on a tree row and
 // dropped on an editor pane, a folder or the terminal. The press is armed in
@@ -138,9 +139,7 @@ bool SidebarMouseCoordinator::FinishPathDrag(bool copy) {
       }
       break;
     case PathDragState::Target::Terminal:
-      if (operations_.type_path_into_terminal) {
-        operations_.type_path_into_terminal(drag.path);
-      }
+      util::InvokeIfSet(operations_.type_path_into_terminal, drag.path);
       break;
     case PathDragState::Target::None:
       break;

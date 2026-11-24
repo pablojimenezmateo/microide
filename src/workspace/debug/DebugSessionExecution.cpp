@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/JsonValue.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -43,9 +44,7 @@ void DebugSession::SendResumeRequest(const char* command) {
   // Optimistically resume so the UI clears immediately. This synchronous Running
   // flip is load-bearing: the stale-stack-drop guard relies on it. A rejected
   // resume is undone by `on_response` above.
-  if (callbacks_.on_resumed) {
-    callbacks_.on_resumed();
-  }
+  util::InvokeIfSet(callbacks_.on_resumed);
   SetState(State::Running);
 }
 
@@ -121,9 +120,7 @@ void DebugSession::Restart() {
   client_->SendRequestAsync("restart", util::JsonValue(std::move(args)), {});
   // Optimistically clear the current stop; the adapter re-runs and stops again.
   if (state_ == State::Stopped) {
-    if (callbacks_.on_resumed) {
-      callbacks_.on_resumed();
-    }
+    util::InvokeIfSet(callbacks_.on_resumed);
     SetState(State::Running);
   }
 }

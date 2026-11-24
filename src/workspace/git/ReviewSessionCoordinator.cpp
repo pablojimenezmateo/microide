@@ -13,6 +13,7 @@
 #include "project/GitStatusService.h"
 #include "util/PathMatch.h"
 #include "workspace/git/ReviewTabPlan.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -81,9 +82,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
     std::string_view empty_message) {
   // Always reveal Source Control so the review surface is in view, even when the
   // target set is empty (e.g. "no conflicts" still lands the user there).
-  if (operations_.show_git_sidebar) {
-    operations_.show_git_sidebar();
-  }
+  util::InvokeIfSet(operations_.show_git_sidebar);
 
   const std::vector<TabEntry>& tabs = state_.focused_group().open_tabs;
   std::vector<ReviewTabRef> existing;
@@ -161,9 +160,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::Dispatch(
        apply = std::move(apply)]() {
         ReviewSessionCoordinator coordinator(*state, compare_merge, operations);
         ReviewOpenOutcome outcome = apply(coordinator);
-        if (operations.report_outcome) {
-          operations.report_outcome(std::move(outcome));
-        }
+        util::InvokeIfSet(operations.report_outcome, std::move(outcome));
       });
   return ReviewOpenOutcome{.ok = true, .message = {}, .pending = true};
 }

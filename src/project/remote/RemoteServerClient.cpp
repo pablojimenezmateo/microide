@@ -13,6 +13,7 @@
 #include "util/Parse.h"
 #include "util/ThreadName.h"
 #include "util/ErrorOut.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::project::remote {
 namespace {
@@ -205,9 +206,7 @@ void RemoteServerClient::InstallRouting() {
     }
     for (auto& [handle, events] : terminals) {
       (void)handle;
-      if (events->lost) {
-        events->lost(reason);
-      }
+      util::InvokeIfSet(events->lost, reason);
     }
     if (connected_ && closed_handler_) {
       closed_handler_(reason);
@@ -456,9 +455,7 @@ void RemoteServerClient::RegisterProcess(std::uint64_t handle, ProcessEvents eve
     }
   }
   for (auto& [type, bytes] : held.output) {
-    if (shared->output) {
-      shared->output(type, bytes);
-    }
+    util::InvokeIfSet(shared->output, type, bytes);
   }
   if (held.exit.has_value()) {
     DeliverExit(handle, *held.exit);
@@ -494,9 +491,7 @@ void RemoteServerClient::Deliver(std::uint64_t handle, FrameType type, std::stri
     }
     events = it->second;
   }
-  if (events->output) {
-    events->output(type, bytes);
-  }
+  util::InvokeIfSet(events->output, type, bytes);
 }
 
 void RemoteServerClient::DeliverExit(std::uint64_t handle, const util::JsonValue& params) {
@@ -544,9 +539,7 @@ void RemoteServerClient::DeliverTerminalFrame(std::uint64_t handle, std::string 
     }
     events = it->second;
   }
-  if (events->frame) {
-    events->frame(bytes);
-  }
+  util::InvokeIfSet(events->frame, bytes);
 }
 
 void RemoteServerClient::RegisterTerminal(std::uint64_t handle,
@@ -557,9 +550,7 @@ void RemoteServerClient::RegisterTerminal(std::uint64_t handle,
   if (const auto orphan = terminal_orphans_.find(handle); orphan != terminal_orphans_.end()) {
     for (auto& [type, bytes] : orphan->second.output) {
       (void)type;
-      if (events->frame) {
-        events->frame(bytes);
-      }
+      util::InvokeIfSet(events->frame, bytes);
     }
     terminal_orphans_.erase(orphan);
   }

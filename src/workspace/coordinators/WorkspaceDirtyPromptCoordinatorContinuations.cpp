@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 namespace {
@@ -187,9 +188,7 @@ void DirtyPromptCoordinator::RunContinuation(SaveContinuation continuation) {
       }
       return;
     case SaveContinuation::Kind::CloseProject: {
-      if (operations_.dismiss_notification) {
-        operations_.dismiss_notification(kCloseProjectWaitKey);
-      }
+      util::InvokeIfSet(operations_.dismiss_notification, kCloseProjectWaitKey);
       // A buffer edited while its formatter ran is dirty again: the close goes back
       // to asking rather than discarding it.
       if (!editor_tabs_.DirtyGroupTabs().empty()) {
@@ -285,9 +284,7 @@ void DirtyPromptCoordinator::ContinueQuit(SaveContinuation step) {
       return;
     }
   }
-  if (operations_.dismiss_notification) {
-    operations_.dismiss_notification(kQuitWaitKey);
-  }
+  util::InvokeIfSet(operations_.dismiss_notification, kQuitWaitKey);
   ReturnTo(step.return_root);
   util::Log("microide quit: the unsaved-changes prompt, after Save All");
   quit_requested_ = true;

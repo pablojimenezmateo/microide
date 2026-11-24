@@ -8,6 +8,7 @@
 
 #include "util/JsonValue.h"
 #include "util/PerformanceTrace.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -274,9 +275,7 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     SetState(State::Stopped);
     // Report the halt immediately with the real reason/thread, before the async
     // stackTrace round-trip — push observers must not wait for a slow adapter.
-    if (callbacks_.on_stop_began) {
-      callbacks_.on_stop_began(stop);
-    }
+    util::InvokeIfSet(callbacks_.on_stop_began, stop);
     if (stop.thread_id.has_value()) {
       // Resolve the call stack for the stopped thread, then hand the focused
       // frames up so the host can highlight the execution line + fill the panel.
@@ -298,9 +297,7 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     // choice; the next `stopped` or full `continued` re-syncs the view.)
     const dap_protocol::DapContinuedEvent resumed = dap_protocol::ParseContinuedEvent(body);
     if (state_ == State::Stopped && resumed.all_threads_continued) {
-      if (callbacks_.on_resumed) {
-        callbacks_.on_resumed();
-      }
+      util::InvokeIfSet(callbacks_.on_resumed);
       SetState(State::Running);
     }
   } else if (event == "breakpoint") {
@@ -364,9 +361,7 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     if (callbacks_.on_exception_filters_available) {
       callbacks_.on_exception_filters_available(client_->Capabilities().exception_filters);
     }
-    if (callbacks_.on_capabilities_changed) {
-      callbacks_.on_capabilities_changed();
-    }
+    util::InvokeIfSet(callbacks_.on_capabilities_changed);
   }
 }
 
@@ -640,9 +635,7 @@ void DebugSession::RefreshThreadList() {
     if (epoch != stop_epoch_ || state_ != State::Stopped) {
       return;
     }
-    if (callbacks_.on_threads) {
-      callbacks_.on_threads(threads);
-    }
+    util::InvokeIfSet(callbacks_.on_threads, threads);
   });
 }
 
@@ -687,9 +680,7 @@ void DebugSession::SetState(State state) {
     return;
   }
   state_ = state;
-  if (callbacks_.on_state_changed) {
-    callbacks_.on_state_changed(state_);
-  }
+  util::InvokeIfSet(callbacks_.on_state_changed, state_);
 }
 
 void DebugSession::TransitionToTerminal(State terminal_state, std::string reason) {
@@ -701,9 +692,7 @@ void DebugSession::TransitionToTerminal(State terminal_state, std::string reason
     last_error_ = std::move(reason);
   }
   SetState(terminal_state);
-  if (callbacks_.on_terminated) {
-    callbacks_.on_terminated(terminal_state, last_error_);
-  }
+  util::InvokeIfSet(callbacks_.on_terminated, terminal_state, last_error_);
 }
 
 }  // namespace microide::workspace

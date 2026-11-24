@@ -23,6 +23,7 @@
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ProjectInFront.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -59,9 +60,7 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   // a remote project reconnects with remote.ssh_command -- and an override applied
   // only afterwards (Application re-applies them once the window is up, over the
   // project settings the open reloads) reached that reconnect too late.
-  if (operations_.apply_startup_setting_overrides) {
-    operations_.apply_startup_setting_overrides();
-  }
+  util::InvokeIfSet(operations_.apply_startup_setting_overrides);
   {
     util::StartupTrace::Scope refresh_colors_scope(
         "WorkspaceShell::RefreshAvailableColorschemeNames");
@@ -124,9 +123,7 @@ void LifecycleCoordinator::Shutdown() {
   operations_.shutdown_plugin_runtime();
   operations_.save_user_config();
   operations_.stop_git_blame_service();
-  if (operations_.await_host_terminal_opens) {
-    operations_.await_host_terminal_opens();
-  }
+  util::InvokeIfSet(operations_.await_host_terminal_opens);
   operations_.release_host_terminals();
   operations_.persist_active_project();
   // Inactive projects are already durably persisted the moment they are switched

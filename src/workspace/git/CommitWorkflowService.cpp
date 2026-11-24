@@ -5,6 +5,7 @@
 #include "project/CommitWorkflowChecks.h"
 #include "project/GitCommitExecutor.h"
 #include "workspace/git/GitRepositoryService.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 namespace {
@@ -422,9 +423,7 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
     state.draft_restored = false;
     git_repository_service_.MarkStale();
     if (!in_front) {
-      if (callbacks_.defer_to_project) {
-        callbacks_.defer_to_project(project_root);
-      }
+      util::InvokeIfSet(callbacks_.defer_to_project, project_root);
     } else if (callbacks_.request_git_refresh != nullptr) {
       // Arm the watch BEFORE asking, so a refresh that is dispatched immediately
       // is still >= the recorded floor. `+ 1` because the request may be

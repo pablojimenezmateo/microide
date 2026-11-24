@@ -17,6 +17,7 @@
 #include "workspace/WorkspaceContext.h"
 #include "workspace/debug/DebugFrameFocus.h"
 #include "workspace/state/WorkspaceProjectState.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -102,25 +103,17 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
       focused != nullptr) {
     FocusFrame(focused->id);
   }
-  if (operations_.show_call_stack_panel) {
-    operations_.show_call_stack_panel();
-  }
+  util::InvokeIfSet(operations_.show_call_stack_panel);
   if (operations_.focus_source_location && state.debug_execution.HasLocation()) {
     operations_.focus_source_location(state.debug_execution.FocusedPath(),
                                       state.debug_execution.FocusedLine());
   }
-  if (operations_.request_editor_redraw) {
-    operations_.request_editor_redraw();
-  }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_editor_redraw);
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
   // The execution view is now fully populated (file/line/frames): report the
   // resolved stop to push observers. ProjectStop runs only for the active
   // session, so this fires exactly once per visible stop.
-  if (operations_.notify_stop_resolved) {
-    operations_.notify_stop_resolved();
-  }
+  util::InvokeIfSet(operations_.notify_stop_resolved);
 }
 
 DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
@@ -130,36 +123,22 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
                             const dap_protocol::DapOutputEvent& output) {
     // Each session streams to its own console channel, regardless of which session
     // is active, so background output never intermixes with the foreground one.
-    if (operations_.append_console_output) {
-      operations_.append_console_output(session_id, session_label, output);
-    }
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.append_console_output, session_id, session_label, output);
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   callbacks.on_state_changed = [this](DebugSession::State state) {
-    if (operations_.notify_session_state_changed) {
-      operations_.notify_session_state_changed(state);
-    }
+    util::InvokeIfSet(operations_.notify_session_state_changed, state);
     // A state change moves a session row's label (running/paused/terminated).
     SyncSessionsPanel();
-    if (operations_.request_frame) {
-      operations_.request_frame();
-    }
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_frame);
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   callbacks.on_capabilities_changed = [this]() {
     // A late `capabilities` event can flip supportsStepBack on (gdb under rr/record),
     // which adds the Reverse Continue / Step Back buttons to the floating debug
     // toolbar (chrome). Repaint so they appear without waiting for the next input.
-    if (operations_.request_frame) {
-      operations_.request_frame();
-    }
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_frame);
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   // Fired once on the terminal transition (incl. a crash/kill, which reaches Failed
   // without a DAP `terminated`). Drives the control-channel broadcast for every end.
@@ -206,9 +185,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       ProjectStop(stop, frames);
     }
     SyncSessionsPanel();
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   // On resume: the active session drops its execution view; a background resume
   // just clears that session's attention badge.
@@ -218,9 +195,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     } else {
       CurrentDapManager().SetSessionAttention(session_id, false);
       SyncSessionsPanel();
-      if (operations_.request_debug_pane_redraw) {
-        operations_.request_debug_pane_redraw();
-      }
+      util::InvokeIfSet(operations_.request_debug_pane_redraw);
     }
   };
   // Thread list lands a beat after the stop; fill the selector (preserving the
@@ -235,9 +210,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     if (state.debug_execution.focused_thread_id == 0) {
       state.debug_execution.focused_thread_id = state.debug_execution.thread_id;
     }
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   // The session pulls the breakpoint snapshot at `initialized` and on each live
   // re-send; verification reflects back into the project's BreakpointStore.
@@ -276,9 +249,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         }
         CurrentProjectState().breakpoint_store.ApplyVerification(path, results);
         SyncBreakpointsPanel();
-        if (operations_.request_editor_redraw) {
-          operations_.request_editor_redraw();
-        }
+        util::InvokeIfSet(operations_.request_editor_redraw);
       };
   callbacks.on_breakpoint_changed = [this](const std::filesystem::path& path,
                                            const dap_protocol::DapBreakpoint& breakpoint) {
@@ -306,12 +277,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
                 });
     }
     SyncBreakpointsPanel();
-    if (operations_.request_editor_redraw) {
-      operations_.request_editor_redraw();
-    }
-    if (operations_.request_debug_pane_redraw) {
-      operations_.request_debug_pane_redraw();
-    }
+    util::InvokeIfSet(operations_.request_editor_redraw);
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   // The session pulls the function-breakpoint snapshot at `initialized` and on each
   // live re-send; verification reflects back into the FunctionBreakpointStore.
@@ -336,9 +303,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         }
         CurrentProjectState().function_breakpoint_store.ApplyVerification(requested_names, results);
         SyncBreakpointsPanel();
-        if (operations_.request_debug_pane_redraw) {
-          operations_.request_debug_pane_redraw();
-        }
+        util::InvokeIfSet(operations_.request_debug_pane_redraw);
       };
   // Advertised exception filters arrive at `initialized`: populate the Breakpoints
   // panel (seeding the enabled set from adapter defaults the first time).
@@ -346,9 +311,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       [this](const std::vector<dap_protocol::DapExceptionFilter>& filters) {
         CurrentProjectState().debug_breakpoints_panel.SetAdvertisedFilters(filters);
         SyncBreakpointsPanel();
-        if (operations_.request_debug_pane_redraw) {
-          operations_.request_debug_pane_redraw();
-        }
+        util::InvokeIfSet(operations_.request_debug_pane_redraw);
       };
   // The session pulls the enabled filters (id + optional condition) at `initialized`
   // and on live re-send.
@@ -374,12 +337,8 @@ void DebugService::ClearTransientDebugViews() {
   state.debug_hover.Clear();
   // Keep the watch expressions (persistent) but drop their stale values.
   state.debug_watch.ClearResults();
-  if (operations_.request_editor_redraw) {
-    operations_.request_editor_redraw();
-  }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  util::InvokeIfSet(operations_.request_editor_redraw);
+  util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
 }  // namespace microide::workspace

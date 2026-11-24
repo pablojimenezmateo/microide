@@ -20,6 +20,7 @@
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 #include "project/GitCompareService.h"
 #include "workspace/git/GitRepositoryService.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -72,9 +73,7 @@ void SidebarCoordinator::ShowMode(SidebarMode mode, bool temporary) {
     }
   }
   state_.sidebar.temporary = temporary;
-  if (operations_.note_layout_inputs_changed) {
-    operations_.note_layout_inputs_changed();
-  }
+  util::InvokeIfSet(operations_.note_layout_inputs_changed);
   state_.sidebar.visible = true;
   state_.surface.focus = FocusTarget::Sidebar;
   state_.sidebar.scroll_row = 0;
@@ -170,9 +169,7 @@ void SidebarCoordinator::Close() {
   }
 
   state_.sidebar.visible = false;
-  if (operations_.note_layout_inputs_changed) {
-    operations_.note_layout_inputs_changed();
-  }
+  util::InvokeIfSet(operations_.note_layout_inputs_changed);
   state_.sidebar.temporary = false;
   state_.sidebar.prev_view_id.clear();
   if (state_.surface.focus == FocusTarget::Sidebar) {
@@ -194,9 +191,7 @@ void SidebarCoordinator::Toggle() {
     state_.sidebar.view_id = "tree";
   }
   state_.sidebar.visible = true;
-  if (operations_.note_layout_inputs_changed) {
-    operations_.note_layout_inputs_changed();
-  }
+  util::InvokeIfSet(operations_.note_layout_inputs_changed);
   state_.sidebar.temporary = false;
   state_.sidebar.prev_view_id.clear();
   state_.surface.focus = FocusTarget::Sidebar;
@@ -223,9 +218,7 @@ void SidebarCoordinator::RestorePrevious() {
   state_.sidebar.prev_view_id.clear();
   state_.sidebar.temporary = false;
   state_.sidebar.visible = true;
-  if (operations_.note_layout_inputs_changed) {
-    operations_.note_layout_inputs_changed();
-  }
+  util::InvokeIfSet(operations_.note_layout_inputs_changed);
   state_.surface.focus = FocusTarget::Sidebar;
   state_.sidebar.scroll_row = 0;
   if (ActiveSidebarMode() == SidebarMode::Plugin) {

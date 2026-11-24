@@ -24,6 +24,7 @@
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 namespace {
@@ -246,9 +247,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (pane_it->group_index != state_.focused_group_index &&
       pane_it->group_index < state_.editor_groups.size()) {
     state_.focused_group_index = pane_it->group_index;
-    if (operations_.request_tab_strip_redraw) {
-      operations_.request_tab_strip_redraw();
-    }
+    util::InvokeIfSet(operations_.request_tab_strip_redraw);
   }
   const SDL_FRect editor_rect = pane_it->rect;
   editor::TextViewport* viewport = operations_.active_editor_viewport();
@@ -361,9 +360,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           const std::filesystem::path& path = viewport->path();
           if (!path.empty()) {
             state_.breakpoint_store.Toggle(path, line_index);
-            if (operations_.on_breakpoint_toggled) {
-              operations_.on_breakpoint_toggled(path);
-            }
+            util::InvokeIfSet(operations_.on_breakpoint_toggled, path);
             operations_.request_frame();
             state_.surface.focus = FocusTarget::Editor;
             return true;

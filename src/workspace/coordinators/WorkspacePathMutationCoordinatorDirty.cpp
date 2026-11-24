@@ -6,6 +6,7 @@
 
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -231,9 +232,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
     }
     if (saved_any) {
       state.directory_tree.Refresh();
-      if (operations_.request_automatic_git_sidebar_refresh) {
-        operations_.request_automatic_git_sidebar_refresh();
-      }
+      util::InvokeIfSet(operations_.request_automatic_git_sidebar_refresh);
     }
     if (!deferred_tab_ids.empty()) {
       // The user's decision is made: close both prompts and let the mutation wait

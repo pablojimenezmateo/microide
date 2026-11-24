@@ -15,6 +15,7 @@
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -63,9 +64,7 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
   }
   if (saved_any) {
     state_.directory_tree.Refresh();
-    if (operations_.request_automatic_git_sidebar_refresh) {
-      operations_.request_automatic_git_sidebar_refresh();
-    }
+    util::InvokeIfSet(operations_.request_automatic_git_sidebar_refresh);
   }
   return saved_any;
 }

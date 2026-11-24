@@ -8,6 +8,7 @@
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "util/InvokeIfSet.h"
 
 namespace microide::workspace {
 
@@ -189,9 +190,7 @@ void PathMutationCoordinator::FollowRename(const std::filesystem::path& old_path
   RetargetPluginDecorationsForRename(old_path, new_path);
   operations_.clear_editor_blame();
   RefreshProjectViewsAfterMutation(new_path);
-  if (operations_.request_window_redraw) {
-    operations_.request_window_redraw();
-  }
+  util::InvokeIfSet(operations_.request_window_redraw);
 }
 
 namespace {
