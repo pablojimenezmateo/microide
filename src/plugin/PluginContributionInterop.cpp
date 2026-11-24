@@ -41,14 +41,11 @@ void NoteContributionId(std::unordered_set<std::string>* id_index, const T& cand
   }
 }
 
-// Register a contribution kind that needs no id-uniqueness check: null-guard the
-// storage, refuse past the per-kind cap, parse, append.
-//
-// The four id-less kinds (bracket sets, comment markers, indent rules, snippets)
-// each wrote that out; only the registration type and its parser differed. The
-// kinds that DO carry an id keep their own bodies — they additionally run
-// DuplicateContributionId / NoteContributionId, and that ordering (check cap,
-// parse, check duplicate, append, note) is worth reading in full at each site.
+// The registration shapes the contribution kinds share. Each null-guards its
+// storage, refuses past the per-kind cap, then parses; they differ in what a
+// parsed registration adds besides its contribution.
+
+// A kind with nothing more: append the contribution.
 template <typename Contributed, typename Registration, typename Parse>
 bool RegisterSimpleContribution(lua_State* state,
                                 std::string_view plugin_id,
@@ -69,25 +66,70 @@ bool RegisterSimpleContribution(lua_State* state,
   return true;
 }
 
+// A kind whose contributions carry an id that must be unique among the kind's:
+// a duplicate is refused (see DuplicateContributionId), an accepted id indexed.
+template <typename Contributed, typename Registration, typename Parse>
+bool RegisterUniqueContribution(lua_State* state,
+                                std::string_view plugin_id,
+                                std::vector<Contributed>* storage,
+                                std::unordered_set<std::string>* id_index,
+                                std::string_view kind,
+                                std::string* error_message,
+                                Parse&& parse) {
+  if (storage == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(storage, error_message)) {
+    return false;
+  }
+  Registration registration;
+  if (!parse(state, std::string(plugin_id), &registration, error_message)) {
+    return false;
+  }
+  if (DuplicateContributionId(id_index, registration.contributed, kind, error_message)) {
+    return false;
+  }
+  NoteContributionId(id_index, registration.contributed);
+  storage->push_back(std::move(registration.contributed));
+  return true;
+}
+
+// A kind whose registration may also carry the Lua callbacks that run it: the
+// runtime goes into its own list when the registration has one.
+template <typename Contributed, typename Runtime, typename Registration, typename Parse>
+bool RegisterContributionWithRuntime(lua_State* state,
+                                     std::string_view plugin_id,
+                                     std::vector<Contributed>* storage,
+                                     std::vector<Runtime>* runtimes,
+                                     std::string* error_message,
+                                     Parse&& parse) {
+  if (storage == nullptr || runtimes == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(storage, error_message)) {
+    return false;
+  }
+  Registration registration;
+  if (!parse(state, std::string(plugin_id), &registration, error_message)) {
+    return false;
+  }
+  storage->push_back(std::move(registration.contributed));
+  if (registration.has_runtime) {
+    runtimes->push_back(std::move(registration.runtime));
+  }
+  return true;
+}
+
 }  // namespace
 
 bool RegisterFormatter(lua_State* state,
                        std::string_view plugin_id,
                        std::vector<PluginHost::ContributedFormatter>* formatters,
                        std::string* error_message) {
-  if (formatters == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(formatters, error_message)) {
-    return false;
-  }
-  registration_parsers::FormatterRegistration registration;
-  if (!registration_parsers::ParseFormatterRegistration(state, std::string(plugin_id), &registration,
-                                                        error_message)) {
-    return false;
-  }
-  formatters->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterSimpleContribution<PluginHost::ContributedFormatter,
+                                    registration_parsers::FormatterRegistration>(
+      state, plugin_id, formatters, error_message,
+      registration_parsers::ParseFormatterRegistration);
 }
 
 bool RegisterVirtualDocument(lua_State* state,
@@ -144,22 +186,11 @@ bool RegisterCompletion(lua_State* state,
                         std::vector<PluginHost::ContributedCompletion>* contributions,
                         std::vector<runtime_types::CompletionRuntime>* runtimes,
                         std::string* error_message) {
-  if (contributions == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(contributions, error_message)) {
-    return false;
-  }
-  registration_parsers::CompletionRegistration registration;
-  if (!registration_parsers::ParseCompletionRegistration(state, std::string(plugin_id), &registration,
-                                                         error_message)) {
-    return false;
-  }
-  contributions->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
+  return RegisterContributionWithRuntime<PluginHost::ContributedCompletion,
+                                         runtime_types::CompletionRuntime,
+                                         registration_parsers::CompletionRegistration>(
+      state, plugin_id, contributions, runtimes, error_message,
+      registration_parsers::ParseCompletionRegistration);
 }
 
 bool RegisterCodeAction(lua_State* state,
@@ -167,22 +198,11 @@ bool RegisterCodeAction(lua_State* state,
                         std::vector<PluginHost::ContributedCodeAction>* contributions,
                         std::vector<runtime_types::CodeActionRuntime>* runtimes,
                         std::string* error_message) {
-  if (contributions == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(contributions, error_message)) {
-    return false;
-  }
-  registration_parsers::CodeActionRegistration registration;
-  if (!registration_parsers::ParseCodeActionRegistration(state, std::string(plugin_id), &registration,
-                                                         error_message)) {
-    return false;
-  }
-  contributions->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
+  return RegisterContributionWithRuntime<PluginHost::ContributedCodeAction,
+                                         runtime_types::CodeActionRuntime,
+                                         registration_parsers::CodeActionRegistration>(
+      state, plugin_id, contributions, runtimes, error_message,
+      registration_parsers::ParseCodeActionRegistration);
 }
 
 bool RegisterLanguageQuery(lua_State* state,
@@ -212,23 +232,10 @@ bool RegisterTask(lua_State* state,
                   std::vector<PluginHost::ContributedTask>* tasks,
                   std::unordered_set<std::string>* id_index,
                   std::string* error_message) {
-  if (tasks == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(tasks, error_message)) {
-    return false;
-  }
-  registration_parsers::TaskRegistration registration;
-  if (!registration_parsers::ParseTaskRegistration(state, std::string(plugin_id), &registration,
-                                                   error_message)) {
-    return false;
-  }
-  if (DuplicateContributionId(id_index, registration.contributed, "task", error_message)) {
-    return false;
-  }
-  NoteContributionId(id_index, registration.contributed);
-  tasks->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterUniqueContribution<PluginHost::ContributedTask,
+                                    registration_parsers::TaskRegistration>(
+      state, plugin_id, tasks, id_index, "task", error_message,
+      registration_parsers::ParseTaskRegistration);
 }
 
 bool RegisterLanguageServer(lua_State* state,
@@ -236,24 +243,10 @@ bool RegisterLanguageServer(lua_State* state,
                             std::vector<PluginHost::ContributedLanguageServer>* servers,
                             std::unordered_set<std::string>* id_index,
                             std::string* error_message) {
-  if (servers == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(servers, error_message)) {
-    return false;
-  }
-  registration_parsers::LanguageServerRegistration registration;
-  if (!registration_parsers::ParseLanguageServerRegistration(state, std::string(plugin_id),
-                                                             &registration, error_message)) {
-    return false;
-  }
-  if (DuplicateContributionId(id_index, registration.contributed, "language server",
-                              error_message)) {
-    return false;
-  }
-  NoteContributionId(id_index, registration.contributed);
-  servers->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterUniqueContribution<PluginHost::ContributedLanguageServer,
+                                    registration_parsers::LanguageServerRegistration>(
+      state, plugin_id, servers, id_index, "language server", error_message,
+      registration_parsers::ParseLanguageServerRegistration);
 }
 
 bool RegisterDebugAdapter(lua_State* state,
@@ -261,24 +254,10 @@ bool RegisterDebugAdapter(lua_State* state,
                           std::vector<PluginHost::ContributedDebugAdapter>* adapters,
                           std::unordered_set<std::string>* id_index,
                           std::string* error_message) {
-  if (adapters == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(adapters, error_message)) {
-    return false;
-  }
-  registration_parsers::DebugAdapterRegistration registration;
-  if (!registration_parsers::ParseDebugAdapterRegistration(state, std::string(plugin_id),
-                                                            &registration, error_message)) {
-    return false;
-  }
-  if (DuplicateContributionId(id_index, registration.contributed, "debug adapter",
-                              error_message)) {
-    return false;
-  }
-  NoteContributionId(id_index, registration.contributed);
-  adapters->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterUniqueContribution<PluginHost::ContributedDebugAdapter,
+                                    registration_parsers::DebugAdapterRegistration>(
+      state, plugin_id, adapters, id_index, "debug adapter", error_message,
+      registration_parsers::ParseDebugAdapterRegistration);
 }
 
 bool RegisterLaunchConfig(lua_State* state,
@@ -286,24 +265,10 @@ bool RegisterLaunchConfig(lua_State* state,
                           std::vector<PluginHost::ContributedLaunchConfig>* configs,
                           std::unordered_set<std::string>* id_index,
                           std::string* error_message) {
-  if (configs == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(configs, error_message)) {
-    return false;
-  }
-  registration_parsers::LaunchConfigRegistration registration;
-  if (!registration_parsers::ParseLaunchConfigRegistration(state, std::string(plugin_id),
-                                                           &registration, error_message)) {
-    return false;
-  }
-  if (DuplicateContributionId(id_index, registration.contributed, "launch config",
-                              error_message)) {
-    return false;
-  }
-  NoteContributionId(id_index, registration.contributed);
-  configs->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterUniqueContribution<PluginHost::ContributedLaunchConfig,
+                                    registration_parsers::LaunchConfigRegistration>(
+      state, plugin_id, configs, id_index, "launch config", error_message,
+      registration_parsers::ParseLaunchConfigRegistration);
 }
 
 bool RegisterTool(lua_State* state,
@@ -311,23 +276,10 @@ bool RegisterTool(lua_State* state,
                   std::vector<PluginHost::ContributedTool>* tools,
                   std::unordered_set<std::string>* id_index,
                   std::string* error_message) {
-  if (tools == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(tools, error_message)) {
-    return false;
-  }
-  registration_parsers::ToolRegistration registration;
-  if (!registration_parsers::ParseToolRegistration(state, std::string(plugin_id), &registration,
-                                                   error_message)) {
-    return false;
-  }
-  if (DuplicateContributionId(id_index, registration.contributed, "tool", error_message)) {
-    return false;
-  }
-  NoteContributionId(id_index, registration.contributed);
-  tools->push_back(std::move(registration.contributed));
-  return true;
+  return RegisterUniqueContribution<PluginHost::ContributedTool,
+                                    registration_parsers::ToolRegistration>(
+      state, plugin_id, tools, id_index, "tool", error_message,
+      registration_parsers::ParseToolRegistration);
 }
 
 bool RegisterTestProvider(lua_State* state,
@@ -335,22 +287,11 @@ bool RegisterTestProvider(lua_State* state,
                           std::vector<PluginHost::ContributedTestProvider>* providers,
                           std::vector<runtime_types::TestProviderRuntime>* runtimes,
                           std::string* error_message) {
-  if (providers == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(providers, error_message)) {
-    return false;
-  }
-  registration_parsers::TestProviderRegistration registration;
-  if (!registration_parsers::ParseTestProviderRegistration(state, std::string(plugin_id),
-                                                           &registration, error_message)) {
-    return false;
-  }
-  providers->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
+  return RegisterContributionWithRuntime<PluginHost::ContributedTestProvider,
+                                         runtime_types::TestProviderRuntime,
+                                         registration_parsers::TestProviderRegistration>(
+      state, plugin_id, providers, runtimes, error_message,
+      registration_parsers::ParseTestProviderRegistration);
 }
 
 bool RegisterScmProvider(lua_State* state,
@@ -358,22 +299,11 @@ bool RegisterScmProvider(lua_State* state,
                          std::vector<PluginHost::ContributedScmProvider>* providers,
                          std::vector<runtime_types::ScmProviderRuntime>* runtimes,
                          std::string* error_message) {
-  if (providers == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(providers, error_message)) {
-    return false;
-  }
-  registration_parsers::ScmProviderRegistration registration;
-  if (!registration_parsers::ParseScmProviderRegistration(state, std::string(plugin_id),
-                                                          &registration, error_message)) {
-    return false;
-  }
-  providers->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
+  return RegisterContributionWithRuntime<PluginHost::ContributedScmProvider,
+                                         runtime_types::ScmProviderRuntime,
+                                         registration_parsers::ScmProviderRegistration>(
+      state, plugin_id, providers, runtimes, error_message,
+      registration_parsers::ParseScmProviderRegistration);
 }
 
 bool RegisterAnnotationProvider(
@@ -382,22 +312,11 @@ bool RegisterAnnotationProvider(
     std::vector<PluginHost::ContributedAnnotationProvider>* providers,
     std::vector<runtime_types::AnnotationProviderRuntime>* runtimes,
     std::string* error_message) {
-  if (providers == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(providers, error_message)) {
-    return false;
-  }
-  registration_parsers::AnnotationProviderRegistration registration;
-  if (!registration_parsers::ParseAnnotationProviderRegistration(state, std::string(plugin_id),
-                                                                 &registration, error_message)) {
-    return false;
-  }
-  providers->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
+  return RegisterContributionWithRuntime<PluginHost::ContributedAnnotationProvider,
+                                         runtime_types::AnnotationProviderRuntime,
+                                         registration_parsers::AnnotationProviderRegistration>(
+      state, plugin_id, providers, runtimes, error_message,
+      registration_parsers::ParseAnnotationProviderRegistration);
 }
 
 bool RegisterAuthProvider(lua_State* state,
@@ -405,22 +324,11 @@ bool RegisterAuthProvider(lua_State* state,
                           std::vector<PluginHost::ContributedAuthProvider>* providers,
                           std::vector<runtime_types::AuthProviderRuntime>* runtimes,
                           std::string* error_message) {
-  if (providers == nullptr || runtimes == nullptr) {
-    return false;
-  }
-  if (ContributionLimitReached(providers, error_message)) {
-    return false;
-  }
-  registration_parsers::AuthProviderRegistration registration;
-  if (!registration_parsers::ParseAuthProviderRegistration(state, std::string(plugin_id),
-                                                           &registration, error_message)) {
-    return false;
-  }
-  providers->push_back(std::move(registration.contributed));
-  if (registration.has_runtime) {
-    runtimes->push_back(std::move(registration.runtime));
-  }
-  return true;
+  return RegisterContributionWithRuntime<PluginHost::ContributedAuthProvider,
+                                         runtime_types::AuthProviderRuntime,
+                                         registration_parsers::AuthProviderRegistration>(
+      state, plugin_id, providers, runtimes, error_message,
+      registration_parsers::ParseAuthProviderRegistration);
 }
 
 bool RegisterBracketSet(lua_State* state,
