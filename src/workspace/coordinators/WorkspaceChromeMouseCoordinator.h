@@ -50,7 +50,7 @@ class ChromeMouseCoordinator {
     // filter), and each of these asked for it again (TD-2026-10-25-391). The span
     // is valid until that menu is assembled again, so a handler takes it after
     // any call that may assemble it (the popup and submenu rects).
-    std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
+    std::function<std::optional<PopupRowGeometry>(
         std::span<const MenuItemSpec>, const SDL_FRect&, float, float)>
         hit_test_popup_row;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
@@ -76,7 +76,7 @@ class ChromeMouseCoordinator {
     std::function<void()> activate_overlay_selection;
     std::function<std::optional<SDL_FRect>()> compute_tree_context_menu_rect;
     // The tree context menu's half of the geometry-only pair above.
-    std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
+    std::function<std::optional<PopupRowGeometry>(
         TreeContextTargetKind, const SDL_FRect&, float, float)>
         hit_test_tree_context_menu_row;
     std::function<bool(TreeContextTargetKind, std::size_t)> is_tree_context_menu_item_enabled_at;

@@ -608,6 +608,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/shell/WorkspaceShellCompareMerge.cpp
   src/workspace/MergeWrapRows.cpp
   src/workspace/DiffSurfaceLayout.cpp
+  src/workspace/MergeTrackedConflicts.cpp
+  src/workspace/MenuPopupGeometry.cpp
+  src/workspace/KeycodeText.cpp
+  src/workspace/state/EditorGroupTabs.cpp
   src/workspace/render/CompareVisibleLayoutCache.cpp
   src/workspace/render/WorkspaceShellRenderCompare.cpp
   src/workspace/git/ReviewSessionCoordinator.cpp

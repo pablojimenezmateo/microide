@@ -81,7 +81,7 @@
         .kind = WorkspaceShell::TabEntry::Kind::Editor,
         .path = path.lexically_normal(),
         .title = path.filename().string(),
-        .editor_state = WorkspaceShell::MakeEditorTabState(opened_view),
+        .editor_state = MakeEditorTabState(opened_view),
         .deferred_handle = std::nullopt,
         .compare = std::nullopt,
         .merge = std::nullopt,
@@ -92,7 +92,7 @@
 
   static WorkspaceShell::TabEntry::EditorTabState MakeEditorTabStateForTesting(
       const editor::TextViewport& view) {
-    return WorkspaceShell::MakeEditorTabState(view);
+    return MakeEditorTabState(view);
   }
 
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) {
@@ -947,11 +947,11 @@
   // The active editor viewport of group `gi` (path + scroll line live here).
   static const editor::TextViewport& GroupActiveViewport(WorkspaceShell& shell, std::size_t gi) {
     auto& group = shell.context_.current_project_state.editor_groups[gi];
-    return *shell.GroupActiveViewport(group);
+    return *workspace::GroupActiveViewport(group);
   }
   static void SetGroupScrollLine(WorkspaceShell& shell, std::size_t gi, std::size_t line) {
     auto& group = shell.context_.current_project_state.editor_groups[gi];
-    shell.GroupActiveViewport(group)->SetScrollLine(line);
+    workspace::GroupActiveViewport(group)->SetScrollLine(line);
   }
   static void RegisterVirtualDocument(WorkspaceShell& shell,
                                       const microide::workspace::VirtualDocumentSpec& spec) {

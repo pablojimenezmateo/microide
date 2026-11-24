@@ -11,6 +11,7 @@
 
 #include "util/PerformanceTrace.h"
 #include "workspace/ListSelection.h"
+#include "workspace/MenuPopupGeometry.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
@@ -643,7 +644,7 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .active_submenu_rect = [this](const SDL_FRect& rect) { return ActiveSubmenuRect(rect); },
           .hit_test_popup_row =
               [](std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x,
-                 float y) { return WorkspaceShell::HitTestPopupRow(items, popup_rect, x, y); },
+                 float y) { return HitTestPopupRow(items, popup_rect, x, y); },
           .is_menu_item_enabled =
               [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
           .execute_menu_item =
@@ -674,7 +675,7 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .compute_tree_context_menu_rect = [this]() { return ComputeTreeContextMenuRect(); },
           .hit_test_tree_context_menu_row =
               [](TreeContextTargetKind target, const SDL_FRect& popup_rect, float x, float y) {
-                return WorkspaceShell::HitTestPopupRow(TreeContextMenuItems(target), popup_rect, x,
+                return HitTestPopupRow(TreeContextMenuItems(target), popup_rect, x,
                                                        y);
               },
           .is_tree_context_menu_item_enabled_at =

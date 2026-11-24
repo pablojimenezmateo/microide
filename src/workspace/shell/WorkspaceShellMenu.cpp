@@ -5,82 +5,12 @@
 #include <algorithm>
 
 #include "util/PerformanceCounters.h"
+#include "workspace/MenuPopupGeometry.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
-
-namespace {
-
-// Popup rows are laid out from the popup's rect alone, so render, hit-test,
-// keyboard reveal and the `ui` query agree by construction. A popup taller than
-// the window could otherwise give its rows (the Edit menu's 31 at 700 px, the
-// Debug menu's 21 at 480 px) rects below the window edge, where nothing can
-// reach them: ComputePopupMenuRect then caps the height at what fits, and the
-// rows break into further columns, as classic desktop menus do.
-constexpr float kPopupInset = 6.0f;
-constexpr float kPopupColumnGap = 8.0f;
-
-float PopupRowHeight(const MenuItemSpec& item) {
-  return item.separator ? kWorkspaceMenuPopupSeparatorHeight : kWorkspaceMenuPopupItemHeight;
-}
-
-// Calls fn(index, rect) for every row in order, flowing into a new column when a
-// row would pass the popup's bottom inset. The column count is found by the same
-// walk, so the columns split the width evenly.
-template <typename Fn>
-void ForEachPopupRow(std::span<const MenuItemSpec> items, const SDL_FRect& popup, Fn&& fn) {
-  const float top = popup.y + kPopupInset;
-  const float bottom = popup.y + popup.h - kPopupInset;
-  std::size_t columns = 1;
-  {
-    float y = top;
-    for (const MenuItemSpec& item : items) {
-      const float height = PopupRowHeight(item);
-      if (y + height > bottom + 0.5f && y > top) {
-        ++columns;
-        y = top;
-      }
-      y += height;
-    }
-  }
-  const float column_w = std::max(
-      0.0f, (popup.w - kPopupInset * 2.0f - kPopupColumnGap * static_cast<float>(columns - 1)) /
-                static_cast<float>(columns));
-  float x = popup.x + kPopupInset;
-  float y = top;
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    const float height = PopupRowHeight(items[i]);
-    if (y + height > bottom + 0.5f && y > top) {
-      x += column_w + kPopupColumnGap;
-      y = top;
-    }
-    if (!fn(i, SDL_FRect{x, y, column_w, height})) {
-      return;
-    }
-    y += height;
-  }
-}
-
-// How many columns `items` need at a popup height of `height`.
-std::size_t PopupColumnsAtHeight(std::span<const MenuItemSpec> items, float height) {
-  std::size_t columns = 1;
-  float y = 0.0f;
-  const float bottom = height - kPopupInset * 2.0f;
-  for (const MenuItemSpec& item : items) {
-    const float row = PopupRowHeight(item);
-    if (y + row > bottom + 0.5f && y > 0.0f) {
-      ++columns;
-      y = 0.0f;
-    }
-    y += row;
-  }
-  return columns;
-}
-
-}  // namespace
-
 
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuItems(
     TreeContextTargetKind target) {
@@ -379,39 +309,6 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
     return std::nullopt;
   }
   return ComputePopupMenuRect(bar_it->rect, items, bounds);
-}
-
-std::optional<WorkspaceShell::PopupRowGeometry> WorkspaceShell::HitTestPopupRow(
-    std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x, float y) {
-  if (x < popup_rect.x || x >= popup_rect.x + popup_rect.w ||
-      y < popup_rect.y || y >= popup_rect.y + popup_rect.h) {
-    return std::nullopt;
-  }
-  std::optional<PopupRowGeometry> hit;
-  ForEachPopupRow(items, popup_rect, [&](std::size_t i, const SDL_FRect& rect) {
-    if (Contains(rect, x, y)) {
-      hit = PopupRowGeometry{.index = i, .rect = rect, .separator = items[i].separator};
-      return false;
-    }
-    return true;
-  });
-  return hit;
-}
-
-std::optional<SDL_FRect> WorkspaceShell::PopupRowRectByIndex(
-    std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, std::size_t index) {
-  if (index >= items.size()) {
-    return std::nullopt;
-  }
-  std::optional<SDL_FRect> found;
-  ForEachPopupRow(items, popup_rect, [&](std::size_t i, const SDL_FRect& rect) {
-    if (i == index) {
-      found = rect;
-      return false;
-    }
-    return true;
-  });
-  return found;
 }
 
 void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(

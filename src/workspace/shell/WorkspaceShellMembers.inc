@@ -189,21 +189,6 @@
     bool separator = false;
   };
 
-  // Geometry-only popup row info — no IsMenuItemEnabled/IsMenuItemChecked work.
-  // Use this when only hit-testing or rect lookup is needed (mouse motion,
-  // cursor kind probe). Caches matter: the heavy enabled/checked lookups are
-  // O(items) each and were dominating per-event handler time at high mouse
-  // rates.
-  struct PopupRowGeometry {
-    std::size_t index = 0;
-    SDL_FRect rect{};
-    bool separator = false;
-  };
-
-  static std::optional<PopupRowGeometry> HitTestPopupRow(
-      std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x, float y);
-  static std::optional<SDL_FRect> PopupRowRectByIndex(
-      std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, std::size_t index);
 
   // The shell's one action context, built on first use and reused. Its three data
   // members are references to shell state (project catalog, current project state,
@@ -484,7 +469,6 @@
   TreeContextTargetKind SelectedTreeTargetKind() const;
   std::filesystem::path ResolveTreeActionPath(ActionSource source) const;
   std::optional<SDL_FRect> ComputeTreeContextMenuRect() const;
-  static char KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers);
   std::filesystem::path ResolveProjectRootInput(const std::filesystem::path& project_root) const;
   ProjectOpenPickerResult OpenNativeProjectPicker(std::string* error_message = nullptr);
   static void SDLCALL OnProjectOpenDialogComplete(void* userdata,
@@ -724,23 +708,17 @@
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
-  std::filesystem::path EditorViewPath(const TabEntry::EditorTabState& editor_state) const;
   bool ActivateCurrentTabAfterStateLoad();
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
   // Group-aware viewport/tab resolution: the editor render/cursor/mouse paths
   // drive each split group through these instead of the focused-group helpers.
-  TabEntry::EditorTabState* GroupActiveEditorTab(EditorGroup& group);
-  const TabEntry::EditorTabState* GroupActiveEditorTab(const EditorGroup& group) const;
-  editor::TextViewport* GroupActiveViewport(EditorGroup& group);
-  const editor::TextViewport* GroupActiveViewport(const EditorGroup& group) const;
   // Resolve the viewport for a specific editor pane (split group) rather than the
   // globally-focused group. Read/hit-test paths (hover, cursor shape, right-click)
   // must use this so they inspect the pane under the cursor, not the active group.
   editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane);
   const editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane) const;
-  static TabEntry::EditorTabState MakeEditorTabState(const editor::TextViewport& view);
   void SyncActiveEditorTabMetadata();
   bool ReplaceActiveEditorView(const editor::TextViewport& viewport);
   editor::TextViewport* ActiveEditorViewport();
@@ -798,11 +776,6 @@
   MergeInteractionLayout BuildMergeInteractionLayout(const SDL_FRect& rect,
                                                      const MergeSurfaceLayout& surface,
                                                      MergeTabState& merge_tab) const;
-  std::optional<std::size_t> FindMergeTrackedConflictAtSourceLine(const MergeTabState& merge_tab,
-                                                                  std::size_t line,
-                                                                  bool incoming) const;
-  std::optional<std::size_t> FindMergeTrackedConflictAtResultLine(const MergeTabState& merge_tab,
-                                                                  std::size_t line) const;
   SDL_FRect BuildMergeSourceActionButtonRect(const MergeSurfaceLayout& surface,
                                              const MergeInteractionLayout& interaction,
                                              const MergeTrackedConflict& conflict,
@@ -900,14 +873,6 @@
                        const std::filesystem::path& output_path);
   void RefreshMergeTabDerivedState(MergeTabState& merge_tab) const;
   void PopulateCompareSyntaxTokensForWindow(CompareTabState& compare_tab, const SDL_FRect& rect);
-  std::vector<MergeTrackedConflict> BuildMergeTrackedConflicts(
-      const compare::MergeModel& model) const;
-  std::vector<MergeTrackedConflict> BuildMergeTrackedConflictsForResult(
-      compare::MergeModel& model,
-      const std::vector<std::string>& result_lines,
-      std::span<const std::vector<std::string>> conflict_line_hints = {},
-      std::span<const compare::MergeChoice> choice_hints = {},
-      std::span<const std::uint8_t> resolved_hints = {}) const;
   void UpdateMergeMaxVisualColumns(MergeTabState& merge_tab,
                                    std::span<const std::string> result_lines) const;
   void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab, const SDL_FRect& rect);
@@ -1314,7 +1279,6 @@
   void RefreshEditorFoldingModels();
   // Non-mutating fetch of a group's active-tab folding model. Safe to call from
   // the render path because RefreshEditorFoldingModels already made it fresh.
-  editor::FoldingModel* GroupFoldingModelPtr(EditorGroup& group);
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;

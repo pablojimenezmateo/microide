@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/MenuPopupGeometry.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -324,7 +325,7 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
                 }
                 // Geometry only: the value-returning form builds a row vector
                 // and probes enablement for every row to answer about one.
-                return WorkspaceShell::PopupRowRectByIndex(MenuItems(id), *popup_rect, item_index);
+                return PopupRowRectByIndex(MenuItems(id), *popup_rect, item_index);
               },
           .execute_custom_menu_item =
               [this](MenuId id, std::size_t item_index) {

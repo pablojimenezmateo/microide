@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "workspace/KeycodeText.h"
 #include "workspace/ListSelection.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
@@ -590,7 +591,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .confirm_dirty_prompt = [this]() { ConfirmDirtyPrompt(); },
           .keycode_to_ascii =
               [](SDL_Keycode key, SDL_Keymod modifiers) {
-                return WorkspaceShell::KeycodeToAscii(key, modifiers);
+                return KeycodeToAscii(key, modifiers);
               },
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
           .next_enabled_tree_context_menu_item_index =

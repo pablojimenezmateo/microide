@@ -414,23 +414,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t co
   return rect;
 }
 
-std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtSourceLine(
-    const MergeTabState& merge_tab,
-    std::size_t line,
-    bool incoming) const {
-  // `line` is an on-screen row from a hit test, so it resolves against the
-  // row-space projection of the conflicts.
-  return microide::workspace::FindMergeTrackedConflictAtSourceLine(MergeVisualConflicts(merge_tab),
-                                                                   line, incoming);
-}
-
-std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtResultLine(
-    const MergeTabState& merge_tab,
-    std::size_t line) const {
-  return microide::workspace::FindMergeTrackedConflictAtResultLine(MergeVisualConflicts(merge_tab),
-                                                                    line);
-}
-
 SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
     const MergeSurfaceLayout& surface,
     const MergeInteractionLayout& interaction,

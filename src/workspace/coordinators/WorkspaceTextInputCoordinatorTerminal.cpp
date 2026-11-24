@@ -11,6 +11,7 @@
 
 #include "platform/AppDirectories.h"
 #include "platform/TransientFileStore.h"
+#include "workspace/KeycodeText.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -470,7 +471,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this]() { EraseLastTerminalPendingInputCodepoint(); },
           .keycode_to_ascii =
               [](SDL_Keycode key, SDL_Keymod modifiers) {
-                return WorkspaceShell::KeycodeToAscii(key, modifiers);
+                return KeycodeToAscii(key, modifiers);
               },
           .try_editor_snippet_insert_text =
               [this](editor::TextViewport* viewport, std::string_view text) {
