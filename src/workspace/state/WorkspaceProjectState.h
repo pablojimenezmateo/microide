@@ -830,6 +830,32 @@ struct EditorGroup {
   }
   TabEntry& active_tab() { return open_tabs[active_tab_index]; }
   const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
+  // The active tab's state when it is a tab of that kind with its state in place,
+  // else null (no active tab, another kind, or an editor tab still loading).
+  EditorTabState* active_editor() { return ActiveState(&TabEntry::editor_state, TabEntry::Kind::Editor); }
+  const EditorTabState* active_editor() const {
+    return ActiveState(&TabEntry::editor_state, TabEntry::Kind::Editor);
+  }
+  CompareTabState* active_compare() { return ActiveState(&TabEntry::compare, TabEntry::Kind::Compare); }
+  const CompareTabState* active_compare() const {
+    return ActiveState(&TabEntry::compare, TabEntry::Kind::Compare);
+  }
+  MergeTabState* active_merge() { return ActiveState(&TabEntry::merge, TabEntry::Kind::Merge); }
+  const MergeTabState* active_merge() const { return ActiveState(&TabEntry::merge, TabEntry::Kind::Merge); }
+
+ private:
+  template <typename State>
+  State* ActiveState(std::optional<State> TabEntry::*member, TabEntry::Kind kind) {
+    return const_cast<State*>(std::as_const(*this).ActiveState(member, kind));
+  }
+  template <typename State>
+  const State* ActiveState(std::optional<State> TabEntry::*member, TabEntry::Kind kind) const {
+    if (!has_active_tab() || active_tab().kind != kind) {
+      return nullptr;
+    }
+    const std::optional<State>& state = active_tab().*member;
+    return state.has_value() ? &*state : nullptr;
+  }
 };
 
 // F6 / Shift+F6 (Focus Next / Previous Part): the surface after `current` among

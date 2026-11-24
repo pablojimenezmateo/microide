@@ -33,25 +33,12 @@ CompareMouseCoordinator::CompareMouseCoordinator(ProjectWorkspaceState& state,
       interaction_state_(interaction_state),
       operations_(std::move(operations)) {}
 
-bool CompareMouseCoordinator::ActiveTabIsCompare() const {
-  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().active_tab().kind == TabEntry::Kind::Compare;
-}
-
 CompareTabState* CompareMouseCoordinator::ActiveCompareTab() const {
-  if (!ActiveTabIsCompare()) {
-    return nullptr;
-  }
-  auto& tab = state_.focused_group().active_tab();
-  return tab.compare.has_value() ? &tab.compare.value() : nullptr;
+  return state_.focused_group().active_compare();
 }
 
 bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                                const SDL_FRect& surface) {
-  if (!ActiveTabIsCompare()) {
-    return false;
-  }
-
   CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr) {
     return false;
@@ -235,8 +222,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
 bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
                                          const SDL_FRect& surface) {
-  if (!ActiveTabIsCompare() ||
-      (interaction_state_.drag_target != DragTarget::CompareDivider &&
+  if ((interaction_state_.drag_target != DragTarget::CompareDivider &&
        interaction_state_.drag_target != DragTarget::CompareVerticalScrollbar &&
        interaction_state_.drag_target != DragTarget::CompareHorizontalScrollbar)) {
     return false;
@@ -299,10 +285,6 @@ bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
 
 bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                                                     const SDL_FRect& surface) {
-  if (!ActiveTabIsCompare()) {
-    return false;
-  }
-
   CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr || !compare_tab->right_view_active) {
     return false;
@@ -361,10 +343,6 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
 bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
                                                 const SDL_FRect& surface) {
-  if (!ActiveTabIsCompare()) {
-    return false;
-  }
-
   CompareTabState* compare_tab = ActiveCompareTab();
   if (compare_tab == nullptr) {
     return false;

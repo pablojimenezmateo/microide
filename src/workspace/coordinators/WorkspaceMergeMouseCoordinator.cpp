@@ -51,25 +51,12 @@ MergeMouseCoordinator::MergeMouseCoordinator(ProjectWorkspaceState& state,
       interaction_state_(interaction_state),
       operations_(std::move(operations)) {}
 
-bool MergeMouseCoordinator::ActiveTabIsMerge() const {
-  const EditorGroup& group = state_.focused_group();
-  return group.has_active_tab() && group.active_tab().kind == TabEntry::Kind::Merge;
-}
-
 MergeTabState* MergeMouseCoordinator::ActiveMergeTab() const {
-  if (!ActiveTabIsMerge()) {
-    return nullptr;
-  }
-  auto& tab = state_.focused_group().active_tab();
-  return tab.merge.has_value() ? &tab.merge.value() : nullptr;
+  return state_.focused_group().active_merge();
 }
 
 bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                              const SDL_FRect& surface) {
-  if (!ActiveTabIsMerge()) {
-    return false;
-  }
-
   MergeTabState* merge_tab = ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;
@@ -306,10 +293,6 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
 bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
                                        const SDL_FRect& surface) {
-  if (!ActiveTabIsMerge()) {
-    return false;
-  }
-
   if ((interaction_state_.drag_target != DragTarget::MergeLeftDivider &&
        interaction_state_.drag_target != DragTarget::MergeRightDivider &&
        interaction_state_.drag_target != DragTarget::CompareVerticalScrollbar &&
@@ -403,10 +386,6 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
 
 bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
                                               const SDL_FRect& surface) {
-  if (!ActiveTabIsMerge()) {
-    return false;
-  }
-
   MergeTabState* merge_tab = ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;
@@ -448,10 +427,6 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
 
 bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                                                   const SDL_FRect& surface) {
-  if (!ActiveTabIsMerge()) {
-    return false;
-  }
-
   MergeTabState* merge_tab = ActiveMergeTab();
   if (merge_tab == nullptr) {
     return false;

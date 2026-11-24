@@ -69,7 +69,6 @@ class MergeMouseCoordinator {
 
  private:
   MergeTabState* ActiveMergeTab() const;
-  bool ActiveTabIsMerge() const;
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;

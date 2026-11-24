@@ -833,8 +833,7 @@ bool WorkspaceActionContext::RunAllDiscoveredTests(std::string* error_message) {
 }
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
-  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().active_tab().kind == TabEntry::Kind::Compare;
+  return state_.focused_group().active_compare() != nullptr;
 }
 
 bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
@@ -852,8 +851,7 @@ std::filesystem::path WorkspaceActionContext::ReviewCommentMenuScope() const {
 }
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
-  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().active_tab().kind == TabEntry::Kind::Merge;
+  return state_.focused_group().active_merge() != nullptr;
 }
 
 bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_message) {

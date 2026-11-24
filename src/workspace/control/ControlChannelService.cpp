@@ -500,15 +500,8 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   }
   if (verb == "compare") {
     // The focused group's active tab, when it is a diff.
-    const CompareTabState* compare = nullptr;
-    if (context_ != nullptr) {
-      const EditorGroup& group = context_->current_project_state.focused_group();
-      if (group.has_active_tab() && group.active_tab().kind == TabEntry::Kind::Compare &&
-          group.active_tab().compare.has_value()) {
-        compare = &*group.active_tab().compare;
-      }
-    }
-    return BuildControlCompareJson(compare);
+    return BuildControlCompareJson(
+        context_ != nullptr ? context_->current_project_state.focused_group().active_compare() : nullptr);
   }
   if (verb == "idle") {
     // Read now: an app serving a query is busy serving it. {"wait": true} is

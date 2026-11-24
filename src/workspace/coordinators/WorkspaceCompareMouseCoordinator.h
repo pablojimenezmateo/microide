@@ -58,7 +58,6 @@ class CompareMouseCoordinator {
 
  private:
   CompareTabState* ActiveCompareTab() const;
-  bool ActiveTabIsCompare() const;
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;

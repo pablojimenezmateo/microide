@@ -22,9 +22,7 @@ constexpr float kMergeToolbarRowGap = 6.0f;
 }  // namespace
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
-  return context_.current_project_state.focused_group().active_tab_index < context_.current_project_state.focused_group().open_tabs.size() &&
-         context_.current_project_state.focused_group().active_tab().kind == TabEntry::Kind::Merge &&
-         context_.current_project_state.focused_group().active_tab().merge.has_value();
+  return ActiveMergeTab() != nullptr;
 }
 
 WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() {
@@ -32,11 +30,7 @@ WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() {
 }
 
 const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
-  if (!ActiveTabIsMerge()) {
-    return nullptr;
-  }
-  const auto& merge = context_.current_project_state.focused_group().active_tab().merge;
-  return merge.has_value() ? &*merge : nullptr;
+  return context_.current_project_state.focused_group().active_merge();
 }
 
 workspace::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(const SDL_FRect& rect,
