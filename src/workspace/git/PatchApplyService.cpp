@@ -350,48 +350,41 @@ std::optional<PatchApplyService::ResolvedPatch> PatchApplyService::ResolvePatch(
   return ResolvedPatch{.request = std::move(*request), .patch_text = std::move(*patch)};
 }
 
-bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
-  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::StageHunk, false,
-                               "Stage hunk is not available for this compare target",
-                               "Selected hunk has no stageable changes");
+bool PatchApplyService::ResolveAndDispatch(CompareTabState& compare_tab, PatchOperationKind kind,
+                                           bool selected_lines,
+                                           std::string_view unavailable_detail,
+                                           std::string_view empty_patch_detail) {
+  auto resolved =
+      ResolvePatch(compare_tab, kind, selected_lines, unavailable_detail, empty_patch_detail);
   if (!resolved.has_value()) {
     return false;
   }
   DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
   return true;
+}
+
+bool PatchApplyService::RequestStageHunk(CompareTabState& compare_tab) {
+  return ResolveAndDispatch(compare_tab, PatchOperationKind::StageHunk, false,
+                            "Stage hunk is not available for this compare target",
+                            "Selected hunk has no stageable changes");
 }
 
 bool PatchApplyService::RequestStageSelectedLines(CompareTabState& compare_tab) {
-  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::StageSelectedLines, true,
-                               "Stage selected lines is not available for this selection",
-                               "Selected lines have no stageable changes");
-  if (!resolved.has_value()) {
-    return false;
-  }
-  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
-  return true;
+  return ResolveAndDispatch(compare_tab, PatchOperationKind::StageSelectedLines, true,
+                            "Stage selected lines is not available for this selection",
+                            "Selected lines have no stageable changes");
 }
 
 bool PatchApplyService::RequestUnstageHunk(CompareTabState& compare_tab) {
-  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::UnstageHunk, false,
-                               "Unstage hunk is not available for this compare target",
-                               "Selected hunk has no unstaged changes");
-  if (!resolved.has_value()) {
-    return false;
-  }
-  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
-  return true;
+  return ResolveAndDispatch(compare_tab, PatchOperationKind::UnstageHunk, false,
+                            "Unstage hunk is not available for this compare target",
+                            "Selected hunk has no unstaged changes");
 }
 
 bool PatchApplyService::RequestUnstageSelectedLines(CompareTabState& compare_tab) {
-  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::UnstageSelectedLines, true,
-                               "Unstage selected lines is not available for this selection",
-                               "Selected lines have no unstaged changes");
-  if (!resolved.has_value()) {
-    return false;
-  }
-  DispatchApply(std::move(resolved->request), std::move(resolved->patch_text));
-  return true;
+  return ResolveAndDispatch(compare_tab, PatchOperationKind::UnstageSelectedLines, true,
+                            "Unstage selected lines is not available for this selection",
+                            "Selected lines have no unstaged changes");
 }
 
 bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) {

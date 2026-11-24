@@ -118,6 +118,10 @@ class PatchApplyService {
   std::optional<std::string> BuildPatchForRequest(const project::PatchApplyRequest& request,
                                                   const compare::CompareModel& model) const;
   void DispatchApply(project::PatchApplyRequest request, std::string patch_text);
+  // Stage / unstage: resolve the patch, then apply it at once (no preview).
+  bool ResolveAndDispatch(CompareTabState& compare_tab, project::PatchOperationKind kind,
+                          bool selected_lines, std::string_view unavailable_detail,
+                          std::string_view empty_patch_detail);
   void ReportResult(const project::PatchApplyResult& result, std::string_view project_suffix = {});
   // Ignore-whitespace narrows the diff model: lines that differ only in
   // whitespace are folded into Unchanged rows, so a generated patch can neither
