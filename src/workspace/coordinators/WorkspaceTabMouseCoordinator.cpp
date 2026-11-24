@@ -20,6 +20,25 @@ namespace microide::workspace {
 
 constexpr float kTabDragStartDistance = 6.0f;
 
+// A left click on one of a strip's overflow chevrons scrolls the strip a tab that
+// way. True when the click hit a shown chevron (consumed even with no scroller).
+bool ClickTabStripOverflow(const WorkspaceShell::TabStripOverflowControls& overflow, float x,
+                           float y, const std::function<bool(int)>& scroll) {
+  int direction = 0;
+  if (overflow.hidden_left > 0 && Contains(overflow.left_button, x, y)) {
+    direction = -1;
+  } else if (overflow.hidden_right > 0 && Contains(overflow.right_button, x, y)) {
+    direction = +1;
+  }
+  if (direction == 0) {
+    return false;
+  }
+  if (scroll) {
+    scroll(direction);
+  }
+  return true;
+}
+
 // The result of a press hit-test against a strip, in plain values. Every caller
 // then runs an operation that can rebuild the memoized visible list underneath
 // it, so nothing may survive the hit-test as a reference into that list.
@@ -79,24 +98,12 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (Contains(layout.project_tab_strip, event.button.x, event.button.y)) {
     const auto& visible_project_tabs =
         operations_.compute_visible_project_tabs(layout.project_tab_strip);
-    if (event.button.button == SDL_BUTTON_LEFT &&
-        operations_.compute_project_tab_overflow_controls) {
-      const auto overflow = operations_.compute_project_tab_overflow_controls(
-          layout.project_tab_strip, visible_project_tabs);
-      if (overflow.hidden_left > 0 &&
-          Contains(overflow.left_button, event.button.x, event.button.y)) {
-        if (operations_.scroll_project_tab_strip) {
-          operations_.scroll_project_tab_strip(-1);
-        }
-        return true;
-      }
-      if (overflow.hidden_right > 0 &&
-          Contains(overflow.right_button, event.button.x, event.button.y)) {
-        if (operations_.scroll_project_tab_strip) {
-          operations_.scroll_project_tab_strip(+1);
-        }
-        return true;
-      }
+    if (event.button.button == SDL_BUTTON_LEFT && operations_.compute_project_tab_overflow_controls &&
+        ClickTabStripOverflow(
+            operations_.compute_project_tab_overflow_controls(layout.project_tab_strip, visible_project_tabs),
+            static_cast<float>(event.button.x), static_cast<float>(event.button.y),
+            operations_.scroll_project_tab_strip)) {
+      return true;
     }
     // The hit tab's POD fields are copied out before any operation runs: the
     // visible list is borrowed from a memoized cache that switch_project /
@@ -162,24 +169,12 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
 
     const auto& visible_tabs = operations_.compute_visible_tabs(group_strip);
-    if (event.button.button == SDL_BUTTON_LEFT &&
-        operations_.compute_tab_overflow_controls) {
-      const auto overflow =
-          operations_.compute_tab_overflow_controls(group_strip, visible_tabs);
-      if (overflow.hidden_left > 0 &&
-          Contains(overflow.left_button, event.button.x, event.button.y)) {
-        if (operations_.scroll_editor_tab_strip) {
-          operations_.scroll_editor_tab_strip(-1);
-        }
-        return true;
-      }
-      if (overflow.hidden_right > 0 &&
-          Contains(overflow.right_button, event.button.x, event.button.y)) {
-        if (operations_.scroll_editor_tab_strip) {
-          operations_.scroll_editor_tab_strip(+1);
-        }
-        return true;
-      }
+    if (event.button.button == SDL_BUTTON_LEFT && operations_.compute_tab_overflow_controls &&
+        ClickTabStripOverflow(
+            operations_.compute_tab_overflow_controls(group_strip, visible_tabs),
+            static_cast<float>(event.button.x), static_cast<float>(event.button.y),
+            operations_.scroll_editor_tab_strip)) {
+      return true;
     }
     if (const TabHit hit = HitStripTab(visible_tabs, event.button.x, event.button.y); hit.hit) {
       if (event.button.button == SDL_BUTTON_MIDDLE ||
@@ -248,24 +243,12 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   const auto& bottom_panel_tabs = operations_.compute_visible_bottom_panel_tabs(panel_header);
-  if (event.button.button == SDL_BUTTON_LEFT &&
-      operations_.compute_bottom_panel_tab_overflow_controls) {
-    const auto overflow =
-        operations_.compute_bottom_panel_tab_overflow_controls(panel_header, bottom_panel_tabs);
-    if (overflow.hidden_left > 0 &&
-        Contains(overflow.left_button, event.button.x, event.button.y)) {
-      if (operations_.scroll_bottom_panel_tab_strip) {
-        operations_.scroll_bottom_panel_tab_strip(-1);
-      }
-      return true;
-    }
-    if (overflow.hidden_right > 0 &&
-        Contains(overflow.right_button, event.button.x, event.button.y)) {
-      if (operations_.scroll_bottom_panel_tab_strip) {
-        operations_.scroll_bottom_panel_tab_strip(+1);
-      }
-      return true;
-    }
+  if (event.button.button == SDL_BUTTON_LEFT && operations_.compute_bottom_panel_tab_overflow_controls &&
+      ClickTabStripOverflow(
+          operations_.compute_bottom_panel_tab_overflow_controls(panel_header, bottom_panel_tabs),
+          static_cast<float>(event.button.x), static_cast<float>(event.button.y),
+          operations_.scroll_bottom_panel_tab_strip)) {
+    return true;
   }
 
   if (const TabHit hit = HitStripTab(bottom_panel_tabs, event.button.x, event.button.y); hit.hit) {
