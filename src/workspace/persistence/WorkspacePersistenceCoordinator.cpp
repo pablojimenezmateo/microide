@@ -78,11 +78,11 @@ PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
           .refresh_merge_tab_derived_state =
               [this](MergeTabState& merge_state) { RefreshMergeTabDerivedState(merge_state); },
           .merge_conflicts_for_result =
-              [this](compare::MergeModel& model, const std::vector<std::string>& lines) {
+              [](compare::MergeModel& model, const std::vector<std::string>& lines) {
                 return BuildMergeTrackedConflictsForResult(model, lines);
               },
           .editor_view_path =
-              [this](const TabEntry::EditorTabState& editor_state) {
+              [](const TabEntry::EditorTabState& editor_state) {
                 return EditorViewPath(editor_state);
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },

@@ -298,7 +298,7 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .apply_detected_indent_on_open =
               [this](editor::TextViewport& viewport) { ApplyDetectedIndentOnOpen(viewport); },
           .editor_view_path =
-              [this](const TabEntry::EditorTabState& editor_state) {
+              [](const TabEntry::EditorTabState& editor_state) {
                 return EditorViewPath(editor_state);
               },
           .sync_active_editor_tab_metadata = [this]() { SyncActiveEditorTabMetadata(); },

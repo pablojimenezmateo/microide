@@ -484,7 +484,7 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
                 return ComputeCompareSurfaceLayout(rect, compare_tab);
               },
           .compute_compare_scroll_layout =
-              [this](const SDL_FRect& rect, const CompareSurfaceLayout& surface,
+              [](const SDL_FRect& rect, const CompareSurfaceLayout& surface,
                      const CompareTabState& compare_tab) {
                 return ComputeCompareScrollLayout(rect, surface, compare_tab);
               },

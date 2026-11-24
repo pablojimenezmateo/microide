@@ -544,7 +544,7 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
                 return ComputeMergeSurfaceLayout(rect, merge_tab);
               },
           .compute_merge_scroll_layout =
-              [this](const SDL_FRect& rect, const MergeSurfaceLayout& surface,
+              [](const SDL_FRect& rect, const MergeSurfaceLayout& surface,
                      const MergeTabState& merge_tab) {
                 return ComputeMergeScrollLayout(rect, surface, merge_tab);
               },
@@ -587,11 +587,11 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
           .request_frame = [this]() { RequestPreparedFrame(); },
           .clear_drag_state = [this]() { ClearDragState(); },
           .find_merge_tracked_conflict_at_source_line =
-              [this](const MergeTabState& merge_tab, std::size_t line, bool incoming) {
+              [](const MergeTabState& merge_tab, std::size_t line, bool incoming) {
                 return FindMergeTrackedConflictAtSourceLine(merge_tab, line, incoming);
               },
           .find_merge_tracked_conflict_at_result_line =
-              [this](const MergeTabState& merge_tab, std::size_t line) {
+              [](const MergeTabState& merge_tab, std::size_t line) {
                 return FindMergeTrackedConflictAtResultLine(merge_tab, line);
               },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },

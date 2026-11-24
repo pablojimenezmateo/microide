@@ -94,7 +94,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .make_editor_tab_state =
               [](const editor::TextViewport& viewport) { return MakeEditorTabState(viewport); },
           .editor_view_path =
-              [this](const TabEntry::EditorTabState& editor_state) {
+              [](const TabEntry::EditorTabState& editor_state) {
                 return EditorViewPath(editor_state);
               },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
