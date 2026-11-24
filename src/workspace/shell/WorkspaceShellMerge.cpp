@@ -39,9 +39,8 @@ const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
   return merge.has_value() ? &*merge : nullptr;
 }
 
-WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
-    const SDL_FRect& rect,
-    const MergeSurfaceLayout& surface) const {
+workspace::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(const SDL_FRect& rect,
+                                                                        const MergeSurfaceLayout& surface) const {
   const auto make_button_rect = [&](float x, std::string_view label) {
     const float width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth(label));
     return MakeRect(x, surface.button_y, width, kMergeToolbarButtonHeight);
@@ -111,9 +110,8 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
   return std::nullopt;
 }
 
-WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
-    const SDL_FRect& rect,
-    const MergeTabState& merge_tab) const {
+workspace::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(const SDL_FRect& rect,
+                                                                        const MergeTabState& merge_tab) const {
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
     MergeSurfaceLayout layout;
     layout.line_height = editor_text_renderer_.LineHeight();
@@ -242,24 +240,6 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
   return measure(show_vertical, show_horizontal);
 }
 
-ScrollSurfaceLayout WorkspaceShell::ComputeMergeScrollLayout(
-    const SDL_FRect& rect,
-    const MergeSurfaceLayout& surface,
-    const MergeTabState& merge_tab) const {
-  // Wrap removes horizontal scroll: report a content width that fits so no
-  // horizontal scrollbar is produced.
-  const std::size_t content_columns =
-      merge_tab.result_viewport.soft_wrap() ? 0 : merge_tab.max_visual_columns;
-  // The bars scroll the rows, so they run beside the rows: over the whole surface
-  // the vertical bar sat on the toolbar, under Save and Mark Resolved, whose
-  // labels it cut off once the file was long enough to scroll (QA merge-panes).
-  const SDL_FRect rows_area =
-      MakeRect(rect.x, surface.rows_y, rect.w, std::max(0.0f, rect.y + rect.h - surface.rows_y));
-  return ComputeScrollSurfaceLayout(rows_area, MergeTotalVisualRowCount(merge_tab),
-                                    surface.visible_rows, merge_tab.scroll_row, content_columns,
-                                    surface.visible_columns, merge_tab.horizontal_scroll);
-}
-
 TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
     const MergeSurfaceLayout& surface,
     const MergeTabState& merge_tab,
@@ -284,10 +264,8 @@ TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
       surface.visible_columns);
 }
 
-WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteractionLayout(
-    const SDL_FRect& rect,
-    const MergeSurfaceLayout& surface,
-    const MergeTabState& merge_tab) const {
+workspace::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteractionLayout(
+    const SDL_FRect& rect, const MergeSurfaceLayout& surface, const MergeTabState& merge_tab) const {
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(
       rect, surface.center_x, surface.rows_y, surface.gutter_width, surface.center_width,
       surface.show_horizontal);
@@ -313,10 +291,9 @@ WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInt
   };
 }
 
-WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayout(
-    const SDL_FRect& rect,
-    const MergeSurfaceLayout& surface,
-    MergeTabState& merge_tab) const {
+workspace::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayout(const SDL_FRect& rect,
+                                                                              const MergeSurfaceLayout& surface,
+                                                                              MergeTabState& merge_tab) const {
   const float bottom_reserved = surface.show_horizontal
                                     ? (kWorkspaceScrollbarThickness +
                                        kWorkspaceScrollbarInset)
@@ -526,30 +503,6 @@ std::optional<WorkspaceShell::MergeHoverState> WorkspaceShell::ClassifyMergeHove
           .button_gap = kMergeToolbarButtonGap,
       },
       MergeVisualConflicts(merge_tab), x, y);
-}
-
-int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
-  return std::max(0,
-                  static_cast<int>(MergeTotalVisualRowCount(merge_tab)) - std::max(1, visible_rows));
-}
-
-void WorkspaceShell::ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const {
-  merge_tab.scroll_row =
-      std::clamp(merge_tab.scroll_row, 0, MergeMaxScrollRow(merge_tab, visible_rows));
-}
-
-std::size_t WorkspaceShell::MergeMaxScrollColumn(const MergeTabState& merge_tab,
-                                                 std::size_t visible_columns) const {
-  if (merge_tab.max_visual_columns <= visible_columns) {
-    return 0;
-  }
-  return merge_tab.max_visual_columns - visible_columns;
-}
-
-void WorkspaceShell::ClampMergeHorizontalScroll(MergeTabState& merge_tab,
-                                                std::size_t visible_columns) const {
-  merge_tab.horizontal_scroll =
-      std::min(merge_tab.horizontal_scroll, MergeMaxScrollColumn(merge_tab, visible_columns));
 }
 
 void WorkspaceShell::RevealActiveMergeSelection() {

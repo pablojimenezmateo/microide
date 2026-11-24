@@ -88,10 +88,9 @@ struct CompareRightGridHit {
 // counts. It used to be built with a model-row `line_count` against that scroll,
 // so the two disagreed as soon as the diff collapsed a run — and, now, as soon as
 // a line wrapped.
-std::optional<CompareRightGridHit> HitTestCompareRightGrid(
-    const render::TextRenderer& text_renderer,
-    const WorkspaceShell::CompareSurfaceLayout& surface, const CompareTabState& compare_tab,
-    float x, float y) {
+std::optional<CompareRightGridHit> HitTestCompareRightGrid(const render::TextRenderer& text_renderer,
+                                                           const workspace::CompareSurfaceLayout& surface,
+                                                           const CompareTabState& compare_tab, float x, float y) {
   CompareRightGridHit hit;
   hit.interaction = ComputeTextGridInteractionLayout(
       MakeRect(surface.right_x, surface.rows_y, surface.gutter_width + surface.right_width,

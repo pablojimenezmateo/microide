@@ -12,15 +12,12 @@ namespace microide::workspace {
 class CompareMouseCoordinator {
  public:
   struct Operations {
-    std::function<WorkspaceShell::CompareSurfaceLayout(const SDL_FRect&, const CompareTabState&)>
+    std::function<workspace::CompareSurfaceLayout(const SDL_FRect&, const CompareTabState&)>
         compute_compare_surface_layout;
-    std::function<ScrollSurfaceLayout(const SDL_FRect&,
-                                      const WorkspaceShell::CompareSurfaceLayout&,
-                                      const CompareTabState&)>
+    std::function<ScrollSurfaceLayout(const SDL_FRect&, const workspace::CompareSurfaceLayout&, const CompareTabState&)>
         compute_compare_scroll_layout;
     std::function<void(CompareTabState&)> sync_compare_viewport_scroll;
-    std::function<TextGridInteractionLayout(const WorkspaceShell::CompareSurfaceLayout&,
-                                            CompareTabState&)>
+    std::function<TextGridInteractionLayout(const workspace::CompareSurfaceLayout&, CompareTabState&)>
         build_compare_right_interaction_layout;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<void()> reset_caret_blink;
@@ -37,7 +34,7 @@ class CompareMouseCoordinator {
     std::function<void()> clear_drag_state;
     // The review or header control under a point (CompareControlAt), and running
     // one (CompareReviewService::RunControl).
-    std::function<std::optional<CompareControlHit>(const SDL_FRect&, const WorkspaceShell::CompareSurfaceLayout&,
+    std::function<std::optional<CompareControlHit>(const SDL_FRect&, const workspace::CompareSurfaceLayout&,
                                                    const CompareTabState&, float, float)>
         compare_control_at;
     std::function<bool(CompareTabState&, const CompareControlHit&)> run_compare_control;

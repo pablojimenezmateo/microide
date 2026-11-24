@@ -269,8 +269,11 @@ void TestArchitectureFileSizes() {
              // 1583: the slack since then, plus the terminal row paint: its two
              // scratch members and run struct became one TerminalRowPaintPlan, and
              // TerminalCellSelected went (paint reads the pane's frame_selection).
+             // 1522: the compare/merge surface layouts and their scroll clamps moved
+             // to workspace/DiffSurfaceLayout.h as plain data and free functions,
+             // paying for PrepareFrameOnce's phase and per-surface members.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1583);
+                                                     1522);
            });
 
   AssertRuleResultsPass(results);

@@ -45,6 +45,7 @@
 #include "workspace/ProjectReplaceOutcome.h"
 #include "workspace/SystemClipboard.h"
 #include "workspace/render/SingleLineViewMetrics.h"
+#include "workspace/DiffSurfaceLayout.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/actions/WorkspaceActionAvailability.h"
 #include "workspace/shell/ShellGlueCache.h"

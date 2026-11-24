@@ -19,11 +19,10 @@ namespace microide::workspace {
 // used to skip that and hit-test the painted width directly.
 inline constexpr float kDiffDividerHitWidth = 12.0f;
 
-SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
-                                const WorkspaceShell::CompareSurfaceLayout& surface);
+SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface, const workspace::CompareSurfaceLayout& surface);
 
 // {left, right} in pane order.
 std::array<SDL_FRect, 2> MergeDividerHitRects(const SDL_FRect& editor_surface,
-                                              const WorkspaceShell::MergeSurfaceLayout& surface);
+                                              const workspace::MergeSurfaceLayout& surface);
 
 }  // namespace microide::workspace

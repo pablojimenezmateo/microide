@@ -307,21 +307,20 @@
   static WorkspaceLayout CurrentLayout(WorkspaceShell& shell) {
     return shell.CurrentWorkspaceLayout().value();
   }
-  static WorkspaceShell::MergeSurfaceLayout ActiveMergeSurfaceLayout(WorkspaceShell& shell) {
+  static workspace::MergeSurfaceLayout ActiveMergeSurfaceLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeMergeSurfaceLayout(shell.ActiveTabSurface(layout), ActiveMerge(shell));
   }
   static ScrollSurfaceLayout ActiveMergeScrollLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = shell.ComputeMergeSurfaceLayout(shell.ActiveTabSurface(layout), ActiveMerge(shell));
-    return shell.ComputeMergeScrollLayout(shell.ActiveTabSurface(layout), surface, ActiveMerge(shell));
+    return ComputeMergeScrollLayout(shell.ActiveTabSurface(layout), surface, ActiveMerge(shell));
   }
-  static WorkspaceShell::MergeInteractionLayout ActiveMergeInteractionLayout(WorkspaceShell& shell) {
+  static workspace::MergeInteractionLayout ActiveMergeInteractionLayout(WorkspaceShell& shell) {
     auto& merge = ActiveMerge(shell);
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto surface = shell.ComputeMergeSurfaceLayout(shell.ActiveTabSurface(layout), merge);
-    const auto scroll =
-        shell.ComputeMergeScrollLayout(shell.ActiveTabSurface(layout), surface, merge);
+    const auto scroll = ComputeMergeScrollLayout(shell.ActiveTabSurface(layout), surface, merge);
     merge.scroll_row = scroll.vertical_scroll;
     merge.horizontal_scroll = scroll.horizontal_scroll;
     merge.result_viewport.SetScrollLine(
@@ -331,7 +330,7 @@
     merge.horizontal_scroll = merge.result_viewport.horizontal_scroll();
     return shell.BuildMergeInteractionLayout(shell.ActiveTabSurface(layout), surface, merge);
   }
-  static WorkspaceShell::CompareSurfaceLayout ActiveCompareSurfaceLayout(WorkspaceShell& shell) {
+  static workspace::CompareSurfaceLayout ActiveCompareSurfaceLayout(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeCompareSurfaceLayout(shell.ActiveTabSurface(layout), ActiveCompare(shell));
   }

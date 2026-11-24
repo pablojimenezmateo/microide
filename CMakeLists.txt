@@ -607,6 +607,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/shell/WorkspaceShellCompare.cpp
   src/workspace/shell/WorkspaceShellCompareMerge.cpp
   src/workspace/MergeWrapRows.cpp
+  src/workspace/DiffSurfaceLayout.cpp
   src/workspace/render/CompareVisibleLayoutCache.cpp
   src/workspace/render/WorkspaceShellRenderCompare.cpp
   src/workspace/git/ReviewSessionCoordinator.cpp

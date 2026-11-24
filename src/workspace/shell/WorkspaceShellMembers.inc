@@ -259,27 +259,6 @@
   using CursorKind = workspace::CursorKind;  // workspace/WorkspaceCursorKind.h
 
  public:
-  struct CompareSurfaceLayout {
-    float line_height = 14.0f;
-    float gutter_width = 28.0f;
-    float divider_width = 18.0f;
-    float left_width = 0.0f;
-    float right_width = 0.0f;
-    float left_x = 0.0f;
-    float center_x = 0.0f;
-    float right_x = 0.0f;
-    float review_summary_y = 0.0f;
-    float header_y = 0.0f;
-    float rows_y = 0.0f;
-    int visible_rows = 1;
-    std::size_t left_visible_columns = 1;
-    std::size_t right_visible_columns = 1;
-    std::size_t visible_columns = 1;
-    float min_divider_fraction = 0.5f;
-    bool show_vertical = false;
-    bool show_horizontal = false;
-  };
-
   struct TextInputVisual {
     TextInputSurface surface = TextInputSurface::None;
     SDL_FRect area{};
@@ -295,49 +274,6 @@
 
   // Shared with RenderViewModelBuilder (workspace/render/SingleLineViewMetrics.h).
   using SingleLineViewMetrics = workspace::SingleLineViewMetrics;
-
-  struct MergeSurfaceLayout {
-    float line_height = 14.0f;
-    float gutter_width = 28.0f;
-    float divider_width = 16.0f;
-    float left_width = 0.0f;
-    float center_width = 0.0f;
-    float right_width = 0.0f;
-    float left_x = 0.0f;
-    float center_x = 0.0f;
-    float right_x = 0.0f;
-    float button_y = 0.0f;
-    float secondary_button_y = 0.0f;
-    float header_y = 0.0f;
-    float rows_y = 0.0f;
-    int visible_rows = 1;
-    std::size_t visible_columns = 1;
-    float min_divider_fraction = 1.0f / 3.0f;
-    bool show_vertical = false;
-    bool show_horizontal = false;
-  };
-
-  struct MergeToolbarLayout {
-    SDL_FRect prev_rect{};
-    SDL_FRect next_rect{};
-    SDL_FRect open_rect{};
-    SDL_FRect save_rect{};
-  };
-
-  struct MergeResultInteractionLayout {
-    SDL_FRect rect{};
-    editor::EditorViewMetrics metrics{};
-    VisibleLineRangeLayout lines{};
-    TextGridInteractionLayout text{};
-  };
-
-  struct MergeInteractionLayout {
-    float content_bottom = 0.0f;
-    MergeResultInteractionLayout result{};
-    float incoming_accept_button_width = 0.0f;
-    float current_accept_button_width = 0.0f;
-    std::array<float, 4> result_action_widths{};
-  };
 
  public:
   // Geometry of a scrollable text/list surface (content rect + text origin +
@@ -840,29 +776,15 @@
   bool ActiveTabIsCompare() const;
   CompareTabState* ActiveCompareTab();
   const CompareTabState* ActiveCompareTab() const;
-  CompareSurfaceLayout ComputeCompareSurfaceLayout(const SDL_FRect& rect,
-                                                   const CompareTabState& compare_tab) const;
-  ScrollSurfaceLayout ComputeCompareScrollLayout(const SDL_FRect& rect,
-                                                 const CompareSurfaceLayout& surface,
-                                                 const CompareTabState& compare_tab) const;
+  CompareSurfaceLayout ComputeCompareSurfaceLayout(const SDL_FRect& rect, const CompareTabState& compare_tab) const;
   TextGridInteractionLayout BuildCompareRightInteractionLayout(const CompareSurfaceLayout& surface,
                                                                CompareTabState& compare_tab) const;
-  int CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const;
-  void ClampCompareScrollRow(CompareTabState& compare_tab, int visible_rows) const;
-  std::size_t CompareMaxScrollColumn(const CompareTabState& compare_tab,
-                                     std::size_t visible_columns) const;
-  void ClampCompareHorizontalScroll(CompareTabState& compare_tab,
-                                    std::size_t visible_columns) const;
   void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows) const;
   void RevealActiveCompareSelection();
   bool ActiveTabIsMerge() const;
   MergeTabState* ActiveMergeTab();
   const MergeTabState* ActiveMergeTab() const;
-  MergeSurfaceLayout ComputeMergeSurfaceLayout(const SDL_FRect& rect,
-                                               const MergeTabState& merge_tab) const;
-  ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect,
-                                               const MergeSurfaceLayout& surface,
-                                               const MergeTabState& merge_tab) const;
+  MergeSurfaceLayout ComputeMergeSurfaceLayout(const SDL_FRect& rect, const MergeTabState& merge_tab) const;
   TextGridInteractionLayout BuildMergeSourceInteractionLayout(const MergeSurfaceLayout& surface,
                                                               const MergeTabState& merge_tab,
                                                               bool incoming) const;
@@ -899,11 +821,6 @@
   std::optional<SDL_FRect> ComputeMergeSecondaryToolbarButtonRect(const SDL_FRect& rect,
                                                                   const MergeSurfaceLayout& surface,
                                                                   std::string_view label) const;
-  int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;
-  void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const;
-  std::size_t MergeMaxScrollColumn(const MergeTabState& merge_tab,
-                                   std::size_t visible_columns) const;
-  void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_columns) const;
   void RevealActiveMergeSelection();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
@@ -1062,6 +979,42 @@
   void SyncPluginSurfacePreviewClosed();
   void RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
                                const editor::SurfaceContent* content, float scroll_y);
+  // PrepareFrameOnce's phases, in order (WorkspaceShellRenderFrame.cpp).
+  struct FramePrepPass;
+  void PrepareFrameState(FramePrepPass& pass);
+  void ResolveFrameLayout(FramePrepPass& pass);
+  void PrepareChromeFrame(FramePrepPass& pass);
+  void PrepareFrameCompletions(FramePrepPass& pass);
+  void PrepareEditorPaneMetrics(FramePrepPass& pass);
+  void PrepareEditorPaneUnits(FramePrepPass& pass);
+  struct EditorPanesPass;
+  void PrepareCompareFrontPaneUnits(FramePrepPass& pass, EditorPanesPass& panes, std::size_t gi,
+                                    std::vector<DerivedDamage::Unit>& units);
+  void PrepareMergeFrontPaneUnits(FramePrepPass& pass, EditorPanesPass& panes, std::size_t gi,
+                                  std::vector<DerivedDamage::Unit>& units);
+  void FillEditorPanePaint(FramePrepPass& pass, EditorPanesPass& panes, std::size_t gi, const EditorPaneLayout& pane,
+                           EditorGroup& group, editor::TextViewport& viewport);
+  void PrepareTextPaneUnits(FramePrepPass& pass, EditorPanesPass& panes, const EditorPaneLayout& pane,
+                            editor::TextViewport* viewport, std::vector<DerivedDamage::Unit>& units);
+  void PrepareWorkbenchChromeUnits(FramePrepPass& pass);
+  void ResolvePointerOccluder(FramePrepPass& pass);
+  void PreparePanelSurfaces(FramePrepPass& pass);
+  void PrepareSidebarSurfaces(FramePrepPass& pass);
+  void PrepareHoverFrame(FramePrepPass& pass);
+  // The surfaces those phases prepare, one each.
+  void PrepareGitPanelSurface(FramePrepPass& pass);
+  void PrepareTreeSidebarSurface(FramePrepPass& pass);
+  void PrepareSidebarListSurface(FramePrepPass& pass);
+  void PrepareSearchSidebarSurface(FramePrepPass& pass);
+  void PrepareMenuBarSurface(FramePrepPass& pass);
+  void PrepareSettingsCardSurface(FramePrepPass& pass);
+  void PrepareMenuPopupSurfaces(FramePrepPass& pass);
+  void PrepareBottomPanelHeaderSurface(FramePrepPass& pass);
+  void PrepareOutputBodySurface(FramePrepPass& pass);
+  void PrepareTerminalChromeSurface(FramePrepPass& pass);
+  void PrepareTerminalGridSurface(FramePrepPass& pass);
+  void PrepareDebugPaneSurface(FramePrepPass& pass);
+  void PrepareTabStripUnits(FramePrepPass& pass);
   // The overlay card's derived units, laid out at prep after the pointer occluder.
   void PrepareOverlayUnits(const WorkspaceLayout& layout, bool overlay_visible);
   void PaintEditorPane(SDL_Renderer* renderer, std::size_t group_index, bool draw_caret);

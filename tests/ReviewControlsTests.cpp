@@ -339,8 +339,7 @@ void TestALongChangeKeepsItsButtonsOnScreen() {
       "scrolling into the change");
   Expect(scene.Tab().scroll_row > scroll_before + 8, "the first row scrolled off above");
   const std::optional<SDL_FRect> sticky = scene.Button("compare/hunk-0/toggle-reviewed");
-  const workspace::WorkspaceShell::CompareSurfaceLayout layout =
-      TestAccess::ActiveCompareSurfaceLayout(scene.fixture.shell);
+  const workspace::CompareSurfaceLayout layout = TestAccess::ActiveCompareSurfaceLayout(scene.fixture.shell);
   Expect(sticky.has_value() && sticky->y >= layout.rows_y - 2.0f && sticky->y < layout.rows_y + layout.line_height,
          "its buttons are on the view's top row");
   scene.Click("compare/hunk-0/toggle-reviewed", "marking the change from inside it");
@@ -435,8 +434,7 @@ void TestANarrowDiffKeepsTheMarkAndTheProgress() {
   const std::optional<SDL_FRect> comment = scene.Button("compare/hunk-0/comment");
   Expect(!comment.has_value() || (toggle.has_value() && comment->x > toggle->x),
          "Comment shows only beside it");
-  const workspace::WorkspaceShell::CompareSurfaceLayout layout =
-      TestAccess::ActiveCompareSurfaceLayout(scene.fixture.shell);
+  const workspace::CompareSurfaceLayout layout = TestAccess::ActiveCompareSurfaceLayout(scene.fixture.shell);
   const std::optional<SDL_FRect> leftmost = scene.Button("compare/file-reviewed").has_value()
                                                 ? scene.Button("compare/file-reviewed")
                                                 : scene.Button("compare/previous-change");

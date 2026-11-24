@@ -23,13 +23,12 @@ SDL_FRect CenteredGrabRect(const SDL_FRect& editor_surface, float divider_left,
 
 }  // namespace
 
-SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface,
-                                const WorkspaceShell::CompareSurfaceLayout& surface) {
+SDL_FRect CompareDividerHitRect(const SDL_FRect& editor_surface, const workspace::CompareSurfaceLayout& surface) {
   return CenteredGrabRect(editor_surface, surface.center_x, surface.divider_width);
 }
 
-std::array<SDL_FRect, 2> MergeDividerHitRects(
-    const SDL_FRect& editor_surface, const WorkspaceShell::MergeSurfaceLayout& surface) {
+std::array<SDL_FRect, 2> MergeDividerHitRects(const SDL_FRect& editor_surface,
+                                              const workspace::MergeSurfaceLayout& surface) {
   return {
       CenteredGrabRect(editor_surface, surface.center_x - surface.divider_width,
                        surface.divider_width),
