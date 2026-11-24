@@ -71,62 +71,18 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     return false;
   }
 
-  const auto refresh_directory_tree = [this]() {
-    state_.directory_tree.Refresh();
-    if (operations_.request_automatic_git_sidebar_refresh) {
-      operations_.request_automatic_git_sidebar_refresh();
-    }
-  };
-
   if (group.open_tabs[index].kind == TabEntry::Kind::Compare &&
       group.open_tabs[index].compare.has_value()) {
     auto& compare_tab = group.open_tabs[index].compare.value();
     if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
       return true;
     }
-    if (compare_tab.right_viewport.SaveWouldOverwriteUnseenDisk()) {
-      if (operations_.request_external_change_banner) {
-        operations_.request_external_change_banner(
-            compare_tab.right_viewport.path().lexically_normal());
-      }
-      return false;
+    const PaneSave saved =
+        WritePaneViewport(compare_tab.right_viewport, compare_tab.pending_format_save, mode);
+    if (saved != PaneSave::Written) {
+      return saved == PaneSave::Deferred;
     }
-    // Same preparation as an editor tab's save: the compare right pane is a real
-    // file and this is the same Ctrl+S. Without it, save participants and
-    // format-on-save applied to a buffer depending on which surface it was open in.
-    // Deferred like an editor tab's when the caller asks: the formatter runs off
-    // the shell thread and ApplyDeferredSaveFormat finds this tab by its run id.
-    if (operations_.prepare_editor_view_for_save) {
-      const SavePreparation prepared = operations_.prepare_editor_view_for_save(
-          compare_tab.right_viewport.path(), compare_tab.right_viewport, nullptr, mode);
-      if (prepared.deferred()) {
-        compare_tab.pending_format_save.Arm(prepared.deferred_run_id,
-                                            compare_tab.right_viewport.content_revision());
-        return true;
-      }
-      if (!prepared.ok()) {
-        return false;
-      }
-    }
-    if (!RefuseIfChangedOnDisk(compare_tab.right_viewport,
-                               compare_tab.right_viewport.path().lexically_normal())) {
-      return false;
-    }
-    if (!RefuseIfReadOnly(compare_tab.right_viewport.path().lexically_normal(),
-                          /*banner_shows=*/false)) {
-      return false;
-    }
-    if (std::error_code why; !compare_tab.right_viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
-      if (operations_.notify_save_failed) {
-        operations_.notify_save_failed(compare_tab.right_viewport.path(), util::DescribeWriteError(why));
-      }
-      return false;
-    }
-    // As the editor's Save: the pane is clean now, which is when its inline blame
-    // shows, and the blame read for the content before the save is stale.
-    operations_.invalidate_editor_blame_path(compare_tab.right_viewport.path().lexically_normal());
-    refresh_directory_tree();
-    operations_.notify_plugin_buffer_save(compare_tab.right_viewport.path());
+    AfterFileSaved(compare_tab.right_viewport.path().lexically_normal());
     return true;
   }
 
@@ -136,38 +92,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     if (!merge_tab.result_viewport.dirty()) {
       return true;
     }
-    if (merge_tab.result_viewport.SaveWouldOverwriteUnseenDisk()) {
-      if (operations_.request_external_change_banner) {
-        operations_.request_external_change_banner(
-            merge_tab.result_viewport.path().lexically_normal());
-      }
-      return false;
-    }
-    if (operations_.prepare_editor_view_for_save) {
-      const SavePreparation prepared = operations_.prepare_editor_view_for_save(
-          merge_tab.result_viewport.path(), merge_tab.result_viewport, nullptr, mode);
-      if (prepared.deferred()) {
-        merge_tab.pending_format_save.Arm(prepared.deferred_run_id,
-                                          merge_tab.result_viewport.content_revision());
-        return true;
-      }
-      if (!prepared.ok()) {
-        return false;
-      }
-    }
-    if (!RefuseIfChangedOnDisk(merge_tab.result_viewport,
-                               merge_tab.result_viewport.path().lexically_normal())) {
-      return false;
-    }
-    if (!RefuseIfReadOnly(merge_tab.result_viewport.path().lexically_normal(),
-                          /*banner_shows=*/false)) {
-      return false;
-    }
-    if (std::error_code why; !merge_tab.result_viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
-      if (operations_.notify_save_failed) {
-        operations_.notify_save_failed(merge_tab.result_viewport.path(), util::DescribeWriteError(why));
-      }
-      return false;
+    const PaneSave saved =
+        WritePaneViewport(merge_tab.result_viewport, merge_tab.pending_format_save, mode);
+    if (saved != PaneSave::Written) {
+      return saved == PaneSave::Deferred;
     }
     merge_tab.persisted_output_baseline =
         merge_tab.result_viewport.SerializeDocumentText(merge_tab.result_line_ending);
@@ -177,11 +105,8 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     // result would permanently lock out "Mark Resolved" for the tab.
     merge_tab.disk_result_tick = util::FileModificationTick(merge_tab.result_viewport.path());
     merge_tab.external_result_stale = false;
-    // As the editor's Save: the result pane is clean now, which is when its inline
-    // blame shows, and nothing else repaints it (QA merge-toolbar).
-    operations_.invalidate_editor_blame_path(merge_tab.result_viewport.path().lexically_normal());
-    refresh_directory_tree();
-    operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());
+    // Nothing else repaints the result pane's inline blame (QA merge-toolbar).
+    AfterFileSaved(merge_tab.result_viewport.path().lexically_normal());
     return true;
   }
 
@@ -260,16 +185,56 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   // a save that wrote at once must too, or a save no keystroke made (the command
   // line, a menu path that damages nothing else) leaves "*name" on screen.
   operations_.request_tab_strip_redraw();
-  operations_.invalidate_editor_blame_path(normalized_path);
-  operations_.notify_plugin_buffer_save(normalized_path);
-  refresh_directory_tree();
+  AfterFileSaved(normalized_path);
   return true;
 }
 
+TabCoordinator::PaneSave TabCoordinator::WritePaneViewport(
+    editor::TextViewport& viewport, editor::AsyncBufferWork& pending_format_save, SaveMode mode) {
+  const std::filesystem::path normalized_path = viewport.path().lexically_normal();
+  if (viewport.SaveWouldOverwriteUnseenDisk()) {
+    if (operations_.request_external_change_banner) {
+      operations_.request_external_change_banner(normalized_path);
+    }
+    return PaneSave::Refused;
+  }
+  if (operations_.prepare_editor_view_for_save) {
+    const SavePreparation prepared =
+        operations_.prepare_editor_view_for_save(viewport.path(), viewport, nullptr, mode);
+    if (prepared.deferred()) {
+      // The formatter runs off the shell thread; ApplyDeferredSaveFormat finds this
+      // tab by its run id.
+      pending_format_save.Arm(prepared.deferred_run_id, viewport.content_revision());
+      return PaneSave::Deferred;
+    }
+    if (!prepared.ok()) {
+      return PaneSave::Refused;
+    }
+  }
+  if (!RefuseIfChangedOnDisk(viewport, normalized_path) ||
+      !RefuseIfReadOnly(normalized_path, /*banner_shows=*/false)) {
+    return PaneSave::Refused;
+  }
+  if (std::error_code why; !viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
+    if (operations_.notify_save_failed) {
+      operations_.notify_save_failed(viewport.path(), util::DescribeWriteError(why));
+    }
+    return PaneSave::Refused;
+  }
+  return PaneSave::Written;
+}
+
+void TabCoordinator::AfterFileSaved(const std::filesystem::path& normalized_path) {
+  operations_.invalidate_editor_blame_path(normalized_path);
+  operations_.notify_plugin_buffer_save(normalized_path);
+  state_.directory_tree.Refresh();
+  if (operations_.request_automatic_git_sidebar_refresh) {
+    operations_.request_automatic_git_sidebar_refresh();
+  }
+}
+
 bool TabCoordinator::ActiveTabIsEditor() const {
-  const EditorGroup& group = state_.focused_group();
-  return group.has_active_tab() && group.active_tab().kind == TabEntry::Kind::Editor &&
-         group.active_tab().editor_state.has_value();
+  return ActiveEditorTab() != nullptr;
 }
 
 TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
@@ -277,11 +242,7 @@ TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
 }
 
 const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
-  if (!ActiveTabIsEditor()) {
-    return nullptr;
-  }
-  const auto& editor_state = state_.focused_group().active_tab().editor_state;
-  return editor_state.has_value() ? &*editor_state : nullptr;
+  return state_.focused_group().active_editor();
 }
 
 editor::TextViewport* TabCoordinator::ActiveEditorViewport() {

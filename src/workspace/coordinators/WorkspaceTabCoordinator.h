@@ -317,6 +317,16 @@ class TabCoordinator {
   // Code refuses one) with the ReadOnly banner -- Overwrite / Save As / Keep --
   // where one is shown (`banner_shows`: an editor tab), else with a toast.
   bool RefuseIfReadOnly(const std::filesystem::path& normalized_path, bool banner_shows);
+  // A compare tab's right pane and a merge tab's result pane are real files saved by
+  // the same Ctrl+S as an editor tab: the same conflict check, save preparation
+  // (participants, format-on-save, deferred like an editor tab's), read-only refusal
+  // and write.
+  enum class PaneSave { Written, Deferred, Refused };
+  PaneSave WritePaneViewport(editor::TextViewport& viewport,
+                             editor::AsyncBufferWork& pending_format_save, SaveMode mode);
+  // After a write: the pane is clean now, which is when its inline blame shows, and
+  // the blame read for the content before the save is stale; the tree and plugins hear.
+  void AfterFileSaved(const std::filesystem::path& normalized_path);
   // Group-aware close: closes editor_groups[group_index].open_tabs[index] with the same
   // LSP-didClose accounting as Close(); delegates to Close() for the focused group, and
   // for a background group erases the tab, clamps its active index, and collapses the
