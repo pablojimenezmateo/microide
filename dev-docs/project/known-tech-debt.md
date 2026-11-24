@@ -16,6 +16,38 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-24-456 — `WorkspaceShell` is still the god class; its wiring factories are the largest functions. [OPEN]
+
+A 2026-11-24 cleanup pass (duplication, long functions, facades, dead code; net
+-2,100 lines) left these on purpose, because each needs a design decision rather
+than a mechanical change:
+
+- **The shell's surface.** ~1,000 `WorkspaceShell::` definitions across the
+  companion TUs and a 2,200-line `WorkspaceShellMembers.inc`. The declaration
+  budget keeps it from growing but also blocks splitting its long members
+  (`RenderSettingsOverlay` 318 lines, `HoveredTooltip` 300, `ControlUiDetails` 288,
+  `HandleScheduledWakeSources` 237, `ReplaceAllProjectSearchMatches` 225): a named
+  phase costs a declaration, so the code keeps lambdas instead (see the comment in
+  `HandleScheduledWakeSources`). Moving a cluster off the shell needs the cluster's
+  reads as an interface first; for ControlUi* that is ~50 callbacks, which is the
+  next item's problem in another place.
+- **Operations structs of `std::function`.** `MakeActionContext` (604 lines),
+  `MakeKeyInputCoordinator` (375), `MakeRemoteHostService` (280) and the other
+  `Make*` factories wire hundreds of one-line lambdas back into the shell. The
+  hooks are now invoked through `util::InvokeIfSet`, but the shape stays: each
+  coordinator depends on a bag of shell callbacks rather than on the services it
+  uses. The fix is per coordinator: pass the services (`EditorTabService&`,
+  `PatchApplyService&`, ...) and delete the hooks that only forwarded to them.
+- **Deliberately kept long:** `ActionAvailability::IsEnabled` (one exhaustive
+  switch so `-Wswitch` makes each new action decide), and the spec tables
+  (`BuiltinKeybindingSpecs`, `BuiltinSettingSpecs`, `WorkspaceCommandSpecs`,
+  `WorkspaceMenuSpecs`, `BuildDefaults`), which are data.
+- **Near-duplicates left in place:** the Lua wrappers in `PluginRuntimeApiInterop`
+  and `PluginHostLuaApi.inc` (their scoping is the longjmp-safety contract; fold
+  them only with `tools/audit-lua-longjmp.py` in the loop), and the compare
+  surface's `PaintCompareLeftSide` / `PaintCompareRightSide` (the right pane is
+  editable and paints carets, diagnostics and blame the left does not).
+
 ### TD-2026-11-23-455 — after a slow stretch, a remote bulk transfer stays at its window floor's rate. [OPEN]
 
 A link that is slow for a while (a congested stretch) drives the bulk window down
