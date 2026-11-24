@@ -153,6 +153,89 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
   compare_tab.scrollbar_marker_cache_valid = true;
 }
 
+// What every row of one RenderCompareSurface paints from: its sides'
+// PaintCompareLeftSide / PaintCompareRightSide read this and their own row.
+struct WorkspaceShell::CompareRowsPass {
+  SDL_Renderer* renderer = nullptr;
+  CompareTabState* compare_tab = nullptr;
+  const CompareSurfaceLayout* surface = nullptr;
+  const editor::DecoratedTextGridRenderer* row_renderer = nullptr;
+  bool wrapped = false;
+  bool render_whitespace_enabled = false;
+  bool draw_compare_caret = false;
+  float char_width_px = 0.0f;
+  std::span<const editor::PublishedDiagnostic> right_diagnostics;
+  const editor::FileDecorations* right_plugin_decorations = nullptr;
+  const std::optional<editor::EditorBlameOverlay>* blame_overlay = nullptr;
+  std::size_t* blame_index = nullptr;
+  std::optional<editor::BracketMatchPair> bracket_match_pair;
+  const TextGridInteractionLayout* right_interaction = nullptr;
+  std::optional<editor::SelectionRange> right_selection;
+  std::span<const editor::TextViewportUndoHistory::SecondaryCaret> right_secondaries;
+  bool right_secondaries_span_lines = false;
+  const std::vector<editor::IndentGuideRun>* left_guides = nullptr;
+  const std::vector<editor::IndentGuideRun>* right_guides = nullptr;
+  editor::WhitespaceWalkCursor* left_whitespace_cursor = nullptr;
+  editor::WhitespaceWalkCursor* right_whitespace_cursor = nullptr;
+
+  // The carets whose POSITION sits on `line`, as a sub-range of the sorted set.
+  std::span<const editor::TextViewportUndoHistory::SecondaryCaret> RightSecondariesOnLine(std::size_t line) const {
+    if (right_secondaries_span_lines) {
+      return right_secondaries;
+    }
+    const auto lower =
+        std::lower_bound(right_secondaries.begin(), right_secondaries.end(), line,
+                         [](const auto& caret, std::size_t value) { return caret.position.line < value; });
+    const auto upper = std::upper_bound(lower, right_secondaries.end(), line, [](std::size_t value, const auto& caret) {
+      return value < caret.position.line;
+    });
+    // Pointer arithmetic on the span's data, NOT `&*lower`: the row's line is past
+    // every caret on most rows, so `lower` is usually end() and dereferencing it
+    // to take its address is undefined -- UBSan reports it as a reference bound to
+    // a null SecondaryCaret, which is exactly how this shipped for one commit.
+    return right_secondaries.subspan(static_cast<std::size_t>(lower - right_secondaries.begin()),
+                                     static_cast<std::size_t>(upper - lower));
+  }
+
+  // Append the guides covering visible `row` into `fills`, clipped to the row's
+  // column window. Same geometry as the editor pane's: a 1px column at the
+  // guide's visual column, skipped when it is scrolled out of the row's window.
+  void AppendGuides(std::vector<editor::DecoratedTextFill>& fills, const std::vector<editor::IndentGuideRun>& runs,
+                    std::size_t visible_row, std::size_t row_start, std::size_t row_end, float text_x, float y,
+                    SDL_Color color) const {
+    for (const editor::IndentGuideRun& guide : runs) {
+      if (visible_row < guide.start_row || visible_row > guide.end_row) {
+        continue;
+      }
+      if (guide.column < row_start || guide.column >= row_end) {
+        continue;
+      }
+      fills.push_back(editor::DecoratedTextFill{
+          .rect = MakeRect(text_x + static_cast<float>(guide.column - row_start) * char_width_px, y - 1.0f, 1.0f,
+                           surface->line_height),
+          .color = color,
+      });
+    }
+  }
+};
+
+// One side of one row: where it is, and what that side's colours and column window are.
+struct WorkspaceShell::CompareSidePaint {
+  int row = 0;
+  float y = 0.0f;
+  bool selected = false;
+  std::size_t model_index = 0;
+  int visual_index = 0;
+  std::size_t presentation_index = 0;
+  DiffWrapRow wrap_row{};
+  const compare::CompareRow* compare_row = nullptr;
+  SDL_Color color{};
+  SDL_Color row_background{};
+  std::size_t row_start = 0;
+  std::size_t row_end = 0;
+  DiffSideStyle style{};
+};
+
 void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           const SDL_FRect& rect,
                                           CompareTabState& compare_tab_state,
@@ -205,23 +288,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                caret.selection_anchor->line != caret.position.line;
       });
   // The carets whose POSITION sits on `line`, as a sub-range of the sorted set.
-  const auto right_secondaries_on_line = [&](std::size_t line) {
-    if (right_secondaries_span_lines) {
-      return right_secondaries;
-    }
-    const auto lower = std::lower_bound(
-        right_secondaries.begin(), right_secondaries.end(), line,
-        [](const auto& caret, std::size_t value) { return caret.position.line < value; });
-    const auto upper = std::upper_bound(
-        lower, right_secondaries.end(), line,
-        [](std::size_t value, const auto& caret) { return value < caret.position.line; });
-    // Pointer arithmetic on the span's data, NOT `&*lower`: the row's line is past
-    // every caret on most rows, so `lower` is usually end() and dereferencing it
-    // to take its address is undefined -- UBSan reports it as a reference bound to
-    // a null SecondaryCaret, which is exactly how this shipped for one commit.
-    return right_secondaries.subspan(static_cast<std::size_t>(lower - right_secondaries.begin()),
-                                     static_cast<std::size_t>(upper - lower));
-  };
   // Built at frame prep (the focused diff's, from the blame service), with the
   // surface's other paint inputs (DiffSurfacePaint).
   const DiffSurfacePaint& paint = *project_inputs.paint;
@@ -395,33 +461,34 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                 /*caret_line=*/SIZE_MAX, 0, &compare_guide_right_runs_);
   }
 
-  // Append the guides covering visible `row` into `fills`, in the pane's own
-  // column window. Same geometry as the editor pane's: a 1px column at the
-  // guide's visual column, skipped when it is scrolled out of the row's window.
-  const auto append_guides = [&](std::vector<editor::DecoratedTextFill>& fills,
-                                 const std::vector<editor::IndentGuideRun>& runs,
-                                 std::size_t visible_row, std::size_t row_start,
-                                 std::size_t row_end, float text_x, float y) {
-    for (const editor::IndentGuideRun& guide : runs) {
-      if (visible_row < guide.start_row || visible_row > guide.end_row) {
-        continue;
-      }
-      if (guide.column < row_start || guide.column >= row_end) {
-        continue;
-      }
-      fills.push_back(editor::DecoratedTextFill{
-          .rect = MakeRect(text_x + static_cast<float>(guide.column - row_start) * char_width_px,
-                           y - 1.0f, 1.0f, surface.line_height),
-          .color = theme_.border,
-      });
-    }
-  };
-
   // One cursor per pane so a wrapped row's whitespace walk resumes where the
   // previous row of the same model row stopped, instead of re-deriving its start
   // from the line's own start on every row (TD-2026-08-14-218).
   editor::WhitespaceWalkCursor left_whitespace_cursor;
   editor::WhitespaceWalkCursor right_whitespace_cursor;
+  const CompareRowsPass rows{
+      .renderer = renderer,
+      .compare_tab = compare_tab,
+      .surface = &surface,
+      .row_renderer = &kDecoratedRowRenderer,
+      .wrapped = wrapped,
+      .render_whitespace_enabled = render_whitespace_enabled,
+      .draw_compare_caret = draw_compare_caret,
+      .char_width_px = char_width_px,
+      .right_diagnostics = right_diagnostics,
+      .right_plugin_decorations = right_plugin_decorations,
+      .blame_overlay = &blame_overlay,
+      .blame_index = &blame_index,
+      .bracket_match_pair = bracket_match_pair,
+      .right_interaction = &right_interaction,
+      .right_selection = right_selection,
+      .right_secondaries = right_secondaries,
+      .right_secondaries_span_lines = right_secondaries_span_lines,
+      .left_guides = &compare_guide_left_runs_,
+      .right_guides = &compare_guide_right_runs_,
+      .left_whitespace_cursor = &left_whitespace_cursor,
+      .right_whitespace_cursor = &right_whitespace_cursor,
+  };
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int visual_index = compare_tab->scroll_row + row;
     if (visual_index < 0 ||
@@ -582,362 +649,32 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           ? wrap_row.right_end
                                           : compare_tab->horizontal_scroll +
                                                 surface.right_visible_columns;
-    if (compare_row.left_line > 0 && wrap_row.left_present) {
-      std::array<char, 20> line_number_buf;
-      const std::vector<editor::SyntaxTokenKind>* cached_tokens = &CompareRowLeftTokens(*compare_tab, compare_row);
-      const std::vector<compare::CompareTextSpan>& left_changed_spans =
-          compare_row.left_changed_spans;
-      editor::RowDecorationInput left_input;
-      // Continuation rows render under the line's own indent (hanging indent), so
-      // the glyph origin shifts right by it while the visual span stays absolute.
-      left_input.text_x = surface.left_x + surface.gutter_width +
-                          static_cast<float>(wrap_row.left_indent) * char_width_px;
-      left_input.y = y;
-      left_input.char_width = char_width_px;
-      left_input.line_height = surface.line_height;
-      left_input.row_visual_start = left_row_start;
-      left_input.row_visual_end = left_row_end;
-      left_input.text = compare_row.left_text;
-      left_input.line_length = left_input.text.size();
-      left_input.tokens = cached_tokens;
-      left_input.plain_color = selected ? theme_.text_primary : left_color;
-      left_input.has_background_fill = true;
-      left_input.background_fill = editor::DecoratedTextFill{
-          .rect = MakeRect(surface.left_x, y - 1.0f,
-                           surface.gutter_width + surface.left_width, surface.line_height),
-          .color = left_row_background,
-      };
-      left_input.has_edge_stripe = left_style.stripe;
-      if (left_style.stripe) {
-        left_input.edge_stripe_fill = editor::DecoratedTextFill{
-            .rect = MakeRect(surface.left_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
-            .color = left_style.stripe_color,
-        };
-      }
-      left_input.changed_spans =
-          std::span<const compare::CompareTextSpan>(left_changed_spans);
-      left_input.changed_span_fill = left_style.token_fill;
-      left_input.layout = CompareVisibleLayoutForRow(
-          *compare_tab, model_index, false, left_row_start,
-          wrapped ? left_row_end - left_row_start : surface.left_visible_columns);
-      compare_whitespace_scratch_.clear();
-      if (render_whitespace_enabled) {
-        editor::AppendWhitespaceMarkers(
-            compare_whitespace_scratch_, compare_row.left_text,
-            compare_tab->right_viewport.tab_size(), left_row_start, left_row_end,
-            left_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled,
-            editor::WhitespaceRowResume{&left_whitespace_cursor, model_index});
-      }
-      append_guides(compare_whitespace_scratch_, compare_guide_left_runs_,
-                    static_cast<std::size_t>(row), left_row_start, left_row_end,
-                    left_input.text_x, y);
-      left_input.prepositioned_fills =
-          std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
-      left_input.text_renderer = &editor_text_renderer_;
-      left_input.theme = &theme_;
-      editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
-      editor::BuildDecoratedRow(left_row, left_input);
-      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, left_row);
-      if (wrap_row.first) {
-        draw_text(surface.left_x + kDiffGutterNumberInset,
-                  surface.gutter_width - 4.0f - kDiffGutterNumberInset,
-                  selected ? theme_.current_line_number : theme_.line_number,
-                  FormatLineNumber(static_cast<std::size_t>(compare_row.left_line),
-                                   line_number_buf));
-      }
-    } else if (wrapped && compare_row.left_line > 0) {
-      // Padding row: this side ran out of segments before the other did. Paint the
-      // row band so the pane stays a continuous column of the diff tint.
-      DrawFilledRect(renderer,
-                     MakeRect(surface.left_x, y - 1.0f,
-                              surface.gutter_width + surface.left_width, surface.line_height),
-                     left_row_background);
-    }
-    if (compare_row.right_line > 0 && wrap_row.right_present) {
-      std::array<char, 20> line_number_buf;
-      const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
-      // The same right_text is queried for the selection fill and (potentially) the caret
-      // visual column below. Build the boundary→visual column table once and reuse it instead
-      // of re-walking the line per query.
-      // A whole-line boundary->visual map is 16 bytes/char. On a pathological
-      // megaline (a minified bundle, or a single-line multi-hundred-MB right
-      // side) building it per visible row would be an O(line) walk and an
-      // ~8 GB allocation. Past the cap, skip the map: selection fills and the
-      // caret fall back to the identity column mapping (as the left side already
-      // does when it passes no map), keeping compare rendering bounded.
-      constexpr std::size_t kMaxCompareVisualMapBytes = 1u << 20;  // 1 MiB
-      // A line with no tab and no multi-byte code point maps byte offset to visual
-      // column exactly, which is what the null-map fallback already computes — so
-      // building the table for it is two heap vectors and an O(line) fill per
-      // visible row for an answer the fallback gets for free. Most source lines are
-      // that shape, and this was 87 % of a compare scroll-with-selection frame's
-      // allocations (TD-2026-08-06-159).
-      const bool right_map_allowed =
-          compare_row.right_text.size() <= kMaxCompareVisualMapBytes &&
-          !editor::TextLayout::VisualColumnsAreIdentity(compare_row.right_text);
-      std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
-      auto ensure_right_visual_map = [&]() -> const editor::TextLayout::LineVisualColumnMap* {
-        if (!right_map_allowed) {
-          return nullptr;
-        }
-        if (!right_visual_map.has_value()) {
-          right_visual_map.emplace(compare_row.right_text,
-                                   compare_tab->right_viewport.tab_size());
-        }
-        return &*right_visual_map;
-      };
-      // The primary selection, every SECONDARY caret's selection that reaches this
-      // row, and up to two bracket-match cells. A reused member rather than a
-      // fixed array: a Ctrl+D or box-select set is unbounded, and the pane used to
-      // paint only the primary -- so a multi-caret set on a compare tab edited
-      // text at places the user could not see.
-      std::vector<editor::RowFillSpan>& right_column_fills = compare_right_fill_scratch_;
-      right_column_fills.clear();
-      if (right_selection.has_value()) {
-        // Copy out of the optional so GCC's optimizer sees a definitely-initialized
-        // SelectionRange instead of complaining about `*right_selection` storage
-        // bytes through the inlined `std::optional` access path.
-        const editor::SelectionRange sel = *right_selection;
-        if (right_line_index >= sel.start.line && right_line_index <= sel.end.line) {
-          const std::size_t line_start =
-              right_line_index == sel.start.line ? sel.start.column : 0;
-          const std::size_t line_end =
-              right_line_index == sel.end.line ? sel.end.column
-                                               : compare_row.right_text.size();
-          // Resolution happens in the builder against this map; build it now so the
-          // caret below reuses the same table.
-          ensure_right_visual_map();
-          right_column_fills.push_back(editor::RowFillSpan{
-              .start_column = line_start,
-              .end_column = line_end,
-              .color = theme_.selection_fill,
-              .geometry = editor::RowFillSpan::Geometry::kRange,
-          });
-        }
-      }
-      // Every secondary caret's selection, same rule per caret, over the binary-
-      // searched run for this line rather than the whole set.
-      const auto row_secondaries = right_secondaries_on_line(right_line_index);
-      for (const auto& caret : row_secondaries) {
-        if (!caret.selection_anchor.has_value()) continue;
-        editor::SelectionRange sel{*caret.selection_anchor, caret.position};
-        if (sel.end.line < sel.start.line ||
-            (sel.end.line == sel.start.line && sel.end.column < sel.start.column)) {
-          std::swap(sel.start, sel.end);
-        }
-        if (right_line_index < sel.start.line || right_line_index > sel.end.line) continue;
-        ensure_right_visual_map();
-        right_column_fills.push_back(editor::RowFillSpan{
-            .start_column = right_line_index == sel.start.line ? sel.start.column : 0,
-            .end_column = right_line_index == sel.end.line ? sel.end.column
-                                                           : compare_row.right_text.size(),
-            .color = theme_.selection_fill,
-            .geometry = editor::RowFillSpan::Geometry::kRange,
-        });
-      }
-      if (bracket_match_pair.has_value()) {
-        const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
-          if (bracket_line != right_line_index ||
-              bracket_column >= compare_row.right_text.size()) {
-            return;
-          }
-          ensure_right_visual_map();
-          right_column_fills.push_back(editor::RowFillSpan{
-              .start_column = bracket_column,
-              .end_column = bracket_column + 1,
-              .color = theme_.bracket_match_background,
-              .geometry = editor::RowFillSpan::Geometry::kSingleCell,
-          });
-        };
-        append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
-        append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
-      }
-      // An unchanged row identical on both sides holds its tokens once, in the
-      // left window; the right one declined to fill it. Same predicate, one
-      // definition — see CompareRowRightTokensAliasLeft.
-      const std::vector<editor::SyntaxTokenKind>* cached_tokens =
-          CompareRowRightTokensAliasLeft(*compare_tab, static_cast<std::size_t>(model_index))
-              ? &CompareRowLeftTokens(*compare_tab, compare_row)
-              : &CompareRowRightOwnTokens(*compare_tab, compare_row);
-      const std::vector<compare::CompareTextSpan>& right_changed_spans =
-          compare_row.right_changed_spans;
-      editor::RowDecorationInput right_input;
-      right_input.text_x = right_interaction.text_x +
-                           static_cast<float>(wrap_row.right_indent) * char_width_px;
-      right_input.y = y;
-      right_input.char_width = right_interaction.char_width;
-      right_input.line_height = surface.line_height;
-      right_input.row_visual_start = right_row_start;
-      right_input.row_visual_end = right_row_end;
-      right_input.text = compare_row.right_text;
-      right_input.line_length = right_input.text.size();
-      right_input.tokens = cached_tokens;
-      right_input.plain_color = selected ? theme_.text_primary : right_color;
-      right_input.visual_map = right_visual_map.has_value() ? &*right_visual_map : nullptr;
-      right_input.has_background_fill = true;
-      right_input.background_fill = editor::DecoratedTextFill{
-          .rect = MakeRect(surface.right_x, y - 1.0f,
-                           surface.gutter_width + surface.right_width, surface.line_height),
-          .color = right_row_background,
-      };
-      right_input.has_edge_stripe = right_style.stripe;
-      if (right_style.stripe) {
-        right_input.edge_stripe_fill = editor::DecoratedTextFill{
-            .rect = MakeRect(surface.right_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
-            .color = right_style.stripe_color,
-        };
-      }
-      right_input.column_fills = std::span<const editor::RowFillSpan>(right_column_fills);
-      right_input.changed_spans =
-          std::span<const compare::CompareTextSpan>(right_changed_spans);
-      right_input.changed_span_fill = right_style.token_fill;
-      right_input.layout = CompareVisibleLayoutForRow(
-          *compare_tab, model_index, true, right_row_start,
-          wrapped ? right_row_end - right_row_start : surface.right_visible_columns);
-      // The editable pane is where working-tree review edits happen, and it was
-      // the one text surface in the product where "Render Whitespace" and indent
-      // guides did nothing (TD-2026-08-13-206). Same marker and guide geometry as
-      // the editor pane — one implementation each, in RowDecorationBuilder and
-      // IndentGuides.
-      compare_whitespace_scratch_.clear();
-      if (render_whitespace_enabled) {
-        editor::AppendWhitespaceMarkers(
-            compare_whitespace_scratch_, compare_row.right_text,
-            compare_tab->right_viewport.tab_size(), right_row_start, right_row_end,
-            right_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled,
-            editor::WhitespaceRowResume{&right_whitespace_cursor, model_index});
-      }
-      append_guides(compare_whitespace_scratch_, compare_guide_right_runs_,
-                    static_cast<std::size_t>(row), right_row_start, right_row_end,
-                    right_input.text_x, y);
-      right_input.prepositioned_fills =
-          std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
-      // Plugin text styles, keyed by the RIGHT pane's own line numbers — the only
-      // side whose line space matches the file the decoration was published
-      // against (TD-2026-08-13-206). Same field the editor renderer fills, so a
-      // decoration paints identically in either surface.
-      if (right_plugin_decorations != nullptr) {
-        right_input.text_styles = right_plugin_decorations->TextStylesForLine(
-            static_cast<std::uint32_t>(right_line_index));
-      }
-      if (!right_diagnostics.empty()) {
-        right_input.diagnostics = right_diagnostics;
-        right_input.diagnostic_line_index = right_line_index;
-        right_input.diagnostic_horizontal_scroll = right_row_start;
-        right_input.diagnostic_visible_columns =
-            wrapped ? right_row_end - right_row_start : surface.right_visible_columns;
-        right_input.tab_size = compare_tab->right_viewport.tab_size();
-      }
-      right_input.text_renderer = &editor_text_renderer_;
-      right_input.theme = &theme_;
-      editor::DecoratedTextRow& right_row = compare_right_scratch_row_;
-      editor::BuildDecoratedRow(right_row, right_input);
-      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, right_row);
-      if (!right_diagnostics.empty() && wrap_row.first) {
-        if (const auto severity = editor::HighestDiagnosticSeverityForLine(right_diagnostics, right_line_index);
-            severity.has_value()) {
-          editor::DrawDiagnosticGutterMarker(renderer, theme_, surface.right_x, y,
-                                             surface.gutter_width, surface.line_height,
-                                             *severity);
-        }
-      }
-      // Plugin gutter marks share the diagnostic marker slot and are drawn after
-      // it, which is exactly the precedence EditorViewRenderer uses — a mark and a
-      // diagnostic on the same line resolve the same way in both surfaces. Once
-      // per logical line, so a wrapped row does not stamp it per segment.
-      if (right_plugin_decorations != nullptr && wrap_row.first) {
-        const std::span<const editor::GutterMarkDecoration> marks =
-            right_plugin_decorations->GutterMarksForLine(
-                static_cast<std::uint32_t>(right_line_index));
-        if (!marks.empty()) {
-          // Sorted (line, -priority), so the first entry is the winner of the
-          // single slot.
-          editor::GutterIconRegistry::Draw(renderer, marks.front().shape, marks.front().color,
-                                           surface.right_x, y, surface.gutter_width,
-                                           surface.line_height);
-        }
-      }
-      if (wrap_row.first) {
-        draw_text(surface.right_x + kDiffGutterNumberInset,
-                  surface.gutter_width - 4.0f - kDiffGutterNumberInset,
-                  selected ? theme_.current_line_number : theme_.line_number,
-                  FormatLineNumber(static_cast<std::size_t>(compare_row.right_line),
-                                   line_number_buf));
-      }
-      if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
-        const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
-        const std::size_t caret_visual =
-            caret_map != nullptr
-                ? caret_map->VisualColumnFor(compare_tab->right_viewport.cursor_column())
-                : std::min(compare_tab->right_viewport.cursor_column(),
-                           compare_row.right_text.size());
-        // Under wrap the caret belongs to exactly one segment, and its on-screen
-        // cell is the hanging indent plus the offset into that segment.
-        const bool caret_on_this_row =
-            wrapped ? compare_tab->wrap_layout.RowForUnitColumn(
-                          presentation_index, caret_visual, /*right_side=*/true) ==
-                          static_cast<std::size_t>(visual_index)
-                    : caret_visual >= right_row_start && caret_visual <= right_row_end;
-        if (caret_on_this_row) {
-          const std::size_t caret_cell =
-              wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
-          DrawFilledRect(
-              renderer, MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f,
-                                 surface.line_height),
-              theme_.cursor);
-        }
-      }
-      // Every SECONDARY caret on this line, by the same rule. Ctrl+D and the box
-      // gesture both resolve through ActiveEditableViewport, which IS this pane on
-      // a compare tab, so a multi-caret set here is reachable -- and until this
-      // loop existed it edited text at places with no caret drawn.
-      if (draw_compare_caret && !row_secondaries.empty()) {
-        const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
-        for (const auto& caret : row_secondaries) {
-          if (caret.position.line != right_line_index) continue;
-          const std::size_t caret_visual =
-              caret_map != nullptr
-                  ? caret_map->VisualColumnFor(caret.position.column)
-                  : std::min(caret.position.column, compare_row.right_text.size());
-          const bool on_this_row =
-              wrapped ? compare_tab->wrap_layout.RowForUnitColumn(
-                            presentation_index, caret_visual, /*right_side=*/true) ==
-                            static_cast<std::size_t>(visual_index)
-                      : caret_visual >= right_row_start && caret_visual <= right_row_end;
-          if (!on_this_row) continue;
-          const std::size_t caret_cell =
-              wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
-          DrawFilledRect(
-              renderer, MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f,
-                                 surface.line_height),
-              theme_.cursor);
-        }
-      }
-      // The annotation is anchored past the END of the line, i.e. on its last
-      // wrapped row; the rect is absolute, so painting it once there is enough.
-      const bool blame_row =
-          !wrapped || compare_tab->wrap_layout.RowForUnitColumn(
-                          presentation_index, std::numeric_limits<std::size_t>::max(),
-                          /*right_side=*/true) == static_cast<std::size_t>(visual_index);
-      if (blame_row && blame_overlay.has_value() && blame_overlay->visible) {
-        while (blame_index < blame_overlay->lines.size() &&
-               blame_overlay->lines[blame_index].line_index < right_line_index) {
-          ++blame_index;
-        }
-        if (blame_index < blame_overlay->lines.size() &&
-            blame_overlay->lines[blame_index].line_index == right_line_index) {
-          editor_text_renderer_.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
-                                     blame_overlay->lines[blame_index].rect.y,
-                                     theme_.text_disabled, right_row_background,
-                                     blame_overlay->lines[blame_index].text);
-        }
-      }
-    } else if (wrapped && compare_row.right_line > 0) {
-      DrawFilledRect(renderer,
-                     MakeRect(surface.right_x, y - 1.0f,
-                              surface.gutter_width + surface.right_width, surface.line_height),
-                     right_row_background);
-    }
+    PaintCompareLeftSide(rows, CompareSidePaint{.row = row,
+                                                .y = y,
+                                                .selected = selected,
+                                                .model_index = model_index,
+                                                .visual_index = visual_index,
+                                                .presentation_index = presentation_index,
+                                                .wrap_row = wrap_row,
+                                                .compare_row = &compare_row,
+                                                .color = left_color,
+                                                .row_background = left_row_background,
+                                                .row_start = left_row_start,
+                                                .row_end = left_row_end,
+                                                .style = left_style});
+    PaintCompareRightSide(rows, CompareSidePaint{.row = row,
+                                                 .y = y,
+                                                 .selected = selected,
+                                                 .model_index = model_index,
+                                                 .visual_index = visual_index,
+                                                 .presentation_index = presentation_index,
+                                                 .wrap_row = wrap_row,
+                                                 .compare_row = &compare_row,
+                                                 .color = right_color,
+                                                 .row_background = right_row_background,
+                                                 .row_start = right_row_start,
+                                                 .row_end = right_row_end,
+                                                 .style = right_style});
     if (wrap_row.first) {
       draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
     }
@@ -980,6 +717,408 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
     }
   }
+  }
+}
+
+void WorkspaceShell::PaintCompareLeftSide(const CompareRowsPass& rows, const CompareSidePaint& side) {
+  const SDL_Color left_color = side.color;
+  const SDL_Color left_row_background = side.row_background;
+  const std::size_t left_row_start = side.row_start;
+  const std::size_t left_row_end = side.row_end;
+  const DiffSideStyle& left_style = side.style;
+  SDL_Renderer* const renderer = rows.renderer;
+  CompareTabState* const compare_tab = rows.compare_tab;
+  const CompareSurfaceLayout& surface = *rows.surface;
+  const editor::DecoratedTextGridRenderer& kDecoratedRowRenderer = *rows.row_renderer;
+  const bool wrapped = rows.wrapped;
+  const bool render_whitespace_enabled = rows.render_whitespace_enabled;
+  const float char_width_px = rows.char_width_px;
+  const std::vector<editor::IndentGuideRun>& compare_guide_left_runs_ = *rows.left_guides;
+  editor::WhitespaceWalkCursor& left_whitespace_cursor = *rows.left_whitespace_cursor;
+  const int row = side.row;
+  const float y = side.y;
+  const bool selected = side.selected;
+  const std::size_t model_index = side.model_index;
+  const DiffWrapRow& wrap_row = side.wrap_row;
+  const compare::CompareRow& compare_row = *side.compare_row;
+  const auto append_guides = [&](std::vector<editor::DecoratedTextFill>& fills,
+                                 const std::vector<editor::IndentGuideRun>& runs, std::size_t visible_row,
+                                 std::size_t row_start, std::size_t row_end, float text_x, float row_y) {
+    rows.AppendGuides(fills, runs, visible_row, row_start, row_end, text_x, row_y, theme_.border);
+  };
+  const auto draw_text = [&](float x, float width, SDL_Color color, std::string_view text) {
+    const std::string_view display_text = TruncateLabelView(text, width);
+    if (display_text.empty()) {
+      return;
+    }
+    editor_text_renderer_.DrawString(renderer, x, y, color, display_text);
+  };
+  if (compare_row.left_line > 0 && wrap_row.left_present) {
+    std::array<char, 20> line_number_buf;
+    const std::vector<editor::SyntaxTokenKind>* cached_tokens = &CompareRowLeftTokens(*compare_tab, compare_row);
+    const std::vector<compare::CompareTextSpan>& left_changed_spans = compare_row.left_changed_spans;
+    editor::RowDecorationInput left_input;
+    // Continuation rows render under the line's own indent (hanging indent), so
+    // the glyph origin shifts right by it while the visual span stays absolute.
+    left_input.text_x =
+        surface.left_x + surface.gutter_width + static_cast<float>(wrap_row.left_indent) * char_width_px;
+    left_input.y = y;
+    left_input.char_width = char_width_px;
+    left_input.line_height = surface.line_height;
+    left_input.row_visual_start = left_row_start;
+    left_input.row_visual_end = left_row_end;
+    left_input.text = compare_row.left_text;
+    left_input.line_length = left_input.text.size();
+    left_input.tokens = cached_tokens;
+    left_input.plain_color = selected ? theme_.text_primary : left_color;
+    left_input.has_background_fill = true;
+    left_input.background_fill = editor::DecoratedTextFill{
+        .rect = MakeRect(surface.left_x, y - 1.0f, surface.gutter_width + surface.left_width, surface.line_height),
+        .color = left_row_background,
+    };
+    left_input.has_edge_stripe = left_style.stripe;
+    if (left_style.stripe) {
+      left_input.edge_stripe_fill = editor::DecoratedTextFill{
+          .rect = MakeRect(surface.left_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
+          .color = left_style.stripe_color,
+      };
+    }
+    left_input.changed_spans = std::span<const compare::CompareTextSpan>(left_changed_spans);
+    left_input.changed_span_fill = left_style.token_fill;
+    left_input.layout =
+        CompareVisibleLayoutForRow(*compare_tab, model_index, false, left_row_start,
+                                   wrapped ? left_row_end - left_row_start : surface.left_visible_columns);
+    compare_whitespace_scratch_.clear();
+    if (render_whitespace_enabled) {
+      editor::AppendWhitespaceMarkers(compare_whitespace_scratch_, compare_row.left_text,
+                                      compare_tab->right_viewport.tab_size(), left_row_start, left_row_end,
+                                      left_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled,
+                                      editor::WhitespaceRowResume{&left_whitespace_cursor, model_index});
+    }
+    append_guides(compare_whitespace_scratch_, compare_guide_left_runs_, static_cast<std::size_t>(row), left_row_start,
+                  left_row_end, left_input.text_x, y);
+    left_input.prepositioned_fills = std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
+    left_input.text_renderer = &editor_text_renderer_;
+    left_input.theme = &theme_;
+    editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
+    editor::BuildDecoratedRow(left_row, left_input);
+    kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, left_row);
+    if (wrap_row.first) {
+      draw_text(surface.left_x + kDiffGutterNumberInset, surface.gutter_width - 4.0f - kDiffGutterNumberInset,
+                selected ? theme_.current_line_number : theme_.line_number,
+                FormatLineNumber(static_cast<std::size_t>(compare_row.left_line), line_number_buf));
+    }
+  } else if (wrapped && compare_row.left_line > 0) {
+    // Padding row: this side ran out of segments before the other did. Paint the
+    // row band so the pane stays a continuous column of the diff tint.
+    DrawFilledRect(renderer,
+                   MakeRect(surface.left_x, y - 1.0f, surface.gutter_width + surface.left_width, surface.line_height),
+                   left_row_background);
+  }
+}
+
+void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const CompareSidePaint& side) {
+  const SDL_Color right_color = side.color;
+  const SDL_Color right_row_background = side.row_background;
+  const std::size_t right_row_start = side.row_start;
+  const std::size_t right_row_end = side.row_end;
+  const DiffSideStyle& right_style = side.style;
+  SDL_Renderer* const renderer = rows.renderer;
+  CompareTabState* const compare_tab = rows.compare_tab;
+  const CompareSurfaceLayout& surface = *rows.surface;
+  const editor::DecoratedTextGridRenderer& kDecoratedRowRenderer = *rows.row_renderer;
+  const bool wrapped = rows.wrapped;
+  const bool render_whitespace_enabled = rows.render_whitespace_enabled;
+  const bool draw_compare_caret = rows.draw_compare_caret;
+  const float char_width_px = rows.char_width_px;
+  const std::span<const editor::PublishedDiagnostic> right_diagnostics = rows.right_diagnostics;
+  const editor::FileDecorations* const right_plugin_decorations = rows.right_plugin_decorations;
+  const std::optional<editor::EditorBlameOverlay>& blame_overlay = *rows.blame_overlay;
+  std::size_t& blame_index = *rows.blame_index;
+  const std::optional<editor::BracketMatchPair>& bracket_match_pair = rows.bracket_match_pair;
+  const TextGridInteractionLayout& right_interaction = *rows.right_interaction;
+  const std::optional<editor::SelectionRange>& right_selection = rows.right_selection;
+  const std::vector<editor::IndentGuideRun>& compare_guide_right_runs_ = *rows.right_guides;
+  editor::WhitespaceWalkCursor& right_whitespace_cursor = *rows.right_whitespace_cursor;
+  const int row = side.row;
+  const float y = side.y;
+  const bool selected = side.selected;
+  const std::size_t model_index = side.model_index;
+  const int visual_index = side.visual_index;
+  const std::size_t presentation_index = side.presentation_index;
+  const DiffWrapRow& wrap_row = side.wrap_row;
+  const compare::CompareRow& compare_row = *side.compare_row;
+  const auto right_secondaries_on_line = [&rows](std::size_t line) { return rows.RightSecondariesOnLine(line); };
+  const auto append_guides = [&](std::vector<editor::DecoratedTextFill>& fills,
+                                 const std::vector<editor::IndentGuideRun>& runs, std::size_t visible_row,
+                                 std::size_t row_start, std::size_t row_end, float text_x, float row_y) {
+    rows.AppendGuides(fills, runs, visible_row, row_start, row_end, text_x, row_y, theme_.border);
+  };
+  const auto draw_text = [&](float x, float width, SDL_Color color, std::string_view text) {
+    const std::string_view display_text = TruncateLabelView(text, width);
+    if (display_text.empty()) {
+      return;
+    }
+    editor_text_renderer_.DrawString(renderer, x, y, color, display_text);
+  };
+  if (compare_row.right_line > 0 && wrap_row.right_present) {
+    std::array<char, 20> line_number_buf;
+    const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
+    // The same right_text is queried for the selection fill and (potentially) the caret
+    // visual column below. Build the boundary→visual column table once and reuse it instead
+    // of re-walking the line per query.
+    // A whole-line boundary->visual map is 16 bytes/char. On a pathological
+    // megaline (a minified bundle, or a single-line multi-hundred-MB right
+    // side) building it per visible row would be an O(line) walk and an
+    // ~8 GB allocation. Past the cap, skip the map: selection fills and the
+    // caret fall back to the identity column mapping (as the left side already
+    // does when it passes no map), keeping compare rendering bounded.
+    constexpr std::size_t kMaxCompareVisualMapBytes = 1u << 20;  // 1 MiB
+    // A line with no tab and no multi-byte code point maps byte offset to visual
+    // column exactly, which is what the null-map fallback already computes — so
+    // building the table for it is two heap vectors and an O(line) fill per
+    // visible row for an answer the fallback gets for free. Most source lines are
+    // that shape, and this was 87 % of a compare scroll-with-selection frame's
+    // allocations (TD-2026-08-06-159).
+    const bool right_map_allowed = compare_row.right_text.size() <= kMaxCompareVisualMapBytes &&
+                                   !editor::TextLayout::VisualColumnsAreIdentity(compare_row.right_text);
+    std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
+    auto ensure_right_visual_map = [&]() -> const editor::TextLayout::LineVisualColumnMap* {
+      if (!right_map_allowed) {
+        return nullptr;
+      }
+      if (!right_visual_map.has_value()) {
+        right_visual_map.emplace(compare_row.right_text, compare_tab->right_viewport.tab_size());
+      }
+      return &*right_visual_map;
+    };
+    // The primary selection, every SECONDARY caret's selection that reaches this
+    // row, and up to two bracket-match cells. A reused member rather than a
+    // fixed array: a Ctrl+D or box-select set is unbounded, and the pane used to
+    // paint only the primary -- so a multi-caret set on a compare tab edited
+    // text at places the user could not see.
+    std::vector<editor::RowFillSpan>& right_column_fills = compare_right_fill_scratch_;
+    right_column_fills.clear();
+    if (right_selection.has_value()) {
+      // Copy out of the optional so GCC's optimizer sees a definitely-initialized
+      // SelectionRange instead of complaining about `*right_selection` storage
+      // bytes through the inlined `std::optional` access path.
+      const editor::SelectionRange sel = *right_selection;
+      if (right_line_index >= sel.start.line && right_line_index <= sel.end.line) {
+        const std::size_t line_start = right_line_index == sel.start.line ? sel.start.column : 0;
+        const std::size_t line_end = right_line_index == sel.end.line ? sel.end.column : compare_row.right_text.size();
+        // Resolution happens in the builder against this map; build it now so the
+        // caret below reuses the same table.
+        ensure_right_visual_map();
+        right_column_fills.push_back(editor::RowFillSpan{
+            .start_column = line_start,
+            .end_column = line_end,
+            .color = theme_.selection_fill,
+            .geometry = editor::RowFillSpan::Geometry::kRange,
+        });
+      }
+    }
+    // Every secondary caret's selection, same rule per caret, over the binary-
+    // searched run for this line rather than the whole set.
+    const auto row_secondaries = right_secondaries_on_line(right_line_index);
+    for (const auto& caret : row_secondaries) {
+      if (!caret.selection_anchor.has_value())
+        continue;
+      editor::SelectionRange sel{*caret.selection_anchor, caret.position};
+      if (sel.end.line < sel.start.line || (sel.end.line == sel.start.line && sel.end.column < sel.start.column)) {
+        std::swap(sel.start, sel.end);
+      }
+      if (right_line_index < sel.start.line || right_line_index > sel.end.line)
+        continue;
+      ensure_right_visual_map();
+      right_column_fills.push_back(editor::RowFillSpan{
+          .start_column = right_line_index == sel.start.line ? sel.start.column : 0,
+          .end_column = right_line_index == sel.end.line ? sel.end.column : compare_row.right_text.size(),
+          .color = theme_.selection_fill,
+          .geometry = editor::RowFillSpan::Geometry::kRange,
+      });
+    }
+    if (bracket_match_pair.has_value()) {
+      const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
+        if (bracket_line != right_line_index || bracket_column >= compare_row.right_text.size()) {
+          return;
+        }
+        ensure_right_visual_map();
+        right_column_fills.push_back(editor::RowFillSpan{
+            .start_column = bracket_column,
+            .end_column = bracket_column + 1,
+            .color = theme_.bracket_match_background,
+            .geometry = editor::RowFillSpan::Geometry::kSingleCell,
+        });
+      };
+      append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
+      append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
+    }
+    // An unchanged row identical on both sides holds its tokens once, in the
+    // left window; the right one declined to fill it. Same predicate, one
+    // definition — see CompareRowRightTokensAliasLeft.
+    const std::vector<editor::SyntaxTokenKind>* cached_tokens =
+        CompareRowRightTokensAliasLeft(*compare_tab, static_cast<std::size_t>(model_index))
+            ? &CompareRowLeftTokens(*compare_tab, compare_row)
+            : &CompareRowRightOwnTokens(*compare_tab, compare_row);
+    const std::vector<compare::CompareTextSpan>& right_changed_spans = compare_row.right_changed_spans;
+    editor::RowDecorationInput right_input;
+    right_input.text_x = right_interaction.text_x + static_cast<float>(wrap_row.right_indent) * char_width_px;
+    right_input.y = y;
+    right_input.char_width = right_interaction.char_width;
+    right_input.line_height = surface.line_height;
+    right_input.row_visual_start = right_row_start;
+    right_input.row_visual_end = right_row_end;
+    right_input.text = compare_row.right_text;
+    right_input.line_length = right_input.text.size();
+    right_input.tokens = cached_tokens;
+    right_input.plain_color = selected ? theme_.text_primary : right_color;
+    right_input.visual_map = right_visual_map.has_value() ? &*right_visual_map : nullptr;
+    right_input.has_background_fill = true;
+    right_input.background_fill = editor::DecoratedTextFill{
+        .rect = MakeRect(surface.right_x, y - 1.0f, surface.gutter_width + surface.right_width, surface.line_height),
+        .color = right_row_background,
+    };
+    right_input.has_edge_stripe = right_style.stripe;
+    if (right_style.stripe) {
+      right_input.edge_stripe_fill = editor::DecoratedTextFill{
+          .rect = MakeRect(surface.right_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
+          .color = right_style.stripe_color,
+      };
+    }
+    right_input.column_fills = std::span<const editor::RowFillSpan>(right_column_fills);
+    right_input.changed_spans = std::span<const compare::CompareTextSpan>(right_changed_spans);
+    right_input.changed_span_fill = right_style.token_fill;
+    right_input.layout =
+        CompareVisibleLayoutForRow(*compare_tab, model_index, true, right_row_start,
+                                   wrapped ? right_row_end - right_row_start : surface.right_visible_columns);
+    // The editable pane is where working-tree review edits happen, and it was
+    // the one text surface in the product where "Render Whitespace" and indent
+    // guides did nothing (TD-2026-08-13-206). Same marker and guide geometry as
+    // the editor pane — one implementation each, in RowDecorationBuilder and
+    // IndentGuides.
+    compare_whitespace_scratch_.clear();
+    if (render_whitespace_enabled) {
+      editor::AppendWhitespaceMarkers(compare_whitespace_scratch_, compare_row.right_text,
+                                      compare_tab->right_viewport.tab_size(), right_row_start, right_row_end,
+                                      right_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled,
+                                      editor::WhitespaceRowResume{&right_whitespace_cursor, model_index});
+    }
+    append_guides(compare_whitespace_scratch_, compare_guide_right_runs_, static_cast<std::size_t>(row),
+                  right_row_start, right_row_end, right_input.text_x, y);
+    right_input.prepositioned_fills = std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
+    // Plugin text styles, keyed by the RIGHT pane's own line numbers — the only
+    // side whose line space matches the file the decoration was published
+    // against (TD-2026-08-13-206). Same field the editor renderer fills, so a
+    // decoration paints identically in either surface.
+    if (right_plugin_decorations != nullptr) {
+      right_input.text_styles =
+          right_plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(right_line_index));
+    }
+    if (!right_diagnostics.empty()) {
+      right_input.diagnostics = right_diagnostics;
+      right_input.diagnostic_line_index = right_line_index;
+      right_input.diagnostic_horizontal_scroll = right_row_start;
+      right_input.diagnostic_visible_columns =
+          wrapped ? right_row_end - right_row_start : surface.right_visible_columns;
+      right_input.tab_size = compare_tab->right_viewport.tab_size();
+    }
+    right_input.text_renderer = &editor_text_renderer_;
+    right_input.theme = &theme_;
+    editor::DecoratedTextRow& right_row = compare_right_scratch_row_;
+    editor::BuildDecoratedRow(right_row, right_input);
+    kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, right_row);
+    if (!right_diagnostics.empty() && wrap_row.first) {
+      if (const auto severity = editor::HighestDiagnosticSeverityForLine(right_diagnostics, right_line_index);
+          severity.has_value()) {
+        editor::DrawDiagnosticGutterMarker(renderer, theme_, surface.right_x, y, surface.gutter_width,
+                                           surface.line_height, *severity);
+      }
+    }
+    // Plugin gutter marks share the diagnostic marker slot and are drawn after
+    // it, which is exactly the precedence EditorViewRenderer uses — a mark and a
+    // diagnostic on the same line resolve the same way in both surfaces. Once
+    // per logical line, so a wrapped row does not stamp it per segment.
+    if (right_plugin_decorations != nullptr && wrap_row.first) {
+      const std::span<const editor::GutterMarkDecoration> marks =
+          right_plugin_decorations->GutterMarksForLine(static_cast<std::uint32_t>(right_line_index));
+      if (!marks.empty()) {
+        // Sorted (line, -priority), so the first entry is the winner of the
+        // single slot.
+        editor::GutterIconRegistry::Draw(renderer, marks.front().shape, marks.front().color, surface.right_x, y,
+                                         surface.gutter_width, surface.line_height);
+      }
+    }
+    if (wrap_row.first) {
+      draw_text(surface.right_x + kDiffGutterNumberInset, surface.gutter_width - 4.0f - kDiffGutterNumberInset,
+                selected ? theme_.current_line_number : theme_.line_number,
+                FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
+    }
+    if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
+      const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
+      const std::size_t caret_visual =
+          caret_map != nullptr ? caret_map->VisualColumnFor(compare_tab->right_viewport.cursor_column())
+                               : std::min(compare_tab->right_viewport.cursor_column(), compare_row.right_text.size());
+      // Under wrap the caret belongs to exactly one segment, and its on-screen
+      // cell is the hanging indent plus the offset into that segment.
+      const bool caret_on_this_row =
+          wrapped ? compare_tab->wrap_layout.RowForUnitColumn(presentation_index, caret_visual, /*right_side=*/true) ==
+                        static_cast<std::size_t>(visual_index)
+                  : caret_visual >= right_row_start && caret_visual <= right_row_end;
+      if (caret_on_this_row) {
+        const std::size_t caret_cell =
+            wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
+        DrawFilledRect(renderer,
+                       MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f, surface.line_height),
+                       theme_.cursor);
+      }
+    }
+    // Every SECONDARY caret on this line, by the same rule. Ctrl+D and the box
+    // gesture both resolve through ActiveEditableViewport, which IS this pane on
+    // a compare tab, so a multi-caret set here is reachable -- and until this
+    // loop existed it edited text at places with no caret drawn.
+    if (draw_compare_caret && !row_secondaries.empty()) {
+      const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
+      for (const auto& caret : row_secondaries) {
+        if (caret.position.line != right_line_index)
+          continue;
+        const std::size_t caret_visual = caret_map != nullptr
+                                             ? caret_map->VisualColumnFor(caret.position.column)
+                                             : std::min(caret.position.column, compare_row.right_text.size());
+        const bool on_this_row = wrapped ? compare_tab->wrap_layout.RowForUnitColumn(presentation_index, caret_visual,
+                                                                                     /*right_side=*/true) ==
+                                               static_cast<std::size_t>(visual_index)
+                                         : caret_visual >= right_row_start && caret_visual <= right_row_end;
+        if (!on_this_row)
+          continue;
+        const std::size_t caret_cell =
+            wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
+        DrawFilledRect(renderer,
+                       MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f, surface.line_height),
+                       theme_.cursor);
+      }
+    }
+    // The annotation is anchored past the END of the line, i.e. on its last
+    // wrapped row; the rect is absolute, so painting it once there is enough.
+    const bool blame_row = !wrapped || compare_tab->wrap_layout.RowForUnitColumn(
+                                           presentation_index, std::numeric_limits<std::size_t>::max(),
+                                           /*right_side=*/true) == static_cast<std::size_t>(visual_index);
+    if (blame_row && blame_overlay.has_value() && blame_overlay->visible) {
+      while (blame_index < blame_overlay->lines.size() &&
+             blame_overlay->lines[blame_index].line_index < right_line_index) {
+        ++blame_index;
+      }
+      if (blame_index < blame_overlay->lines.size() &&
+          blame_overlay->lines[blame_index].line_index == right_line_index) {
+        editor_text_renderer_.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
+                                           blame_overlay->lines[blame_index].rect.y, theme_.text_disabled,
+                                           right_row_background, blame_overlay->lines[blame_index].text);
+      }
+    }
+  } else if (wrapped && compare_row.right_line > 0) {
+    DrawFilledRect(renderer,
+                   MakeRect(surface.right_x, y - 1.0f, surface.gutter_width + surface.right_width, surface.line_height),
+                   right_row_background);
   }
 }
 

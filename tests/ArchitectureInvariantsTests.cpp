@@ -272,8 +272,11 @@ void TestArchitectureFileSizes() {
              // 1522: the compare/merge surface layouts and their scroll clamps moved
              // to workspace/DiffSurfaceLayout.h as plain data and free functions,
              // paying for PrepareFrameOnce's phase and per-surface members.
+             // 1516: the merge-conflict tracking, popup geometry, KeycodeToAscii and the
+             // editor-group accessors moved out as free functions, paying for the cursor,
+             // mouse-dispatch and compare-side steps.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1522);
+                                                     1516);
            });
 
   AssertRuleResultsPass(results);

@@ -915,6 +915,10 @@
                             CompareTabState& compare_tab,
                             bool draw_compare_caret,
                             const CompareRenderProjectInputs& project_inputs);
+  struct CompareRowsPass;
+  struct CompareSidePaint;
+  void PaintCompareLeftSide(const CompareRowsPass& rows, const CompareSidePaint& side);
+  void PaintCompareRightSide(const CompareRowsPass& rows, const CompareSidePaint& side);
   void RenderMergeSurface(SDL_Renderer* renderer,
                           const SDL_FRect& rect,
                           MergeTabState& merge_tab,
