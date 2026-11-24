@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "project/GitCommandUtil.h"
 #include "project/GitRepository.h"
 #include "util/Parse.h"
 
@@ -43,8 +44,7 @@ std::vector<GitWorktree> ParseGitWorktreeList(std::string_view porcelain_z) {
     } else if (key == "HEAD") {
       current.head = std::string(value);
     } else if (key == "branch") {
-      constexpr std::string_view kHeads = "refs/heads/";
-      current.branch = std::string(value.starts_with(kHeads) ? value.substr(kHeads.size()) : value);
+      current.branch = std::string(internal::StripBranchRefPrefix(value));
     } else if (key == "bare") {
       current.bare = true;
     } else if (key == "locked") {

@@ -26,6 +26,11 @@ import sys
 
 # name -> why these are legitimately separate values, not one question answered twice.
 ACCEPTED_DUPLICATES = {
+    "kFormatVersion": "each persisted format (version history, roaming review, roaming session) versions independently",
+    "kFrames": "a terminal life-trace ring size vs a redraw trace window; unrelated counts",
+    "kMaxNameBytes": "a filesystem name (NAME_MAX) vs an LSP symbol name ceiling; unrelated limits",
+    "kNoMatch": "int and size_t sentinels in a fuzzy matcher and a terminal row painter; unrelated",
+    "kRetainTokens": "scratch-retention thresholds of two separate per-thread caches (syntax diff, hunk refinement)",
     "kDivider": "a layout thickness vs a control-UI element name; unrelated",
     "kMaxDepth": "JSON formatter recursion guard vs quick-pick tree depth; unrelated limits",
     "kMaxEntries": "pattern cache, navigation history and action log sizes; unrelated",
@@ -49,11 +54,8 @@ ACCEPTED_DUPLICATES = {
     "kMaxQueuedBytes": "DAP and LSP client queues, separately tuned",
     "kMaxQueuedMessages": "same",
     "kMaxTerminalPasteBytes": "the input coordinator's guard and the session's own, deliberately equal",
-    "kCommitButtonHeight": "the render TU shadows the shared header's value; harmless but worth collapsing",
     "kScrollbarInset": "both alias the one kWorkspaceScrollbarInset",
     "kScrollbarThickness": "both alias the one kWorkspaceScrollbarThickness",
-    "kOverlayInset": "overlay chrome padding, view-model builder and render TU",
-    "kSidebarInset": "render TU static_asserts it against kCommitWorkflowFieldInset",
     "kMaxRequestLineBytes": "both alias the one kMaxControlRequestLineBytes",
 }
 

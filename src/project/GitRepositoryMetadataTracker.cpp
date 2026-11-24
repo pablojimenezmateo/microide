@@ -77,11 +77,7 @@ std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& proje
   // the path's leaf here made the status bar flip from one to the other when the
   // first snapshot landed. A HEAD outside `refs/heads/` (a `refs/remotes/...`
   // checkout is not a branch) is reported by its full ref, as git does.
-  constexpr std::string_view kHeadsPrefix = "refs/heads/";
-  std::string_view name = *ref;
-  if (name.starts_with(kHeadsPrefix)) {
-    name.remove_prefix(kHeadsPrefix.size());
-  }
+  const std::string_view name = internal::StripBranchRefPrefix(*ref);
   if (name.empty()) {
     return std::nullopt;
   }

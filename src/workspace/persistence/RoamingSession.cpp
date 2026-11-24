@@ -23,27 +23,6 @@ std::string RelativeUnder(const std::filesystem::path& root, const std::filesyst
   return relative.generic_string();
 }
 
-// A path another machine named: relative, normal, and under the root by
-// construction -- no "..", no ".", no empty component, nothing absolute.
-bool IsPortablePath(std::string_view path) {
-  if (path.empty() || path.size() > kMaxRoamingPathBytes || path.front() == '/' ||
-      path.find('\0') != std::string_view::npos) {
-    return false;
-  }
-  while (!path.empty()) {
-    const std::size_t slash = path.find('/');
-    const std::string_view component = path.substr(0, slash);
-    if (component.empty() || component == "." || component == "..") {
-      return false;
-    }
-    path.remove_prefix(slash == std::string_view::npos ? path.size() : slash + 1);
-    if (slash != std::string_view::npos && path.empty()) {
-      return false;  // a trailing slash
-    }
-  }
-  return true;
-}
-
 util::JsonValue FilesJson(const RoamingSession& roaming) {
   util::JsonArray files;
   files.reserve(roaming.files.size());
@@ -61,8 +40,9 @@ util::JsonValue FilesJson(const RoamingSession& roaming) {
 }
 
 std::size_t Count(const util::JsonValue& value) {
-  constexpr std::int64_t kMax = 100'000'000;  // a line or column past this is no position
-  return value.IsInt() && value.AsInt() >= 0 && value.AsInt() <= kMax ? static_cast<std::size_t>(value.AsInt()) : 0;
+  constexpr std::int64_t kMaxPosition = 100'000'000;  // a line or column past this is no position
+  return value.IsInt() && value.AsInt() >= 0 && value.AsInt() <= kMaxPosition ? static_cast<std::size_t>(value.AsInt())
+                                                                              : 0;
 }
 
 }  // namespace
@@ -150,7 +130,7 @@ std::optional<RoamingSession> DecodeRoamingSession(std::string_view text) {
         break;
       }
       const util::JsonValue& path = row["path"];
-      if (!row.IsObject() || !path.IsString() || !IsPortablePath(path.AsString())) {
+      if (!row.IsObject() || !path.IsString() || !util::IsPortableRelativePath(path.AsString(), kMaxRoamingPathBytes)) {
         continue;  // a row that names nothing under the root is dropped, not trusted
       }
       const bool active = !has_active && row["active"].IsBool() && row["active"].AsBool();

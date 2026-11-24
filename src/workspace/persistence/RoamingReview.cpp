@@ -7,12 +7,13 @@
 #include "compare/BranchReviewStateService.h"
 #include "util/JsonValue.h"
 #include "util/Parse.h"
+#include "util/PathMatch.h"
+#include "workspace/persistence/RoamingSession.h"
 
 namespace microide::workspace {
 namespace {
 
 constexpr std::int64_t kFormatVersion = 1;
-constexpr std::size_t kMaxPathBytes = 4096;
 constexpr std::size_t kMaxRefBytes = 512;
 constexpr std::size_t kMaxNoteBytes = 16 * 1024;
 using Limits = compare::BranchReviewStateService;
@@ -40,27 +41,6 @@ std::uint64_t Time(const util::JsonValue& value) {
   return value.IsInt() && value.AsInt() > 0 ? static_cast<std::uint64_t>(value.AsInt()) : 0;
 }
 
-// A path another machine named: relative, normal and inside the repository by
-// construction -- no "..", no ".", no empty component, nothing absolute.
-bool IsPortablePath(std::string_view path) {
-  if (path.empty() || path.size() > kMaxPathBytes || path.front() == '/' ||
-      path.find('\0') != std::string_view::npos) {
-    return false;
-  }
-  while (!path.empty()) {
-    const std::size_t slash = path.find('/');
-    const std::string_view component = path.substr(0, slash);
-    if (component.empty() || component == "." || component == "..") {
-      return false;
-    }
-    path.remove_prefix(slash == std::string_view::npos ? path.size() : slash + 1);
-    if (slash != std::string_view::npos && path.empty()) {
-      return false;  // a trailing slash
-    }
-  }
-  return true;
-}
-
 // A commit or ref name: printable, bounded, possibly empty (no merge base).
 bool IsRefText(const util::JsonValue& value) {
   return value.IsString() && value.AsString().size() <= kMaxRefBytes &&
@@ -71,7 +51,8 @@ bool IsRefText(const util::JsonValue& value) {
 // that is not names nothing on another machine.
 std::optional<std::string> PortablePath(const std::filesystem::path& path) {
   std::string text = path.generic_string();
-  return IsPortablePath(text) ? std::optional<std::string>(std::move(text)) : std::nullopt;
+  return util::IsPortableRelativePath(text, kMaxRoamingPathBytes) ? std::optional<std::string>(std::move(text))
+                                                                  : std::nullopt;
 }
 
 util::JsonValue HunkJson(const PersistedBranchReviewHunkIdentity& hunk) {
@@ -166,7 +147,7 @@ std::optional<PersistedBranchReviewTarget> TargetFromJson(const util::JsonValue&
   target.last_accessed_unix_ms = Time(json["changed_at"]);
   const auto path_of = [](const util::JsonValue& entry) -> std::optional<std::string> {
     const util::JsonValue& path = entry["path"];
-    return entry.IsObject() && path.IsString() && IsPortablePath(path.AsString())
+    return entry.IsObject() && path.IsString() && util::IsPortableRelativePath(path.AsString(), kMaxRoamingPathBytes)
                ? std::optional<std::string>(path.AsString())
                : std::nullopt;
   };

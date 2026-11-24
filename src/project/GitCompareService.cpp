@@ -40,7 +40,7 @@ std::string ShortRefLabel(std::string_view ref) {
   }
   constexpr std::array<std::string_view, 2> prefixes = {
       "refs/remotes/",
-      "refs/heads/",
+      internal::kBranchRefPrefix,
   };
   for (std::string_view prefix : prefixes) {
     if (ref.rfind(prefix, 0) == 0) {
@@ -93,7 +93,7 @@ std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepositor
     };
   }
 
-  const std::string local_ref = "refs/heads/" + std::string(branch_name);
+  const std::string local_ref = std::string(internal::kBranchRefPrefix) + std::string(branch_name);
   if (GitRefExists(repo, local_ref)) {
     return GitBranchReference{
         .ref = local_ref,
@@ -381,11 +381,10 @@ std::optional<GitBranchReference> ResolveGitBaseReference(
       origin_head = std::string(fields[2]);
       continue;
     }
-    constexpr std::string_view kHeads = "refs/heads/";
-    if (!refname.starts_with(kHeads)) {
+    if (!refname.starts_with(internal::kBranchRefPrefix)) {
       continue;
     }
-    const std::string_view branch = refname.substr(kHeads.size());
+    const std::string_view branch = refname.substr(internal::kBranchRefPrefix.size());
     has_main = has_main || branch == "main";
     has_master = has_master || branch == "master";
     if (head_mark == "*") {

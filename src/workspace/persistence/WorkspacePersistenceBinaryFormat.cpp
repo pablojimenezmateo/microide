@@ -56,6 +56,37 @@ bool AppendDisabledIdCapped(std::vector<std::string>* ids, Index* index, std::st
   return true;
 }
 
+// One Setting record into `settings`, shared by the user and the project config.
+// A malformed setting id is dropped, not smuggled in (runtime mutation rejects
+// such ids too) -- and dropped ALONE. Failing the whole record here threw away
+// every setting and disabled id a user had for one bad key, which is what a rule
+// tightened in a later version does to a config the earlier one wrote. Duplicate
+// ids dedupe last-writer-wins: a corrupt/hand-edited config with duplicate keys
+// must not become a split-brain state where the UI shows one value and layering
+// applies another.
+template <typename Index>
+bool AppendSettingRecord(std::span<const std::byte> payload, std::vector<std::pair<std::string, std::string>>* settings,
+                         Index* index) {
+  std::pair<std::string, std::string> setting;
+  if (!DecodeSettingPair(payload, &setting)) {
+    return false;
+  }
+  if (!SettingsStore::IsValidSettingId(setting.first)) {
+    return true;
+  }
+  const std::size_t existing = index->Find(setting.first);
+  if (existing != util::kFlatKeyNotFound) {
+    (*settings)[existing].second = std::move(setting.second);
+    return true;
+  }
+  if (settings->size() >= kMaxPersistedSettings) {
+    return false;  // over the product settings budget
+  }
+  settings->push_back(std::move(setting));
+  index->Insert(settings->size() - 1);
+  return true;
+}
+
 }  // namespace
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state, std::vector<std::byte>* out) {
@@ -120,34 +151,8 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                  }
                  case UserConfigTag::UiScale:
                    return reader.ReadF32(&state->ui_scale) && reader.remaining() == 0;
-                 case UserConfigTag::Setting: {
-                   std::pair<std::string, std::string> setting;
-                   if (!DecodeSettingPair(payload, &setting)) {
-                     return false;
-                   }
-                   // A malformed setting id is dropped, not smuggled in (runtime
-                   // mutation rejects such ids too) — and dropped ALONE. Failing the
-                   // whole record here threw away every setting and disabled id a
-                   // user had for one bad key, which is what a rule tightened in a
-                   // later version does to a config the earlier one wrote.
-                   if (!SettingsStore::IsValidSettingId(setting.first)) {
-                     return true;
-                   }
-                   // Dedupe by id, last-writer-wins: a corrupt/hand-edited config
-                   // with duplicate keys must not become a split-brain state where
-                   // the UI shows one value and layering applies another.
-                   const std::size_t existing = setting_index.Find(setting.first);
-                   if (existing != util::kFlatKeyNotFound) {
-                     state->settings[existing].second = std::move(setting.second);
-                   } else {
-                     if (state->settings.size() >= kMaxPersistedSettings) {
-                       return false;  // over the product settings budget
-                     }
-                     state->settings.push_back(std::move(setting));
-                     setting_index.Insert(state->settings.size() - 1);
-                   }
-                   return true;
-                 }
+                 case UserConfigTag::Setting:
+                   return AppendSettingRecord(payload, &state->settings, &setting_index);
                  case UserConfigTag::DisabledKeybinding: {
                    std::string id;
                    if (!reader.ReadString(&id) || reader.remaining() != 0) {
@@ -296,39 +301,19 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    state->project_base_color = color;
                    return true;
                  }
-                 case ProjectConfigTag::Setting: {
-                   std::pair<std::string, std::string> setting;
-                   if (!DecodeSettingPair(payload, &setting)) {
+                 case ProjectConfigTag::Setting:
+                   return AppendSettingRecord(payload, &state->settings, &setting_index);
+                 case ProjectConfigTag::SidebarPolicy: {
+                   PersistedSidebarViewPolicy policy;
+                   if (!DecodeSidebarPolicy(payload, &policy)) {
                      return false;
                    }
-                   // Fail closed on a malformed setting id (see DecodeUserConfigRecord).
-                   if (!SettingsStore::IsValidSettingId(setting.first)) {
-                     return true;  // dropped alone, see DecodeUserConfigRecord
+                   if (state->sidebar_policies.size() >= kMaxPersistedSidebarPolicies) {
+                     return false;  // over the product sidebar-policy budget
                    }
-                   // Dedupe by id, last-writer-wins (see DecodeUserConfigRecord).
-                   const std::size_t existing = setting_index.Find(setting.first);
-                   if (existing != util::kFlatKeyNotFound) {
-                     state->settings[existing].second = std::move(setting.second);
-                   } else {
-                     if (state->settings.size() >= kMaxPersistedSettings) {
-                       return false;  // over the product settings budget
-                     }
-                     state->settings.push_back(std::move(setting));
-                     setting_index.Insert(state->settings.size() - 1);
-                   }
+                   state->sidebar_policies.push_back(std::move(policy));
                    return true;
                  }
-                case ProjectConfigTag::SidebarPolicy: {
-                  PersistedSidebarViewPolicy policy;
-                  if (!DecodeSidebarPolicy(payload, &policy)) {
-                    return false;
-                  }
-                  if (state->sidebar_policies.size() >= kMaxPersistedSidebarPolicies) {
-                    return false;  // over the product sidebar-policy budget
-                  }
-                  state->sidebar_policies.push_back(std::move(policy));
-                  return true;
-                }
                 case ProjectConfigTag::CommitDraft: {
                   PersistedCommitDraftState draft;
                   if (!DecodeCommitDraft(payload, &draft)) {

@@ -31,6 +31,28 @@ namespace microide::util {
   return !relative.empty() && *relative.begin() == "..";
 }
 
+// True when `path` is a '/'-separated path another machine may name: relative and
+// normal by construction -- no "..", no ".", no empty component (so no "//" and no
+// trailing slash), nothing absolute, no NUL -- and at most `max_bytes` long. The
+// roaming session and the roaming review both read paths this way.
+[[nodiscard]] inline bool IsPortableRelativePath(std::string_view path, std::size_t max_bytes) {
+  if (path.empty() || path.size() > max_bytes || path.front() == '/' || path.find('\0') != std::string_view::npos) {
+    return false;
+  }
+  while (!path.empty()) {
+    const std::size_t slash = path.find('/');
+    const std::string_view component = path.substr(0, slash);
+    if (component.empty() || component == "." || component == "..") {
+      return false;
+    }
+    path.remove_prefix(slash == std::string_view::npos ? path.size() : slash + 1);
+    if (slash != std::string_view::npos && path.empty()) {
+      return false;  // a trailing slash
+    }
+  }
+  return true;
+}
+
 // True when `candidate` is `root` itself or a path nested under it, for inputs the
 // caller has ALREADY normalized. Allocation-free: it answers with a prefix compare
 // on the two native strings instead of building the `lexically_normal()` /

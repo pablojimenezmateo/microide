@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "platform/ProcessLauncher.h"
@@ -28,6 +29,15 @@ class GitMetadataSource;
 }  // namespace microide::project
 
 namespace microide::project::internal {
+
+// git's namespace for local branches.
+inline constexpr std::string_view kBranchRefPrefix = "refs/heads/";
+
+// A local branch's name as git shows it: `ref` minus its refs/heads/ namespace,
+// slashes kept (`feature/x`). Any other ref is returned whole.
+[[nodiscard]] inline std::string_view StripBranchRefPrefix(std::string_view ref) {
+  return ref.starts_with(kBranchRefPrefix) ? ref.substr(kBranchRefPrefix.size()) : ref;
+}
 
 struct CommandResult {
   int exit_code = -1;

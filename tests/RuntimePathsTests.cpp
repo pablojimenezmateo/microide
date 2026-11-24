@@ -186,6 +186,20 @@ void TestPathContainmentHelpersAgreeOnTrailingSeparators() {
   }
 }
 
+// A path another machine named (the roaming session and review): relative and
+// normal by construction, bounded, never absolute, never climbing out.
+void TestPortableRelativePathIsRelativeNormalAndBounded() {
+  using microide::util::IsPortableRelativePath;
+  for (const char* good : {"a", "src/main.cpp", "..cache/x", "a/.b", "...", "x/y/z"}) {
+    Expect(IsPortableRelativePath(good, 64), std::string(good) + " is portable");
+  }
+  for (const char* bad : {"", "/etc/passwd", "../x", "a/../b", "./a", "a/.", "a//b", "a/", ".."}) {
+    Expect(!IsPortableRelativePath(bad, 64), std::string("'") + bad + "' is not portable");
+  }
+  Expect(!IsPortableRelativePath(std::string_view("a\0b", 3), 64), "an embedded NUL is not portable");
+  Expect(IsPortableRelativePath("abcd", 4) && !IsPortableRelativePath("abcde", 4), "the byte cap is inclusive");
+}
+
 }  // namespace
 
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
@@ -193,6 +207,8 @@ void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
           TestRelativeClimbOutIsAboutTheFirstComponent);
   AddTest(tests, "PathMatch/ContainmentHelpersAgreeOnTrailingSeparators",
           TestPathContainmentHelpersAgreeOnTrailingSeparators);
+  AddTest(tests, "PathMatch/PortableRelativePathIsRelativeNormalAndBounded",
+          TestPortableRelativePathIsRelativeNormalAndBounded);
   AddTest(tests, "RuntimePaths/PreferExplicitAssetRootOverride",
           TestRuntimePathsPreferExplicitAssetRootOverride);
   AddTest(tests, "RuntimePaths/BundledServerBinaryIsChosenByArchitecture",
