@@ -24,6 +24,8 @@ class TextViewport;  // editor/TextViewport.h
 
 namespace microide::workspace {
 
+class DebugValueTreePane;
+
 struct WorkspaceContext;
 struct ProjectWorkspaceState;
 
@@ -205,9 +207,9 @@ class DebugService {
   // also driven internally on each stop for the top frame.
   void FocusFrame(int frame_id);
   void ToggleVariableRow(std::size_t row);
-  void BeginVariableEdit(std::size_t row);
-  void CommitVariableEdit();
-  void CancelVariableEdit();
+  void BeginVariableEdit(std::size_t row) { BeginTreeEdit(EditableTree::Variables, row); }
+  void CommitVariableEdit() { CommitTreeEdit(EditableTree::Variables); }
+  void CancelVariableEdit() { CancelTreeEdit(EditableTree::Variables); }
 
   // Watch panel (Phase 6). The expression list is persistent; on each stop (and
   // frame switch) every expression is re-evaluated with `evaluate(context:
@@ -220,9 +222,9 @@ class DebugService {
   void EditWatch(std::size_t index, std::string expression);
   void RemoveWatch(std::size_t index);
   void ToggleWatchRow(std::size_t row);
-  void BeginWatchEdit(std::size_t row);
-  void CommitWatchEdit();
-  void CancelWatchEdit();
+  void BeginWatchEdit(std::size_t row) { BeginTreeEdit(EditableTree::Watch, row); }
+  void CommitWatchEdit() { CommitTreeEdit(EditableTree::Watch); }
+  void CancelWatchEdit() { CancelTreeEdit(EditableTree::Watch); }
   // Focused frame id of the active stop (0 when not stopped / no session).
   int FocusedFrameId() const;
 
@@ -260,6 +262,12 @@ class DebugService {
   bool HasInFlightDapWork() const;
 
  private:
+  enum class EditableTree { Variables, Watch };
+  DebugValueTreePane& EditablePane(EditableTree tree);
+  util::Generation& EditableGeneration(EditableTree tree);
+  void BeginTreeEdit(EditableTree tree, std::size_t row);
+  void CommitTreeEdit(EditableTree tree);
+  void CancelTreeEdit(EditableTree tree);
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
   // Build the session callbacks that wire the configured Operations in, bound to

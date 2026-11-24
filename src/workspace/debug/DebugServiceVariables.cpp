@@ -113,54 +113,6 @@ void DebugService::FetchVariablesPage(int reference, int start, int count) {
                         start, count);
 }
 
-void DebugService::BeginVariableEdit(std::size_t row) {
-  DebugSession* session = CurrentDapManager().ActiveSession();
-  // Gate edit entry on the adapter capability so an unsupported adapter never
-  // shows an edit field that cannot commit.
-  if (session == nullptr || !session->Client().Capabilities().supports_set_variable) {
-    return;
-  }
-  if (CurrentProjectState().debug_variables.BeginEdit(row) &&
-      operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
-}
-
-void DebugService::CommitVariableEdit() {
-  DebugVariablesModel& model = CurrentProjectState().debug_variables;
-  const auto target = model.EditTargetForCommit();
-  DebugSession* session = CurrentDapManager().ActiveSession();
-  if (target.has_value() && session != nullptr) {
-    const std::string value = model.EditBuffer().text();
-    const std::uint32_t node_id = target->node_id;
-    const std::uint64_t generation = frame_generation_.current();
-    session->SetVariable(
-        target->container_reference, target->name, value,
-        [this, node_id, generation](bool ok, dap_protocol::DapSetVariableResult result) {
-          // Drop a response that lands after a frame switch / stop: node ids are
-          // globally monotonic so a stale id can no longer alias a live node, but
-          // guarding here also avoids a pointless rebuild of a superseded tree.
-          if (!frame_generation_.is_current(generation)) {
-            return;
-          }
-          // Authoritative: apply only the adapter's returned (possibly normalized)
-          // value, never the raw typed text.
-          if (ok) {
-            CurrentProjectState().debug_variables.ApplySetVariable(node_id, result);
-          }
-          util::InvokeIfSet(operations_.request_debug_pane_redraw);
-        });
-  }
-  // Leave edit mode immediately; the row's value updates when the response lands.
-  model.CancelEdit();
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
-}
-
-void DebugService::CancelVariableEdit() {
-  CurrentProjectState().debug_variables.CancelEdit();
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
-}
-
 void DebugService::AppendConsoleLine(int session_id, const std::string& label,
                                      const std::string& text) {
   if (!operations_.append_console_output) {
@@ -303,42 +255,63 @@ void DebugService::ToggleWatchRow(std::size_t row) {
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
-void DebugService::BeginWatchEdit(std::size_t row) {
+// The Variables and Watch panes edit a value the same way: through the adapter's
+// setVariable on the row's container, each against its own generation.
+DebugValueTreePane& DebugService::EditablePane(EditableTree tree) {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  return tree == EditableTree::Variables ? static_cast<DebugValueTreePane&>(state.debug_variables)
+                                         : static_cast<DebugValueTreePane&>(state.debug_watch);
+}
+
+util::Generation& DebugService::EditableGeneration(EditableTree tree) {
+  return tree == EditableTree::Variables ? frame_generation_ : watch_generation_;
+}
+
+void DebugService::BeginTreeEdit(EditableTree tree, std::size_t row) {
   DebugSession* session = CurrentDapManager().ActiveSession();
+  // Gate edit entry on the adapter capability so an unsupported adapter never
+  // shows an edit field that cannot commit.
   if (session == nullptr || !session->Client().Capabilities().supports_set_variable) {
     return;
   }
-  if (CurrentProjectState().debug_watch.BeginEdit(row) && operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
+  if (EditablePane(tree).BeginEdit(row)) {
+    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   }
 }
 
-void DebugService::CommitWatchEdit() {
-  DebugWatchModel& model = CurrentProjectState().debug_watch;
-  const auto target = model.EditTargetForCommit();
+void DebugService::CommitTreeEdit(EditableTree tree) {
+  DebugValueTreePane& pane = EditablePane(tree);
+  const auto target = pane.EditTargetForCommit();
   DebugSession* session = CurrentDapManager().ActiveSession();
   if (target.has_value() && session != nullptr) {
-    const std::string value = model.EditBuffer().text();
+    const std::string value = pane.EditBuffer().text();
     const std::uint32_t node_id = target->node_id;
-    const std::uint64_t generation = watch_generation_.current();
-    session->SetVariable(target->container_reference, target->name, value,
-                         [this, node_id, generation](
-                             bool ok, dap_protocol::DapSetVariableResult result) {
-                           if (!watch_generation_.is_current(generation)) {
-                             return;
-                           }
-                           if (ok) {
-                             CurrentProjectState().debug_watch.ApplySetVariable(node_id, result);
-                           }
-                           util::InvokeIfSet(operations_.request_debug_pane_redraw);
-                         });
+    const std::uint64_t generation = EditableGeneration(tree).current();
+    session->SetVariable(
+        target->container_reference, target->name, value,
+        [this, tree, node_id, generation](bool ok, dap_protocol::DapSetVariableResult result) {
+          // Drop a response that lands after a frame switch / stop: node ids are
+          // globally monotonic so a stale id can no longer alias a live node, but
+          // guarding here also avoids a pointless rebuild of a superseded tree.
+          if (!EditableGeneration(tree).is_current(generation)) {
+            return;
+          }
+          // Authoritative: apply only the adapter's returned (possibly normalized)
+          // value, never the raw typed text. The pane is looked up again: the
+          // project may have changed while the request was out.
+          if (ok) {
+            EditablePane(tree).ApplySetVariable(node_id, result);
+          }
+          util::InvokeIfSet(operations_.request_debug_pane_redraw);
+        });
   }
-  model.CancelEdit();
+  // Leave edit mode immediately; the row's value updates when the response lands.
+  pane.CancelEdit();
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
-void DebugService::CancelWatchEdit() {
-  CurrentProjectState().debug_watch.CancelEdit();
+void DebugService::CancelTreeEdit(EditableTree tree) {
+  EditablePane(tree).CancelEdit();
   util::InvokeIfSet(operations_.request_debug_pane_redraw);
 }
 
