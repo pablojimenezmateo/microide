@@ -625,16 +625,13 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
                     .Execute(ActionId::SidebarShow, {std::string(id)}, ActionSource::Menu);
               },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .compute_visible_menu_bar_items =
-              [this](const SDL_FRect& rect) { return ComputeVisibleMenuBarItems(rect); },
+          .compute_visible_menu_bar_items = [this](const SDL_FRect& rect) { return ComputeVisibleMenuBarItems(rect); },
           .compute_overflow_menu_bar_items =
               [this](const SDL_FRect& rect) { return ComputeOverflowMenuBarItems(rect); },
-          .menu_overflow_chevron_rect =
-              [this](const SDL_FRect& rect) { return MenuOverflowChevronRect(rect); },
+          .menu_overflow_chevron_rect = [this](const SDL_FRect& rect) { return MenuOverflowChevronRect(rect); },
           .compute_visible_window_control_buttons =
               [this](const SDL_FRect& rect) { return ComputeVisibleWindowControlButtons(rect); },
-          .set_pending_window_action =
-              [this](WorkspaceShell::WindowAction action) { pending_window_action_ = action; },
+          .set_pending_window_action = [this](WorkspaceShell::WindowAction action) { pending_window_action_ = action; },
           .request_quit =
               [this]() {
                 util::Log("microide quit: the title bar's close button");
@@ -642,32 +639,26 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
               },
           .open_menu_bar_menu = [this](MenuId id) { MakeMenuCoordinator().OpenMenuBarMenu(id); },
           .active_submenu_rect = [this](const SDL_FRect& rect) { return ActiveSubmenuRect(rect); },
-          .hit_test_popup_row =
-              [](std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x,
-                 float y) { return HitTestPopupRow(items, popup_rect, x, y); },
-          .is_menu_item_enabled =
-              [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
+          .hit_test_popup_row = [](std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x,
+                                   float y) { return HitTestPopupRow(items, popup_rect, x, y); },
+          .is_menu_item_enabled = [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
           .execute_menu_item =
               [this](MenuId id, std::size_t item_index) {
                 return MakeMenuCoordinator().ExecuteMenuItem(id, item_index);
               },
-          .compute_popup_menu_rect =
-              [this](const SDL_FRect& menu_bar, MenuId id) {
-                return ComputePopupMenuRect(menu_bar, id);
-              },
+          .compute_popup_menu_rect = [this](const SDL_FRect& menu_bar,
+                                            MenuId id) { return ComputePopupMenuRect(menu_bar, id); },
           .find_menu_spec = [](MenuId id) { return WorkspaceShell::FindMenuSpec(id); },
           .menu_items = [this](MenuId id) { return MenuItems(id); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
-          .toggle_buffer_search_option =
-              [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
+          .toggle_buffer_search_option = [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .clamp_overlay_scroll_row = [this](const SDL_FRect& rect) { ClampOverlayScrollRow(rect); },
-          .compute_overlay_list_layout =
-              [this](const SDL_FRect& rect) { return ComputeOverlayListLayout(rect); },
+          .compute_overlay_list_layout = [this](const SDL_FRect& rect) { return ComputeOverlayListLayout(rect); },
           .overlay_item_count = [this]() { return OverlayItemCount(); },
           .set_overlay_selected_index = [this](std::size_t index) { SetOverlaySelectedIndex(index); },
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
@@ -675,18 +666,15 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .compute_tree_context_menu_rect = [this]() { return ComputeTreeContextMenuRect(); },
           .hit_test_tree_context_menu_row =
               [](TreeContextTargetKind target, const SDL_FRect& popup_rect, float x, float y) {
-                return HitTestPopupRow(TreeContextMenuItems(target), popup_rect, x,
-                                                       y);
+                return HitTestPopupRow(WorkspaceTreeContextMenuItems(target), popup_rect, x, y);
               },
           .is_tree_context_menu_item_enabled_at =
               [this](TreeContextTargetKind target, std::size_t index) {
-                const auto items = TreeContextMenuItems(target);
+                const auto items = WorkspaceTreeContextMenuItems(target);
                 return index < items.size() && IsMenuItemEnabled(items[index]);
               },
           .execute_tree_context_menu_item =
-              [this](std::size_t index) {
-                return MakeMenuCoordinator().ExecuteTreeContextMenuItem(index);
-              },
+              [this](std::size_t index) { return MakeMenuCoordinator().ExecuteTreeContextMenuItem(index); },
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
       });
   return *glue_->chrome_mouse_coordinator;

@@ -459,7 +459,7 @@
     const auto surface = ActiveMergeSurfaceLayout(shell);
     const auto interaction = ActiveMergeInteractionLayout(shell);
     const auto& conflict = merge.conflicts[conflict_index];
-    return shell.BuildMergeResultActionButtonRects(surface, interaction, conflict);
+    return BuildMergeResultActionButtonRects(surface, interaction, conflict);
   }
   static std::array<SDL_FRect, 2> MergeToolbarNavigationRects(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

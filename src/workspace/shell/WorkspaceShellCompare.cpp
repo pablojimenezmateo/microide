@@ -605,21 +605,6 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
 // revealing it means bringing its FIRST row above the fold and its LAST row below
 // it; with wrap off both collapse to the row itself and this is the old two-branch
 // nudge. Kept in one place because the reveal ran from three call sites, each with
-// its own copy of the arithmetic.
-void WorkspaceShell::RevealCompareSelectedRow(CompareTabState& compare_tab,
-                                              int visible_rows) const {
-  const int rows = std::max(1, visible_rows);
-  const int first =
-      static_cast<int>(ComparePresentationRowToVisualRow(compare_tab, compare_tab.selected_row));
-  const int span = static_cast<int>(compare_tab.wrap_layout.RowSpanForUnit(compare_tab.selected_row));
-  const int last = first + std::max(1, span) - 1;
-  if (first < compare_tab.scroll_row) {
-    compare_tab.scroll_row = first;
-  } else if (last >= compare_tab.scroll_row + rows) {
-    compare_tab.scroll_row = last - rows + 1;
-  }
-  ClampCompareScrollRow(compare_tab, visible_rows);
-}
 
 void WorkspaceShell::RevealActiveCompareSelection() {
   CompareTabState* compare_tab = ActiveCompareTab();
@@ -813,13 +798,6 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   compare_tab.selected_row = std::min(compare_tab.selected_row, presentation_rows - 1);
 }
 
-std::size_t WorkspaceShell::CompareRowIndexForRightLine(const CompareTabState& compare_tab,
-                                                        std::size_t line_index) const {
-  // Thin forwarder onto the canonical free helper so the right-line -> model-row
-  // scan lives in exactly one place (CompareTabReview.cpp).
-  return CompareTabModelRowForRightLine(compare_tab, line_index);
-}
-
 void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) const {
   if (!compare_tab.right_view_active) {
     return;
@@ -859,8 +837,7 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
     return;
   }
 
-  const std::size_t model_row =
-      CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.cursor_line());
+  const std::size_t model_row = CompareTabModelRowForRightLine(compare_tab, compare_tab.right_viewport.cursor_line());
   compare_tab.selected_row =
       compare::ComparePresentationRowForModelRow(compare_tab.presentation, model_row);
   compare_tab.horizontal_scroll = compare_tab.right_viewport.horizontal_scroll();
@@ -876,7 +853,7 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
     SyncCompareViewportScroll(compare_tab);
   } else {
     const std::size_t scroll_model_row =
-        CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.scroll_line());
+        CompareTabModelRowForRightLine(compare_tab, compare_tab.right_viewport.scroll_line());
     compare_tab.scroll_row = static_cast<int>(ComparePresentationRowToVisualRow(
         compare_tab,
         compare::ComparePresentationRowForModelRow(compare_tab.presentation, scroll_model_row)));

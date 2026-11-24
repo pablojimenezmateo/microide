@@ -439,18 +439,6 @@ SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
       incoming ? surface.left_x + surface.left_width : surface.right_x + surface.right_width);
 }
 
-std::array<SDL_FRect, 4> WorkspaceShell::BuildMergeResultActionButtonRects(
-    const MergeSurfaceLayout& surface,
-    const MergeInteractionLayout& interaction,
-    const MergeTrackedConflict& conflict) const {
-  return ComputeMergeResultActionButtonRects(
-      surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
-      ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, conflict.start_line,
-                                  std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
-      interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap,
-      surface.center_x + surface.center_width);
-}
-
 std::optional<WorkspaceShell::MergeHoverState> WorkspaceShell::ClassifyMergeHoverState(
     const MergeSurfaceLayout& surface,
     const MergeInteractionLayout& interaction,

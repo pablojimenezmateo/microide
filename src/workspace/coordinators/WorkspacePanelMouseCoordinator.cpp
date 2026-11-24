@@ -758,49 +758,34 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
                 }
                 return std::size_t{0};
               },
-          .set_bottom_panel_scroll_row =
-              [this](int row, std::size_t count, int visible_rows) {
-                SetBottomPanelScrollRow(row, count, visible_rows);
-              },
-          .open_anchored_menu =
-              [this](MenuId id, const SDL_FRect& rect) { MakeMenuCoordinator().OpenAnchoredMenu(id, rect); },
-          .bottom_panel_content_rect =
-              [](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
-          .read_primary_selection_text =
-              [this]() { return MakeTerminalPanelService().ReadPrimarySelectionText(); },
-          .clear_terminal_selection =
-              [this]() { MakeTerminalPanelService().ClearTerminalSelection(); },
+          .set_bottom_panel_scroll_row = [this](
+                                             int row, std::size_t count,
+                                             int visible_rows) { SetBottomPanelScrollRow(row, count, visible_rows); },
+          .open_anchored_menu = [this](MenuId id,
+                                       const SDL_FRect& rect) { MakeMenuCoordinator().OpenAnchoredMenu(id, rect); },
+          .bottom_panel_content_rect = [](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
+          .read_primary_selection_text = [this]() { return MakeTerminalPanelService().ReadPrimarySelectionText(); },
+          .clear_terminal_selection = [this]() { MakeTerminalPanelService().ClearTerminalSelection(); },
           .append_terminal_pending_input =
-              [this](std::string_view input) {
-                MakeTerminalPanelService().AppendTerminalPendingInput(input);
-              },
-          .terminal_find_mouse_down =
-              [this](float x, float y) { return HandleTerminalFindMouseDown(x, y); },
-          .terminal_link_at_point =
-              [this](float x, float y) {
-                return MakeTerminalPanelService().TerminalLinkAtPoint(x, y);
-              },
+              [this](std::string_view input) { MakeTerminalPanelService().AppendTerminalPendingInput(input); },
+          .terminal_find_mouse_down = [this](float x, float y) { return HandleTerminalFindMouseDown(x, y); },
+          .terminal_link_at_point = [this](float x,
+                                           float y) { return MakeTerminalPanelService().TerminalLinkAtPoint(x, y); },
           .open_external_url =
               [this](std::string_view url) {
                 return MakeTerminalPanelService().OpenUrlForPane(
                     context_.current_project_state.active_terminal_pane(), url);
               },
           .terminal_selection_position_for_point =
-              [this](int x,
-                     int y,
-                     const std::vector<terminal::TerminalLine>& lines,
-                     std::size_t first_row) {
+              [this](int x, int y, const std::vector<terminal::TerminalLine>& lines, std::size_t first_row) {
                 return TerminalSelectionPointAt(x, y, lines, first_row);
               },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
-          .terminal_viewport_position_for_point =
-              [this](int x, int y) { return TerminalViewportPositionForPoint(x, y); },
-          .terminal_mouse_button_for_sdl =
-              [this](Uint8 button) { return TerminalMouseButtonForSdl(button); },
+          .terminal_viewport_position_for_point = [this](int x,
+                                                         int y) { return TerminalViewportPositionForPoint(x, y); },
+          .terminal_mouse_button_for_sdl = [this](Uint8 button) { return TerminalMouseButtonFromSdl(button); },
           .output_channel_entries =
-              [this]() {
-                return OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
-              },
+              [this]() { return OutputChannelEntries(context_.current_project_state.panel.output.channel_id); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .current_window_rect = [this]() { return CurrentWindowRect(); },
@@ -809,47 +794,32 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
                 return ClampBottomPanelHeight(desired_height, window_height);
               },
           .sync_primary_selection_with_terminal_selection =
-              [this]() {
-                MakeTerminalPanelService().SyncPrimarySelectionWithTerminalSelection();
-              },
-          .active_plugin_surface =
-              [this]() -> const editor::SurfaceContent* {
-                const auto& panel = context_.current_project_state.panel;
-                const auto* pres =
-                    context_.current_project_state.plugin_presentation_if_present();
-                return pres != nullptr
-                           ? pres->surfaces.Find(panel.surface_owner, panel.surface_id)
-                           : nullptr;
-              },
+              [this]() { MakeTerminalPanelService().SyncPrimarySelectionWithTerminalSelection(); },
+          .active_plugin_surface = [this]() -> const editor::SurfaceContent* {
+            const auto& panel = context_.current_project_state.panel;
+            const auto* pres = context_.current_project_state.plugin_presentation_if_present();
+            return pres != nullptr ? pres->surfaces.Find(panel.surface_owner, panel.surface_id) : nullptr;
+          },
           .execute_command =
               [this](const std::string& command) {
                 std::string error_message;
                 ExecuteCommandName(command, {}, ActionSource::Command, &error_message);
               },
-          .terminal_pane_at =
-              [this](const WorkspaceLayout& layout, float x, float y) {
-                return MakeTerminalPanelService().PaneAt(layout, x, y);
-              },
-          .activate_terminal_pane_at =
-              [this](const WorkspaceLayout& layout, float x, float y) {
-                return MakeTerminalPanelService().ActivatePaneAt(layout, x, y);
-              },
-          .terminal_pane_divider_at =
-              [this](const WorkspaceLayout& layout, float x, float y) {
-                return MakeTerminalPanelService().DividerAt(layout, x, y);
-              },
+          .terminal_pane_at = [this](const WorkspaceLayout& layout, float x,
+                                     float y) { return MakeTerminalPanelService().PaneAt(layout, x, y); },
+          .activate_terminal_pane_at = [this](
+                                           const WorkspaceLayout& layout, float x,
+                                           float y) { return MakeTerminalPanelService().ActivatePaneAt(layout, x, y); },
+          .terminal_pane_divider_at = [this](const WorkspaceLayout& layout, float x,
+                                             float y) { return MakeTerminalPanelService().DividerAt(layout, x, y); },
           .terminal_pane_rects =
-              [this](const WorkspaceLayout& layout) {
-                return MakeTerminalPanelService().PaneRects(layout);
-              },
+              [this](const WorkspaceLayout& layout) { return MakeTerminalPanelService().PaneRects(layout); },
           .resize_terminal_pane_divider =
               [this](std::size_t boundary, float share) {
                 return MakeTerminalPanelService().ResizeActiveTabDivider(boundary, share);
               },
           .reset_terminal_pane_divider =
-              [this](std::size_t boundary) {
-                return MakeTerminalPanelService().ResetActiveTabDivider(boundary);
-              },
+              [this](std::size_t boundary) { return MakeTerminalPanelService().ResetActiveTabDivider(boundary); },
       });
   return *glue_->panel_mouse_coordinator;
 }

@@ -617,32 +617,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
       pane_rect.w, static_cast<float>(clipped_end - clipped_start) * metrics.line_height));
 }
 
-std::optional<editor::AppliedEditLineSpan> WorkspaceShell::ComputeChangedLineSpan(
-    const std::vector<std::string>& before_lines,
-    const std::vector<std::string>& after_lines) {
-  std::size_t prefix = 0;
-  while (prefix < before_lines.size() && prefix < after_lines.size() &&
-         before_lines[prefix] == after_lines[prefix]) {
-    ++prefix;
-  }
-  if (prefix == before_lines.size() && prefix == after_lines.size()) {
-    return std::nullopt;
-  }
-
-  std::size_t suffix = 0;
-  while (suffix < before_lines.size() - prefix && suffix < after_lines.size() - prefix &&
-         before_lines[before_lines.size() - 1 - suffix] ==
-             after_lines[after_lines.size() - 1 - suffix]) {
-    ++suffix;
-  }
-
-  return editor::AppliedEditLineSpan{
-      .old_start = prefix,
-      .old_end = before_lines.size() - suffix,
-      .new_end = after_lines.size() - suffix,
-  };
-}
-
 std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
   // A drag parked at the edge of an overflowing strip auto-scrolls on a timer, and
   // a still pointer emits no motion events, so the wake has to come from here.
@@ -736,7 +710,6 @@ std::optional<SDL_FRect> WorkspaceShell::TabStripRectForKind(TabDragKind kind,
   }
   return std::nullopt;
 }
-
 
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();

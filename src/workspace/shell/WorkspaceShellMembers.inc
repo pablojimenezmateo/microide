@@ -399,12 +399,8 @@
   static std::span<const MenuSpec> MenuSpecs();
   static const MenuSpec* FindMenuSpec(MenuId id);
   std::span<const MenuItemSpec> MenuItems(MenuId id) const;
-  static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
   VisibleMenuBarItems ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
   MenuBarOverflowIds ComputeOverflowMenuBarItems(const SDL_FRect& menu_bar) const;
-  // True when a top-level menu should appear in the menu bar / hamburger overflow.
-  // Gates MenuId::Debug on the `debug.enabled` setting.
-  bool IsMenuBarMenuVisible(MenuId id) const;
   std::optional<SDL_FRect> MenuOverflowChevronRect(const SDL_FRect& menu_bar) const;
   VisibleWindowControlButtons ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) const;
   std::optional<SDL_FRect> ComputePopupMenuRect(const SDL_FRect& anchor_rect,
@@ -757,7 +753,6 @@
   CompareSurfaceLayout ComputeCompareSurfaceLayout(const SDL_FRect& rect, const CompareTabState& compare_tab) const;
   TextGridInteractionLayout BuildCompareRightInteractionLayout(const CompareSurfaceLayout& surface,
                                                                CompareTabState& compare_tab) const;
-  void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows) const;
   void RevealActiveCompareSelection();
   bool ActiveTabIsMerge() const;
   MergeTabState* ActiveMergeTab();
@@ -778,12 +773,7 @@
                                                      MergeTabState& merge_tab) const;
   SDL_FRect BuildMergeSourceActionButtonRect(const MergeSurfaceLayout& surface,
                                              const MergeInteractionLayout& interaction,
-                                             const MergeTrackedConflict& conflict,
-                                             bool incoming) const;
-  std::array<SDL_FRect, 4> BuildMergeResultActionButtonRects(
-      const MergeSurfaceLayout& surface,
-      const MergeInteractionLayout& interaction,
-      const MergeTrackedConflict& conflict) const;
+                                             const MergeTrackedConflict& conflict, bool incoming) const;
   std::optional<MergeHoverState> ClassifyMergeHoverState(const MergeSurfaceLayout& surface,
                                                          const MergeInteractionLayout& interaction,
                                                          const MergeTabState& merge_tab,
@@ -819,8 +809,6 @@
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path, const CompareTabState& compare_tab,
                                                const CompareRevisionSides* sides = nullptr) const;
   void RefreshCompareTabDerivedState(CompareTabState& compare_tab) const;
-  std::size_t CompareRowIndexForRightLine(const CompareTabState& compare_tab,
-                                          std::size_t line_index) const;
   void SyncCompareViewportScroll(CompareTabState& compare_tab) const;
   void SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
                                         bool reveal_selection) const;
@@ -1142,6 +1130,12 @@
   // hover. Mirrors the surfaces threaded through PointerOver in the render TUs.
   std::optional<SDL_FRect> HoveredInteractiveRect(const WorkspaceLayout& layout,
                                                   float x, float y) const;
+  // HoveredInteractiveRect's steps; an empty answer is "not over my surface".
+  std::optional<std::optional<SDL_FRect>> HoverOverOverlayAndWidgets(const WorkspaceLayout& layout, float x,
+                                                                     float y) const;
+  std::optional<std::optional<SDL_FRect>> HoverOverChrome(const WorkspaceLayout& layout, float x, float y) const;
+  std::optional<std::optional<SDL_FRect>> HoverOverSidebar(const WorkspaceLayout& layout, float x, float y) const;
+  std::optional<SDL_FRect> HoverOverPanels(const WorkspaceLayout& layout, float x, float y) const;
   void InvalidateEditorBlamePath(const std::filesystem::path& path);
   void ClearEditorBlame();
   std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,
@@ -1221,9 +1215,7 @@
   // not layout arithmetic.
   bool ProjectSearchScopeExpanded() const;
   void ToggleProjectSearchScopeExpanded();
-  std::string_view ProjectSearchModeButtonLabel() const;
   std::string_view ProjectSearchCaseButtonLabel() const;
-  std::string_view ProjectSearchHiddenButtonLabel() const;
   bool ProjectSearchCanReplaceAll() const;
   bool ProjectSearchReplaceCaseSensitive() const;
   void ToggleProjectSearchPatternMode();
@@ -1450,7 +1442,6 @@
       const std::vector<terminal::TerminalLine>& lines,
       std::size_t first_row = 0) const;
   std::optional<TerminalSelectionPoint> TerminalViewportPositionForPoint(int x, int y) const;
-  terminal::TerminalSession::MouseButton TerminalMouseButtonForSdl(Uint8 button) const;
   bool OpenExternalUrl(std::string_view url);
   void OpenExternalUrlPrompt(std::string url);
   bool RevealPathInFileExplorer(const std::filesystem::path& directory);
@@ -1719,6 +1710,17 @@
   std::string ProjectLabel() const;
   // The `ui` control query's element geometry (control/ControlUiQuery.h).
   ControlUiQuery::Operations MakeControlUiOperations();
+  // Its sections of the `ui` answer, one member each (ControlUiShellSources.cpp).
+  void ControlUiMenus(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiTabs(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiSidebar(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiPanel(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiButtons(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiOverlay(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiDialogs(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiFields(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiDebug(const WorkspaceLayout& layout, ControlUiElements& out);
+  void ControlUiDetails(const WorkspaceLayout& layout, util::JsonObject& root);
   std::string ProjectTabDisplayTitle(std::size_t index) const;
   std::string ProjectTabTooltipLabel(std::size_t index) const;
   // Allocation-free truncate for render hot paths; see
@@ -1792,9 +1794,6 @@
                                                            std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
-  static std::optional<editor::AppliedEditLineSpan> ComputeChangedLineSpan(
-      const std::vector<std::string>& before_lines,
-      const std::vector<std::string>& after_lines);
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
   // "After delay" autosave (WorkspaceTabCoordinatorShellBridge.cpp). MaybeArmAutosaveTimer
   // re-arms the debounce on every real buffer edit; NextAutosaveDelayMs feeds the idle loop

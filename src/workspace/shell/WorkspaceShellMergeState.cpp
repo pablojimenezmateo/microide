@@ -322,7 +322,7 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_t
   // TD-2026-07-16-31: derive the changed line span from the viewport's own
   // last-applied-edit metadata instead of snapshotting + diffing the whole result
   // buffer before and after every mutation. The span is whole-line-trimmed to match
-  // the previous ComputeChangedLineSpan(before, after) result exactly, so the
+  // the previous editor::ComputeChangedLineSpan(before, after) result exactly, so the
   // conflict shift/invalidate logic below is byte-for-byte unchanged — it just no
   // longer pays an O(document) copy + diff per keystroke. Merge result editing is
   // single-caret, so an absent span means the edit was a no-op (nothing to

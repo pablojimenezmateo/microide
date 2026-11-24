@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <string_view>
 
 #include "workspace/state/WorkspaceProjectState.h"
 #include "workspace/state/WorkspaceTextInputState.h"
@@ -19,6 +20,14 @@
 // hit-testing, cursor shaping, and the sidebar mouse coordinator can all agree on the same numbers without routing five
 // `std::function<SDL_FRect(const SDL_FRect&)>` callbacks through the shell.
 namespace microide::workspace::project_search_panel {
+
+// The panel's fixed toggle labels; views, drawn every sidebar frame. ".*" is the
+// same regex affordance the editor and terminal find bars paint (and the one VS
+// Code uses), so the concept the two search surfaces share looks the same in
+// both. "Hidden" reads as "include hidden files" more clearly than the old
+// "Hide+/Hide-" polarity, and the button lights while it is on.
+inline constexpr std::string_view kModeButtonLabel = ".*";
+inline constexpr std::string_view kHiddenButtonLabel = "Hidden";
 
 inline constexpr float kInset = 10.0f;
 inline constexpr float kButtonTop = 34.0f;

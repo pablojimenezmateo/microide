@@ -49,6 +49,10 @@ TreeContextTargetKind ActionAvailability::ActiveTreeTargetKind() const {
                                                     : operations_.selected_tree_target_kind();
 }
 
+// One exhaustive switch over every ActionId, with no `default:` -- deliberately:
+// -Wswitch (an error in the clang lane) makes each new action take a position on
+// whether it is available. Splitting it into per-family functions would need a
+// `default:` in each and lose that.
 bool ActionAvailability::IsEnabled(ActionId id) const {
   const editor::TextViewport* active_viewport = operations_.active_navigable_viewport();
   const editor::TextViewport* active_editable_viewport = operations_.active_editable_viewport();

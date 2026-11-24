@@ -4,7 +4,9 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -106,7 +108,7 @@ inline TextPosition MapPositionThroughEdit(const TextPosition& position, const A
 }
 
 // Whole-line-trimmed span of the last applied edit, in the same coordinate model
-// as WorkspaceShell::ComputeChangedLineSpan (common leading/trailing IDENTICAL
+// as ComputeChangedLineSpan below (common leading/trailing IDENTICAL
 // lines trimmed): before-lines occupied [old_start, old_end), after-lines occupy
 // [old_start, new_end). Lets edit-side-effect consumers (e.g. merge conflict
 // tracking) shift/invalidate line-keyed state from a single edit without diffing a
@@ -117,5 +119,30 @@ struct AppliedEditLineSpan {
   std::size_t old_end = 0;
   std::size_t new_end = 0;
 };
+
+// The span between two whole-buffer line snapshots: their common leading and
+// trailing lines trimmed. Empty when they are equal.
+inline std::optional<AppliedEditLineSpan> ComputeChangedLineSpan(const std::vector<std::string>& before_lines,
+                                                                 const std::vector<std::string>& after_lines) {
+  std::size_t prefix = 0;
+  while (prefix < before_lines.size() && prefix < after_lines.size() && before_lines[prefix] == after_lines[prefix]) {
+    ++prefix;
+  }
+  if (prefix == before_lines.size() && prefix == after_lines.size()) {
+    return std::nullopt;
+  }
+
+  std::size_t suffix = 0;
+  while (suffix < before_lines.size() - prefix && suffix < after_lines.size() - prefix &&
+         before_lines[before_lines.size() - 1 - suffix] == after_lines[after_lines.size() - 1 - suffix]) {
+    ++suffix;
+  }
+
+  return AppliedEditLineSpan{
+      .old_start = prefix,
+      .old_end = before_lines.size() - suffix,
+      .new_end = after_lines.size() - suffix,
+  };
+}
 
 }  // namespace microide::editor

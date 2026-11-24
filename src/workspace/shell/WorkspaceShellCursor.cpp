@@ -306,7 +306,7 @@ std::optional<WorkspaceShell::CursorKind> WorkspaceShell::CursorKindOverModalsAn
   };
   if (context_.menu_state.tree_context_menu.open) {
     if (const auto popup_rect = ComputeTreeContextMenuRect(); popup_rect.has_value()) {
-      const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
+      const auto items = WorkspaceTreeContextMenuItems(context_.menu_state.tree_context_menu.target);
       if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
         return row_cursor(items, *hit);
       }
@@ -1124,8 +1124,33 @@ bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
          rect.x + rect.w <= occluder.x + occluder.w && rect.y + rect.h <= occluder.y + occluder.h;
 }
 
+namespace {
+
+// A hover step's answer when the pointer is over its surface and nothing there
+// is hovered: stop asking the steps after it.
+constexpr std::optional<SDL_FRect> kNothingHovered{};
+
+}  // namespace
+
 std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceLayout& layout,
                                                                float x, float y) const {
+  // Each step answers for its surface (an empty answer: not over it, ask the next),
+  // in the order the surfaces stack.
+  if (const auto hovered = HoverOverOverlayAndWidgets(layout, x, y)) {
+    return *hovered;
+  }
+  if (const auto hovered = HoverOverChrome(layout, x, y)) {
+    return *hovered;
+  }
+  if (const auto hovered = HoverOverSidebar(layout, x, y)) {
+    return *hovered;
+  }
+  return HoverOverPanels(layout, x, y);
+}
+
+// The overlay card and the floating widgets over the editor.
+std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverOverlayAndWidgets(const WorkspaceLayout& layout,
+                                                                                   float x, float y) const {
   // (An open menu's rows are not probed here: each is a derived unit keyed on
   // whether it is lit -- MenuPopupPaint.h -- so the row the pointer leaves repaints
   // whatever took the pointer.)
@@ -1145,7 +1170,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
             idx.has_value()) {
           return ScrollableListItemRect(list_layout, *idx);
         }
-        return std::nullopt;
+        return kNothingHovered;
       }
     }
   }
@@ -1205,6 +1230,12 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
   }
 
+  return std::nullopt;
+}
+
+// The menu bar, breadcrumb band, tab strips, editor banner and merge toolbar.
+std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverChrome(const WorkspaceLayout& layout, float x,
+                                                                        float y) const {
   // Menu bar: top-level items lift on hover (the dropdown-open case is handled by the
   // chrome coordinator's menu-motion path, so this only matters when no menu is open).
   if (layout.menu_bar.w > 0.0f && Contains(layout.menu_bar, x, y)) {
@@ -1226,7 +1257,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value() && Contains(*chevron, x, y)) {
       return *chevron;
     }
-    return std::nullopt;
+    return kNothingHovered;
   }
 
   // Plugin status items, in the breadcrumb row: they lift on hover.
@@ -1288,7 +1319,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
       if (Contains(buttons.dismiss, x, y)) {
         return buttons.dismiss;
       }
-      return std::nullopt;
+      return kNothingHovered;
     }
   }
 
@@ -1326,6 +1357,12 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
   }
 
+  return std::nullopt;
+}
+
+// The sidebar's view tabs, header buttons and rows.
+std::optional<std::optional<SDL_FRect>> WorkspaceShell::HoverOverSidebar(const WorkspaceLayout& layout, float x,
+                                                                         float y) const {
   // Sidebar: the view tabs and each view's header buttons, then its list rows.
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
     if (!MenuSurfaceCapturingMouse()) {
@@ -1336,7 +1373,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
             return rect;
           }
         }
-        return std::nullopt;
+        return kNothingHovered;
       };
       const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
       for (int i = 0; i < mode_row.tab_count; ++i) {
@@ -1440,9 +1477,14 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
       case SidebarMode::None:
         break;
     }
-    return std::nullopt;
+    return kNothingHovered;
   }
 
+  return std::nullopt;
+}
+
+// The bottom panel and the debug pane: the last surfaces asked.
+std::optional<SDL_FRect> WorkspaceShell::HoverOverPanels(const WorkspaceLayout& layout, float x, float y) const {
   // Bottom-panel header tabs.
   if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
     const SDL_FRect panel_header =

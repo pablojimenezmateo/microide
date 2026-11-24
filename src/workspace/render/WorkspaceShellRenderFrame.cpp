@@ -2353,7 +2353,7 @@ void WorkspaceShell::PrepareMenuPopupSurfaces(FramePrepPass& pass) {
   // above: its height comes from a cache keyed on the language server's
   // readiness, which another thread moves (soak e4353c8cb483).
   if (context_.menu_state.tree_context_menu.open && frame_state_.context_menu_rect.has_value()) {
-    const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
+    const auto items = WorkspaceTreeContextMenuItems(context_.menu_state.tree_context_menu.target);
     if (!items.empty()) {
       lay_out(popup_at(MenuPopupSlot::Context), items, context_.menu_state.tree_context_menu.active_item_index,
               *frame_state_.context_menu_rect);
@@ -2860,13 +2860,13 @@ void WorkspaceShell::PrepareSearchSidebarSurface(FramePrepPass& pass) {
     }
     inputs.buttons = {
         SearchSidebarButtonPaint{.rect = project_search_panel::ModeButtonRect(sidebar),
-                                 .label = ProjectSearchModeButtonLabel(),
+                                 .label = project_search_panel::kModeButtonLabel,
                                  .active = search.options.pattern_mode == project::ProjectSearchPatternMode::Regex},
         SearchSidebarButtonPaint{.rect = project_search_panel::CaseButtonRect(sidebar),
                                  .label = ProjectSearchCaseButtonLabel(),
                                  .active = search.options.case_mode != project::ProjectSearchCaseMode::Smart},
         SearchSidebarButtonPaint{.rect = project_search_panel::HiddenButtonRect(sidebar),
-                                 .label = ProjectSearchHiddenButtonLabel(),
+                                 .label = project_search_panel::kHiddenButtonLabel,
                                  .active = search.options.show_hidden},
         SearchSidebarButtonPaint{.rect = project_search_panel::ReplaceAllButtonRect(sidebar),
                                  .label = "All",

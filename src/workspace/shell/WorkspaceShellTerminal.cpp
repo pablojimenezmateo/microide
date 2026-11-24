@@ -1064,11 +1064,4 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
   };
 }
 
-terminal::TerminalSession::MouseButton WorkspaceShell::TerminalMouseButtonForSdl(
-    Uint8 button) const {
-  return TerminalMouseButtonFromSdl(button);
-}
-
-
-
 }  // namespace microide::workspace

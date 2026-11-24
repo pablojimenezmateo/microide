@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "workspace/MergeToolbarMetrics.h"
 #include "workspace/MergeWrapRows.h"
 #include "workspace/git/CompareTabReview.h"
 
@@ -77,4 +78,28 @@ void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_co
   merge_tab.horizontal_scroll = std::min(merge_tab.horizontal_scroll, MergeMaxScrollColumn(merge_tab, visible_columns));
 }
 
+// its own copy of the arithmetic.
+void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows) {
+  const int rows = std::max(1, visible_rows);
+  const int first = static_cast<int>(ComparePresentationRowToVisualRow(compare_tab, compare_tab.selected_row));
+  const int span = static_cast<int>(compare_tab.wrap_layout.RowSpanForUnit(compare_tab.selected_row));
+  const int last = first + std::max(1, span) - 1;
+  if (first < compare_tab.scroll_row) {
+    compare_tab.scroll_row = first;
+  } else if (last >= compare_tab.scroll_row + rows) {
+    compare_tab.scroll_row = last - rows + 1;
+  }
+  ClampCompareScrollRow(compare_tab, visible_rows);
+}
+
+std::array<SDL_FRect, 4> BuildMergeResultActionButtonRects(const MergeSurfaceLayout& surface,
+                                                           const MergeInteractionLayout& interaction,
+                                                           const MergeTrackedConflict& conflict) {
+  return ComputeMergeResultActionButtonRects(
+      surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
+      ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines, conflict.start_line,
+                                  std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
+      interaction.result_action_widths, kMergeToolbarButtonHeight, kMergeToolbarButtonGap,
+      surface.center_x + surface.center_width);
+}
 }  // namespace microide::workspace

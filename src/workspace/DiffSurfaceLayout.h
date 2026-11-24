@@ -95,4 +95,12 @@ ScrollSurfaceLayout ComputeCompareScrollLayout(const SDL_FRect& rect, const Comp
 ScrollSurfaceLayout ComputeMergeScrollLayout(const SDL_FRect& rect, const MergeSurfaceLayout& surface,
                                              const MergeTabState& merge_tab);
 
+// Scrolls the compare tab so its selected row's whole wrapped block is in view.
+void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows);
+// A tracked conflict's four result-pane buttons (Base, Remote, Local, Both), laid
+// out against the conflict's rows in the result pane.
+std::array<SDL_FRect, 4> BuildMergeResultActionButtonRects(const MergeSurfaceLayout& surface,
+                                                           const MergeInteractionLayout& interaction,
+                                                           const MergeTrackedConflict& conflict);
+
 }  // namespace microide::workspace

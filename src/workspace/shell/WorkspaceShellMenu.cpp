@@ -12,21 +12,9 @@
 
 namespace microide::workspace {
 
-std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuItems(
-    TreeContextTargetKind target) {
-  return WorkspaceTreeContextMenuItems(target);
-}
-
 namespace {
 
 }  // namespace
-
-bool WorkspaceShell::IsMenuBarMenuVisible(MenuId id) const {
-  // Every top-level menu (including Debug) is always visible. The Debug menu's
-  // first item is the master enable/disable toggle; the remaining debug items
-  // grey out via IsMenuItemEnabled when `debug.enabled` is off.
-  return IsMenuBarTopLevelMenu(id);
-}
 
 WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
     const SDL_FRect& menu_bar) const {
@@ -74,7 +62,7 @@ WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
   std::size_t spec_index = 0;
   for (const MenuSpec& spec : MenuSpecs()) {
     const std::size_t index = spec_index++;
-    if (!IsMenuBarMenuVisible(spec.id)) {
+    if (!IsMenuBarTopLevelMenu(spec.id)) {
       continue;
     }
     const char* key = spec.label.data();
@@ -124,7 +112,7 @@ WorkspaceShell::MenuBarOverflowIds WorkspaceShell::ComputeOverflowMenuBarItems(
   MenuBarOverflowIds overflow;
   std::size_t consumed = 0;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (!IsMenuBarMenuVisible(spec.id)) {
+    if (!IsMenuBarTopLevelMenu(spec.id)) {
       continue;
     }
     if (consumed < visible.size() && visible[consumed].id == spec.id) {
@@ -609,7 +597,7 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeTreeContextMenuRect() const {
     return std::nullopt;
   }
   return ComputePopupMenuRect(context_.menu_state.tree_context_menu.anchor_rect,
-                              TreeContextMenuItems(context_.menu_state.tree_context_menu.target),
+                              WorkspaceTreeContextMenuItems(context_.menu_state.tree_context_menu.target),
                               *window_rect);
 }
 
