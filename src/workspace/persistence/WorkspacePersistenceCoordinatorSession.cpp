@@ -581,228 +581,12 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
-    // A file open in two panes is ONE buffer, and both of its tabs persisted the
-    // same dirty snapshot. Rebuilding each from its own lines gave the restored
-    // session two independent documents for one file — an edit in one pane no
-    // longer showed in the other, and each pane saved its own copy. The first
-    // restored view of a path is kept here (a copy shares its DocumentState) and
-    // every later dirty tab on that path copies it. Clean tabs restore lazily
-    // through OpenEditorViewForPath, which finds the live view the same way.
-    std::unordered_map<std::string, editor::TextViewport> restored_dirty_views;
-    // The buffer a record's dirty snapshot restores, as a view of it. The tabs of
-    // one dirty buffer share it again: a file's by its path, an untitled buffer's
-    // by its number -- it has no path, and keying it by the empty one restored each
-    // pane on a buffer of its own, two texts under one Untitled-N after the first
-    // edit (soak 2ae149191d79). An untitled tab from an older session has no
-    // number and stays on its own.
-    const auto restore_dirty_view = [&](const PersistedEditorTabState& persisted_tab,
-                                        const std::filesystem::path& view_path) -> editor::TextViewport {
-      const std::string view_key =
-          !view_path.empty()                    ? view_path.generic_string()
-          : persisted_tab.untitled_number != 0 ? "untitled:" + std::to_string(persisted_tab.untitled_number)
-                                               : std::string{};
-      if (const auto shared = restored_dirty_views.find(view_key);
-          !view_key.empty() && shared != restored_dirty_views.end()) {
-        return shared->second;  // another tab on the same dirty buffer
-      }
-      editor::TextViewport restored_view;
-      // Load the snapshot's lines straight in (dirty=true baked in): LoadLines
-      // keeps the persisted line ending, where LoadContent would detect one.
-      restored_view.LoadLines(persisted_tab.buffer.ToLines(), view_path, persisted_tab.line_ending);
-      restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
-      if (persisted_tab.disk_baseline.has_value() && !view_path.empty()) {
-        restored_view.RebindToPath(view_path, RestoredDiskBaseline(*persisted_tab.disk_baseline, view_path));
-      }
-      // Preferences / indent detection before any view state is applied (they
-      // re-run EnsureCursorVisible), so a tab's scroll survives independent of
-      // the caret.
-      operations_.apply_editor_preferences(restored_view);
-      operations_.apply_detected_indent_on_open(restored_view);
-      if (!view_key.empty()) {
-        restored_dirty_views.emplace(view_key, restored_view);
-      }
-      return restored_view;
-    };
-    // Rebuild one persisted tab into a runtime TabEntry. `should_eager_hydrate`
-    // controls whether an editor tab is opened immediately or left deferred;
-    // compare/merge tabs are always materialized fully.
-    auto rebuild_tab = [&](const PersistedEditorTabState& persisted_tab,
-                           bool should_eager_hydrate) -> std::optional<TabEntry> {
-    const std::filesystem::path view_path = ResolveSessionPath(state.root, persisted_tab.path);
-    if (persisted_tab.kind == "compare") {
-      // A diff whose editable side held unsaved text carries it, under the file's
-      // path. When the diff itself cannot come back -- its repository gone, its
-      // revision unreadable -- the text still does, in an editor tab on the file:
-      // the record then reads as an editor tab's, below.
-      if (!persisted_tab.dirty_snapshot || view_path.empty()) {
-        return RestoreCompareTab(persisted_tab, state.root, nullptr);
-      }
-      const editor::TextViewport unsaved = restore_dirty_view(persisted_tab, view_path);
-      if (std::optional<TabEntry> compare_tab = RestoreCompareTab(persisted_tab, state.root, &unsaved);
-          compare_tab.has_value()) {
-        return compare_tab;
-      }
-    } else if (persisted_tab.kind == "merge") {
-      return RestoreMergeTab(persisted_tab, state.root);
-    }
-
-    // Editor tab: restores exactly one viewport from its inline single-view fields.
-    TabEntry::EditorTabState editor_state;
-    editor_state.restore = ReadViewState(persisted_tab, view_path);
-
-    if (persisted_tab.dirty_snapshot) {
-      editor::TextViewport restored_view = restore_dirty_view(persisted_tab, view_path);
-      editor_state.restore.ApplyViewStateTo(restored_view);
-      editor_state.viewport = std::move(restored_view);
-      editor_state.content = EditorTabState::Content::Ready;
-    } else if (std::error_code exists_ec;
-               !view_path.empty() && std::filesystem::exists(view_path, exists_ec) &&
-               !exists_ec) {
-      editor_state.content = EditorTabState::Content::Deferred;
-    } else {
-      return std::nullopt;
-    }
-
-    const std::filesystem::path tab_path = operations_.editor_view_path(editor_state);
-
-    // An untitled buffer keeps the number it had; one from an older session gets
-    // the next free one (NumberUntitledTabs, below).
-    const std::uint32_t untitled_number = tab_path.empty() ? persisted_tab.untitled_number : 0;
-    TabEntry restored_tab{
-        .kind = TabEntry::Kind::Editor,
-        .path = tab_path,
-        .title = TabTitleForPath(tab_path, untitled_number),
-        .editor_state = std::nullopt,
-        .deferred_handle = std::nullopt,
-        .compare = std::nullopt,
-        .merge = std::nullopt,
-    };
-    restored_tab.untitled_number = untitled_number;
-    if (should_eager_hydrate) {
-      restored_tab.editor_state = std::move(editor_state);
-    } else {
-      restored_tab.deferred_handle = std::move(editor_state.restore);
-      restored_tab.deferred_handle->path = tab_path;
-      if (!editor_state.content_pending()) {
-        restored_tab.deferred_handle->selection = editor_state.viewport.selection_range();
-      }
-    }
-    return restored_tab;
-    };  // rebuild_tab
-
-    state.editor_groups.clear();
-    for (const PersistedEditorGroupState& persisted_group : persisted_session.groups) {
-      if (state.editor_groups.size() >= kMaxEditorGroups) {
-        break;
-      }
-      EditorGroup group;
-      std::size_t restored_active = 0;
-      // The decode cap (kMaxSessionTabsPerGroup = 4096) is a defensive parse ceiling,
-      // not a UI workload size. A CRC-valid but oversized session would otherwise make
-      // startup rebuild thousands of tabs — path-probing clean editors and building
-      // full compare/merge models — before the first frame. Cap restored tabs at a
-      // much smaller product limit; the active tab is always restored even past the
-      // cap so focus never strands. TD-2026-07-17A-082.
-      constexpr std::size_t kMaxRestoredTabsPerGroup = 200;
-      for (std::size_t i = 0; i < persisted_group.tabs.size(); ++i) {
-        const PersistedEditorTabState& persisted_tab = persisted_group.tabs[i];
-        const bool is_active = i == persisted_group.active_tab_index;
-        if (group.open_tabs.size() >= kMaxRestoredTabsPerGroup && !is_active) {
-          continue;  // Past the product cap: skip non-active tabs (defensive).
-        }
-        const bool should_eager_hydrate = is_active || persisted_tab.dirty_snapshot;
-        std::optional<TabEntry> tab = rebuild_tab(persisted_tab, should_eager_hydrate);
-        if (!tab.has_value()) {
-          continue;
-        }
-        if (is_active) {
-          restored_active = group.open_tabs.size();
-        }
-        group.open_tabs.push_back(std::move(*tab));
-      }
-      if (!group.open_tabs.empty()) {
-        group.active_tab_index = std::min(restored_active, group.open_tabs.size() - 1);
-      }
-      state.editor_groups.push_back(std::move(group));
-    }
-    if (state.editor_groups.empty()) {
-      state.editor_groups.emplace_back();
-    }
-    // Restored untitled buffers (hot exit) take their numbers in tab order.
-    NumberUntitledTabs(state.editor_groups);
-    // One file, one buffer: a diff's editable side and the editor tab on its file.
-    RejoinRestoredCompareSides(state.editor_groups);
-    // The tree's leaves ARE the groups, so a record that does not describe exactly
-    // the groups that survived the restore (missing, corrupt, or written before a
-    // group was dropped for an unreadable path) is replaced by an even row rather
-    // than left to disagree with them.
-    if (!state.editor_split.Load(persisted_session.split_tree) ||
-        state.editor_split.leaf_count() != state.editor_groups.size()) {
-      state.editor_split.ResetToEvenSplit(state.editor_groups.size(),
-                                          EditorSplitOrientation::Vertical);
-    }
-    state.focused_group_index =
-        std::min(persisted_session.focused_group_index, state.editor_groups.size() - 1);
+    RestoreEditorGroups(persisted_session);
   }
-
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RestoreLayoutState");
-    // A CRC-valid but hand-edited (or NaN/Inf) persisted float would otherwise flow
-    // straight into layout: std::clamp(NaN, …) returns NaN, so the render-time pane
-    // clamps cannot recover it and the pane collapses/explodes. Replace any
-    // non-finite or negative dimension with the schema default here.
-    const auto sanitize_pixels = [](float value, float fallback) {
-      // Reject non-finite and negative, AND cap an absurd finite value: a corrupt
-      // session could store a huge width/height that would squeeze the rest of the
-      // layout to nothing until the next resize. 100000px is far past any display.
-      if (!std::isfinite(value) || value < 0.0f) {
-        return fallback;
-      }
-      return std::min(value, 100000.0f);
-    };
-    state.sidebar.visible = persisted_session.sidebar_visible;
-    state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, kWorkspaceDefaultSidebarWidth);
-    state.panel.height = sanitize_pixels(persisted_session.bottom_panel_height, kWorkspaceDefaultBottomPanelHeight);
-    state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
-    // Right-side debug pane: restore width/mode always, but only re-open it when the
-    // debugger feature is currently enabled (else a pane left open in a prior session
-    // would surface debug UI in the default debugger-off state).
-    state.debug_pane.width = sanitize_pixels(persisted_session.right_pane_width, 0.0f);
-    state.debug_pane.mode = persisted_session.right_pane_mode <=
-                                    static_cast<std::uint8_t>(DebugPaneMode::Breakpoints)
-                                ? static_cast<DebugPaneMode>(persisted_session.right_pane_mode)
-                                : DebugPaneMode::CallStack;
-    const bool debugger_enabled =
-        operations_.debugger_enabled && operations_.debugger_enabled();
-    state.debug_pane.visible = persisted_session.right_pane_visible && debugger_enabled;
-
-    // File-tree expansion + sidebar view. RestoreExpansionState rebuilds the tree
-    // rows; a later Refresh() (on tab activation / sidebar refresh) preserves the
-    // restored expansion because it reads the same expanded_paths_ set.
-    state.directory_tree.RestoreExpansionState(persisted_session.expanded_tree_paths,
-                                               persisted_session.collapsed_tree_paths);
-    if (!persisted_session.selected_tree_path.empty() && !state.root.empty()) {
-      state.directory_tree.SelectPath(
-          state.root / std::filesystem::path(persisted_session.selected_tree_path));
-    }
-    state.sidebar.scroll_row = std::max(0, persisted_session.sidebar_scroll_row);
-    if (!persisted_session.sidebar_view_id.empty()) {
-      state.sidebar.view_id = persisted_session.sidebar_view_id;
-    }
-    // The panel comes back maximized if it was, and project init revives the
-    // terminals into it (TerminalPanelService::OpenTerminalsForProjectInit).
-    state.panel.maximized = persisted_session.panel_maximized;
-    state.terminal_layout_to_revive = std::move(persisted_session.terminal_layout);
-    state.recently_closed_editors.clear();
-    for (const PersistedEditorTabState& closed : persisted_session.closed_editors) {
-      if (!closed.path.is_absolute() ||
-          state.recently_closed_editors.size() >= ProjectWorkspaceState::kMaxRecentlyClosedEditors) {
-        continue;
-      }
-      state.recently_closed_editors.push_back(ReadViewState(closed, closed.path.lexically_normal()));
-    }
+    RestoreSessionLayout(persisted_session);
   }
-
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::FinalizeState");
     // Each empty group shows the welcome placeholder; per-group active index was
@@ -820,6 +604,237 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.surface.focus = FocusTarget::Editor;
   }
   return true;
+}
+
+// A file open in two panes is ONE buffer, and both of its tabs persisted the
+// same dirty snapshot. Rebuilding each from its own lines gave the restored
+// session two independent documents for one file — an edit in one pane no
+// longer showed in the other, and each pane saved its own copy. The first
+// restored view of a path is kept here (a copy shares its DocumentState) and
+// every later dirty tab on that path copies it. Clean tabs restore lazily
+// through OpenEditorViewForPath, which finds the live view the same way.
+//
+// The buffer a record's dirty snapshot restores, as a view of it. The tabs of
+// one dirty buffer share it again: a file's by its path, an untitled buffer's
+// by its number -- it has no path, and keying it by the empty one restored each
+// pane on a buffer of its own, two texts under one Untitled-N after the first
+// edit (soak 2ae149191d79). An untitled tab from an older session has no
+// number and stays on its own.
+editor::TextViewport PersistenceCoordinator::RestoreDirtyView(
+    const PersistedEditorTabState& persisted_tab, const std::filesystem::path& view_path,
+    RestoredDirtyViews& dirty_views) {
+  const std::string view_key =
+      !view_path.empty()                    ? view_path.generic_string()
+      : persisted_tab.untitled_number != 0 ? "untitled:" + std::to_string(persisted_tab.untitled_number)
+                                           : std::string{};
+  if (const auto shared = dirty_views.find(view_key);
+      !view_key.empty() && shared != dirty_views.end()) {
+    return shared->second;  // another tab on the same dirty buffer
+  }
+  editor::TextViewport restored_view;
+  // Load the snapshot's lines straight in (dirty=true baked in): LoadLines
+  // keeps the persisted line ending, where LoadContent would detect one.
+  restored_view.LoadLines(persisted_tab.buffer.ToLines(), view_path, persisted_tab.line_ending);
+  restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
+  if (persisted_tab.disk_baseline.has_value() && !view_path.empty()) {
+    restored_view.RebindToPath(view_path, RestoredDiskBaseline(*persisted_tab.disk_baseline, view_path));
+  }
+  // Preferences / indent detection before any view state is applied (they
+  // re-run EnsureCursorVisible), so a tab's scroll survives independent of
+  // the caret.
+  operations_.apply_editor_preferences(restored_view);
+  operations_.apply_detected_indent_on_open(restored_view);
+  if (!view_key.empty()) {
+    dirty_views.emplace(view_key, restored_view);
+  }
+  return restored_view;
+}
+
+// Rebuild one persisted tab into a runtime TabEntry. `should_eager_hydrate`
+// controls whether an editor tab is opened immediately or left deferred;
+// compare/merge tabs are always materialized fully.
+std::optional<TabEntry> PersistenceCoordinator::RebuildTab(
+    const PersistedEditorTabState& persisted_tab, bool should_eager_hydrate,
+    RestoredDirtyViews& dirty_views) {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  const std::filesystem::path view_path = ResolveSessionPath(state.root, persisted_tab.path);
+  if (persisted_tab.kind == "compare") {
+    // A diff whose editable side held unsaved text carries it, under the file's
+    // path. When the diff itself cannot come back -- its repository gone, its
+    // revision unreadable -- the text still does, in an editor tab on the file:
+    // the record then reads as an editor tab's, below.
+    if (!persisted_tab.dirty_snapshot || view_path.empty()) {
+      return RestoreCompareTab(persisted_tab, state.root, nullptr);
+    }
+    const editor::TextViewport unsaved = RestoreDirtyView(persisted_tab, view_path, dirty_views);
+    if (std::optional<TabEntry> compare_tab = RestoreCompareTab(persisted_tab, state.root, &unsaved);
+        compare_tab.has_value()) {
+      return compare_tab;
+    }
+  } else if (persisted_tab.kind == "merge") {
+    return RestoreMergeTab(persisted_tab, state.root);
+  }
+
+  // Editor tab: restores exactly one viewport from its inline single-view fields.
+  TabEntry::EditorTabState editor_state;
+  editor_state.restore = ReadViewState(persisted_tab, view_path);
+
+  if (persisted_tab.dirty_snapshot) {
+    editor::TextViewport restored_view = RestoreDirtyView(persisted_tab, view_path, dirty_views);
+    editor_state.restore.ApplyViewStateTo(restored_view);
+    editor_state.viewport = std::move(restored_view);
+    editor_state.content = EditorTabState::Content::Ready;
+  } else if (std::error_code exists_ec;
+             !view_path.empty() && std::filesystem::exists(view_path, exists_ec) &&
+             !exists_ec) {
+    editor_state.content = EditorTabState::Content::Deferred;
+  } else {
+    return std::nullopt;
+  }
+
+  const std::filesystem::path tab_path = operations_.editor_view_path(editor_state);
+
+  // An untitled buffer keeps the number it had; one from an older session gets
+  // the next free one (NumberUntitledTabs, below).
+  const std::uint32_t untitled_number = tab_path.empty() ? persisted_tab.untitled_number : 0;
+  TabEntry restored_tab{
+      .kind = TabEntry::Kind::Editor,
+      .path = tab_path,
+      .title = TabTitleForPath(tab_path, untitled_number),
+      .editor_state = std::nullopt,
+      .deferred_handle = std::nullopt,
+      .compare = std::nullopt,
+      .merge = std::nullopt,
+  };
+  restored_tab.untitled_number = untitled_number;
+  if (should_eager_hydrate) {
+    restored_tab.editor_state = std::move(editor_state);
+  } else {
+    restored_tab.deferred_handle = std::move(editor_state.restore);
+    restored_tab.deferred_handle->path = tab_path;
+    if (!editor_state.content_pending()) {
+      restored_tab.deferred_handle->selection = editor_state.viewport.selection_range();
+    }
+  }
+  return restored_tab;
+}
+
+void PersistenceCoordinator::RestoreEditorGroups(
+    const PersistedProjectSessionState& persisted_session) {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  RestoredDirtyViews dirty_views;
+  state.editor_groups.clear();
+  for (const PersistedEditorGroupState& persisted_group : persisted_session.groups) {
+    if (state.editor_groups.size() >= kMaxEditorGroups) {
+      break;
+    }
+    EditorGroup group;
+    std::size_t restored_active = 0;
+    // The decode cap (kMaxSessionTabsPerGroup = 4096) is a defensive parse ceiling,
+    // not a UI workload size. A CRC-valid but oversized session would otherwise make
+    // startup rebuild thousands of tabs — path-probing clean editors and building
+    // full compare/merge models — before the first frame. Cap restored tabs at a
+    // much smaller product limit; the active tab is always restored even past the
+    // cap so focus never strands. TD-2026-07-17A-082.
+    constexpr std::size_t kMaxRestoredTabsPerGroup = 200;
+    for (std::size_t i = 0; i < persisted_group.tabs.size(); ++i) {
+      const PersistedEditorTabState& persisted_tab = persisted_group.tabs[i];
+      const bool is_active = i == persisted_group.active_tab_index;
+      if (group.open_tabs.size() >= kMaxRestoredTabsPerGroup && !is_active) {
+        continue;  // Past the product cap: skip non-active tabs (defensive).
+      }
+      const bool should_eager_hydrate = is_active || persisted_tab.dirty_snapshot;
+      std::optional<TabEntry> tab = RebuildTab(persisted_tab, should_eager_hydrate, dirty_views);
+      if (!tab.has_value()) {
+        continue;
+      }
+      if (is_active) {
+        restored_active = group.open_tabs.size();
+      }
+      group.open_tabs.push_back(std::move(*tab));
+    }
+    if (!group.open_tabs.empty()) {
+      group.active_tab_index = std::min(restored_active, group.open_tabs.size() - 1);
+    }
+    state.editor_groups.push_back(std::move(group));
+  }
+  if (state.editor_groups.empty()) {
+    state.editor_groups.emplace_back();
+  }
+  // Restored untitled buffers (hot exit) take their numbers in tab order.
+  NumberUntitledTabs(state.editor_groups);
+  // One file, one buffer: a diff's editable side and the editor tab on its file.
+  RejoinRestoredCompareSides(state.editor_groups);
+  // The tree's leaves ARE the groups, so a record that does not describe exactly
+  // the groups that survived the restore (missing, corrupt, or written before a
+  // group was dropped for an unreadable path) is replaced by an even row rather
+  // than left to disagree with them.
+  if (!state.editor_split.Load(persisted_session.split_tree) ||
+      state.editor_split.leaf_count() != state.editor_groups.size()) {
+    state.editor_split.ResetToEvenSplit(state.editor_groups.size(),
+                                        EditorSplitOrientation::Vertical);
+  }
+  state.focused_group_index =
+      std::min(persisted_session.focused_group_index, state.editor_groups.size() - 1);
+}
+
+void PersistenceCoordinator::RestoreSessionLayout(
+    PersistedProjectSessionState& persisted_session) {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  // A CRC-valid but hand-edited (or NaN/Inf) persisted float would otherwise flow
+  // straight into layout: std::clamp(NaN, …) returns NaN, so the render-time pane
+  // clamps cannot recover it and the pane collapses/explodes. Replace any
+  // non-finite or negative dimension with the schema default here.
+  const auto sanitize_pixels = [](float value, float fallback) {
+    // Reject non-finite and negative, AND cap an absurd finite value: a corrupt
+    // session could store a huge width/height that would squeeze the rest of the
+    // layout to nothing until the next resize. 100000px is far past any display.
+    if (!std::isfinite(value) || value < 0.0f) {
+      return fallback;
+    }
+    return std::min(value, 100000.0f);
+  };
+  state.sidebar.visible = persisted_session.sidebar_visible;
+  state.sidebar.width = sanitize_pixels(persisted_session.sidebar_width, kWorkspaceDefaultSidebarWidth);
+  state.panel.height = sanitize_pixels(persisted_session.bottom_panel_height, kWorkspaceDefaultBottomPanelHeight);
+  state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
+  // Right-side debug pane: restore width/mode always, but only re-open it when the
+  // debugger feature is currently enabled (else a pane left open in a prior session
+  // would surface debug UI in the default debugger-off state).
+  state.debug_pane.width = sanitize_pixels(persisted_session.right_pane_width, 0.0f);
+  state.debug_pane.mode = persisted_session.right_pane_mode <=
+                                  static_cast<std::uint8_t>(DebugPaneMode::Breakpoints)
+                              ? static_cast<DebugPaneMode>(persisted_session.right_pane_mode)
+                              : DebugPaneMode::CallStack;
+  const bool debugger_enabled =
+      operations_.debugger_enabled && operations_.debugger_enabled();
+  state.debug_pane.visible = persisted_session.right_pane_visible && debugger_enabled;
+
+  // File-tree expansion + sidebar view. RestoreExpansionState rebuilds the tree
+  // rows; a later Refresh() (on tab activation / sidebar refresh) preserves the
+  // restored expansion because it reads the same expanded_paths_ set.
+  state.directory_tree.RestoreExpansionState(persisted_session.expanded_tree_paths,
+                                             persisted_session.collapsed_tree_paths);
+  if (!persisted_session.selected_tree_path.empty() && !state.root.empty()) {
+    state.directory_tree.SelectPath(
+        state.root / std::filesystem::path(persisted_session.selected_tree_path));
+  }
+  state.sidebar.scroll_row = std::max(0, persisted_session.sidebar_scroll_row);
+  if (!persisted_session.sidebar_view_id.empty()) {
+    state.sidebar.view_id = persisted_session.sidebar_view_id;
+  }
+  // The panel comes back maximized if it was, and project init revives the
+  // terminals into it (TerminalPanelService::OpenTerminalsForProjectInit).
+  state.panel.maximized = persisted_session.panel_maximized;
+  state.terminal_layout_to_revive = std::move(persisted_session.terminal_layout);
+  state.recently_closed_editors.clear();
+  for (const PersistedEditorTabState& closed : persisted_session.closed_editors) {
+    if (!closed.path.is_absolute() ||
+        state.recently_closed_editors.size() >= ProjectWorkspaceState::kMaxRecentlyClosedEditors) {
+      continue;
+    }
+    state.recently_closed_editors.push_back(ReadViewState(closed, closed.path.lexically_normal()));
+  }
 }
 
 void PersistenceCoordinator::SaveSessionState() {

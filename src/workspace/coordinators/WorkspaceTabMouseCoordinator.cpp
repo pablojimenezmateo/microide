@@ -22,8 +22,8 @@ constexpr float kTabDragStartDistance = 6.0f;
 
 // A left click on one of a strip's overflow chevrons scrolls the strip a tab that
 // way. True when the click hit a shown chevron (consumed even with no scroller).
-bool ClickTabStripOverflow(const WorkspaceShell::TabStripOverflowControls& overflow, float x,
-                           float y, const std::function<bool(int)>& scroll) {
+static bool ClickTabStripOverflow(const WorkspaceShell::TabStripOverflowControls& overflow,
+                                  float x, float y, const std::function<bool(int)>& scroll) {
   int direction = 0;
   if (overflow.hidden_left > 0 && Contains(overflow.left_button, x, y)) {
     direction = -1;

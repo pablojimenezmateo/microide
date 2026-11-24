@@ -3,7 +3,9 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "render/Theme.h"
 #include "workspace/persistence/PersistenceService.h"
@@ -111,6 +113,17 @@ class PersistenceCoordinator {
   std::filesystem::path DebugStatePath() const;
   void SaveDebugState();
   void RestoreDebugState();
+
+  // RestoreSessionState's phases. The dirty views restored so far, by buffer: the
+  // tabs of one dirty buffer share one view (see RestoreDirtyView).
+  using RestoredDirtyViews = std::unordered_map<std::string, editor::TextViewport>;
+  void RestoreEditorGroups(const PersistedProjectSessionState& persisted_session);
+  std::optional<TabEntry> RebuildTab(const PersistedEditorTabState& persisted_tab,
+                                     bool should_eager_hydrate, RestoredDirtyViews& dirty_views);
+  editor::TextViewport RestoreDirtyView(const PersistedEditorTabState& persisted_tab,
+                                        const std::filesystem::path& view_path,
+                                        RestoredDirtyViews& dirty_views);
+  void RestoreSessionLayout(PersistedProjectSessionState& persisted_session);
 
   // Rebuild one persisted compare / merge tab; nullopt when its inputs are gone.
   // `unsaved_right`: the restored unsaved buffer the compare's record carried for
