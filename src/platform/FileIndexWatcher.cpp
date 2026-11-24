@@ -794,6 +794,35 @@ struct FileIndexWatcher::Impl {
     return true;
   }
 
+  // What one poll wakeup's drain gathers before it becomes an IndexUpdateBatch.
+  struct DrainCycle {
+    explicit DrainCycle(const std::filesystem::path& root, const std::vector<std::string>& exclude_globs)
+        : filter(root, exclude_globs) {}
+
+    std::vector<IndexUpdateBatch::Change> changes;
+    bool overflow_detected = false;
+    // Set by any event that moves the tree's SHAPE rather than a tracked file's
+    // content: a directory appearing/vanishing, or a non-regular entry the index
+    // cannot represent. See IndexUpdateBatch::tree_structure_changed.
+    bool structure_changed = false;
+    // One ignore filter per drain cycle (poll wakeup), reused for every
+    // single-file create/modify event and rebuilt next wakeup so a .gitignore
+    // edited between cycles is picked up. Constructing it per cycle (not per
+    // event) amortizes the root-.gitignore read across the whole batch.
+    project::ProjectTraversalFilter filter;
+    // File events since the last directory event, coalesced by path and judged
+    // once, on the path's final state: a write through a temporary beside the
+    // target (every save, every mirror pull, most tools) is a create, an attrib
+    // and a close-write of the temporary, its move away and the target's move in,
+    // and each of the first three used to pay two stats and an ignore match for a
+    // file already gone by the time the batch was read (TD-2026-10-28-418).
+    // Flushed before any directory event so a file change never moves across a
+    // directory's create or recursive delete; the stat at the flush reads the
+    // filesystem as it is then, which is what the batch must describe.
+    std::vector<std::filesystem::path> pending_files;
+    std::unordered_map<std::string, bool> pending_removed;  // by path: its last event removed it
+  };
+
   void WorkerMain() {
     std::array<pollfd, 2> poll_fds{{
         pollfd{.fd = inotify_fd, .events = POLLIN, .revents = 0},
@@ -816,278 +845,271 @@ struct FileIndexWatcher::Impl {
         continue;
       }
 
-      // Read all available inotify events
-      std::vector<IndexUpdateBatch::Change> changes;
-      bool overflow_detected = false;
-      // Set by any event that moves the tree's SHAPE rather than a tracked file's
-      // content: a directory appearing/vanishing, or a non-regular entry the index
-      // cannot represent. See IndexUpdateBatch::tree_structure_changed.
-      bool structure_changed = false;
-      // One ignore filter per drain cycle (poll wakeup), reused for every
-      // single-file create/modify event below and rebuilt next wakeup so a
-      // .gitignore edited between cycles is picked up. Constructing it here (not
-      // per event) amortizes the root-.gitignore read across the whole batch.
-      project::ProjectTraversalFilter batch_filter(root, exclude_globs);
-      // File events since the last directory event, coalesced by path and judged
-      // once, on the path's final state: a write through a temporary beside the
-      // target (every save, every mirror pull, most tools) is a create, an attrib
-      // and a close-write of the temporary, its move away and the target's move in,
-      // and each of the first three used to pay two stats and an ignore match for a
-      // file already gone by the time the batch was read (TD-2026-10-28-418).
-      // Flushed before any directory event so a file change never moves across a
-      // directory's create or recursive delete; the stat at the flush reads the
-      // filesystem as it is then, which is what the batch must describe.
-      std::vector<std::filesystem::path> pending_files;
-      std::unordered_map<std::string, bool> pending_removed;  // by path: its last event removed it
-      const auto flush_file_events = [&]() {
-        for (const std::filesystem::path& abs_path : pending_files) {
-          std::filesystem::path rel;
-          if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
-            continue;
-          }
-          IndexUpdateBatch::Change change;
-          if (pending_removed[abs_path.native()]) {
-            change.kind = IndexUpdateBatch::Kind::Deleted;
-            change.entry.relative_path = rel;
-          } else {
-            // Apply the same regular-file + ignore-filter gate the initial
-            // scan (CollectTrackedCreations) and poll fallback enforce.
-            // Without it, a .gitignore/exclude-glob'd file (or a non-regular
-            // entry like a FIFO/socket/symlink) created in a watched dir
-            // leaks into the index via this incremental event and only
-            // vanishes on a full rescan -- an inconsistent, confusing state.
-            std::error_code type_error;
-            if (!std::filesystem::is_regular_file(abs_path, type_error)) {
-              // "Gone" is the entry itself, not what it names: following a link
-              // made dangling fails like a missing path, and the link was
-              // dropped as gone -- the remote server never learned of it, nor
-              // listed it once its file came back (soak 20f30956197f).
-              std::error_code link_error;
-              const bool present =
-                  std::filesystem::exists(std::filesystem::symlink_status(abs_path, link_error));
-              // Not a regular file, but it IS a new entry in a watched
-              // directory: a symlink to a directory, a fifo, a socket. The
-              // index cannot hold it, the sidebar tree shows it, so report
-              // it as a shape change instead of dropping the event. Gated on
-              // the ignore filter so a build writing ignored artifacts does
-              // not turn into a refresh storm. Gone already (a temporary
-              // renamed away): nothing to report.
-              if (present && batch_filter.Includes(abs_path, platform::PathType::Other)) {
-                structure_changed = true;
-              }
-              continue;
-            }
-            if (!batch_filter.Includes(abs_path, platform::PathType::RegularFile)) {
-              continue;
-            }
-            change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-            change.entry.relative_path = rel;
-            StampEntryMetadata(abs_path, change.entry);
-          }
-          changes.push_back(std::move(change));
-        }
-        pending_files.clear();
-        pending_removed.clear();
-      };
-      {
-        alignas(alignof(struct inotify_event)) std::array<char, 4096> buf{};
-        while (true) {
-          const ssize_t bytes_read = read(inotify_fd, buf.data(), buf.size());
-          if (bytes_read <= 0) {
-            if (bytes_read < 0 && errno == EINTR) {
-              continue;
-            }
-            break;
-          }
-
-          ssize_t offset = 0;
-          while (offset < bytes_read) {
-            const struct inotify_event* ev =
-                reinterpret_cast<const struct inotify_event*>(buf.data() + offset);
-            offset += static_cast<ssize_t>(sizeof(struct inotify_event) + ev->len);
-
-            // Kernel queue overflow (wd == -1): an unknown set of events was dropped,
-            // so anything read this cycle is untrustworthy. Flag it and resync fully.
-            if ((ev->mask & IN_Q_OVERFLOW) != 0) {
-              overflow_detected = true;
-              continue;
-            }
-
-            const bool is_dir = (ev->mask & IN_ISDIR) != 0;
-
-            // Find the directory for this watch descriptor
-            const auto it = wd_to_path.find(ev->wd);
-            if (it == wd_to_path.end()) {
-              continue;
-            }
-
-            // IN_IGNORED: the kernel auto-removed this watch because its directory
-            // was deleted or moved out. When a subtree is removed via the PARENT's
-            // IN_DELETE/IN_MOVED_FROM the child descriptors are not cleaned up
-            // anywhere else, so without this every removed subdirectory leaks a
-            // wd_to_path entry until the watch cap (kMaxIndexWatchEntries) is hit and
-            // the watcher silently degrades to partial-tree mode. The recursive
-            // deletion was already emitted by the parent event, so just drop the
-            // stale mapping (the watch is already gone — no inotify_rm_watch needed).
-            if ((ev->mask & IN_IGNORED) != 0) {
-              wd_to_path.erase(it);
-              rebound_watches.erase(ev->wd);
-              continue;
-            }
-            const std::filesystem::path& dir = it->second;
-
-            if (ev->len > 0 && ev->name[0] != '\0') {
-              const std::string name(ev->name, ::strnlen(ev->name, ev->len));
-              const std::filesystem::path abs_path = util::NormalizedPath(dir / name);
-
-              if (is_dir) {
-                flush_file_events();  // keep file changes on their side of this one
-              }
-              if (is_dir && (ev->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
-                // New directory: add watches for it recursively. Build a fresh
-                // filter per event (rare) so this single-threaded worker never
-                // shares the filter's mutable cache with another walk.
-                project::ProjectTraversalFilter filter(root, exclude_globs);
-                // A moved-in directory can already be populated, and inotify emits no
-                // per-file events for files that existed before the move. One walk
-                // registers the new subtree's watches AND enqueues creations for the
-                // files that were already in it.
-                // An EMPTY new directory adds no file change at all, so without this
-                // the sidebar tree would not learn about `mkdir` until something else
-                // happened to wake it. Gated on the same prune the walk applies, so
-                // a build creating `node_modules/` does not request a refresh of a
-                // tree that will not show it.
-                if (!ShouldSkipWatchedDirectory(abs_path, &filter)) {
-                  structure_changed = true;
-                }
-                WalkSubtree(abs_path, &filter, &changes);
-              } else if (is_dir && (ev->mask & (IN_DELETE | IN_MOVED_FROM)) != 0) {
-                // A subdirectory was deleted or moved out. inotify sends no per-file
-                // deletion for its contents, so emit one recursive deletion and let the
-                // index drop every entry beneath it (otherwise they linger as ghosts).
-                if (!batch_filter.ShouldSkipDirectory(abs_path)) {
-                  structure_changed = true;
-                }
-                std::filesystem::path rel;
-                if (TryBuildTrackedRelativePath(abs_path, root, rel)) {
-                  IndexUpdateBatch::Change change;
-                  change.kind = IndexUpdateBatch::Kind::Deleted;
-                  change.entry.relative_path = rel;
-                  change.recursive = true;
-                  changes.push_back(std::move(change));
-                }
-              } else if (!is_dir) {
-                const bool removed =
-                    (ev->mask & (IN_DELETE | IN_MOVED_FROM | IN_DELETE_SELF | IN_MOVE_SELF)) != 0;
-                const auto [slot, inserted] = pending_removed.try_emplace(abs_path.native(), removed);
-                if (inserted) {
-                  pending_files.push_back(abs_path);
-                } else {
-                  slot->second = removed;
-                }
-              }
-            } else if ((ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
-              flush_file_events();
-              // A directory renamed within the tree arrives as IN_MOVED_FROM and
-              // IN_MOVED_TO on the parent and THEN IN_MOVE_SELF on the directory:
-              // the moved-to walk above already re-bound this descriptor to the
-              // new path (see AddSingleWatch) and enqueued the files under it.
-              // Reading that new mapping here as the vanished directory undid the
-              // walk — a recursive delete of the NEW path — and unwatched it, so
-              // `mv a b` emptied b from the index until a full rescan.
-              if ((ev->mask & IN_MOVE_SELF) != 0 && rebound_watches.erase(ev->wd) != 0) {
-                continue;
-              }
-              // The watched directory itself was removed/moved: drop the watch.
-              //
-              // Only the ROOT emits a recursive deletion here. Every other watched
-              // directory has a watched parent, whose IN_DELETE / IN_MOVED_FROM
-              // already emitted it, in order. This self-event is NOT in order:
-              // the kernel sends it when the directory's last dentry reference
-              // drops, so while anything holds the directory open (this watcher's
-              // own walk of it, a shell cd'd into it) it waits -- past the
-              // parent's IN_CREATE for a new directory at the same path, whose
-              // files the create's walk has just indexed. Read against the path,
-              // it deleted those (`rm -rf build && mkdir build` under a terminal
-              // sitting in build/ lost the whole new build/ from the index).
-              structure_changed = true;
-              std::filesystem::path rel;
-              if (dir == root && TryBuildTrackedRelativePath(dir, root, rel)) {
-                IndexUpdateBatch::Change change;
-                change.kind = IndexUpdateBatch::Kind::Deleted;
-                change.entry.relative_path = rel;
-                change.recursive = true;
-                changes.push_back(std::move(change));
-              }
-              // A directory that moved away (out of the tree, or somewhere the
-              // walk prunes) takes its subdirectories with it, and their
-              // watches still name the OLD paths: a file deleted in the
-              // moved-away copy read as a deletion of whatever lives at the old
-              // path now. Unlike IN_DELETE_SELF, IN_MOVE_SELF is sent at the
-              // rename itself, ahead of any create that could re-occupy the
-              // path, so the watches under it are exactly the moved subtree.
-              // (A rename WITHIN the tree re-bound them all in the MOVED_TO
-              // walk and returned above.) Rare, so the linear scan is fine.
-              if ((ev->mask & IN_MOVE_SELF) != 0 && dir != root) {
-                const std::string prefix = dir.native() + '/';
-                for (auto watch = wd_to_path.begin(); watch != wd_to_path.end();) {
-                  if (watch->second.native().starts_with(prefix)) {
-                    if (inotify_fd >= 0) {
-                      inotify_rm_watch(inotify_fd, watch->first);
-                    }
-                    rebound_watches.erase(watch->first);
-                    watch = wd_to_path.erase(watch);
-                  } else {
-                    ++watch;
-                  }
-                }
-              }
-              if (inotify_fd >= 0) {
-                inotify_rm_watch(inotify_fd, ev->wd);
-              }
-              wd_to_path.erase(ev->wd);
-              rebound_watches.erase(ev->wd);
-            }
-          }
-
-          if (bytes_read < static_cast<ssize_t>(buf.size())) {
-            break;
-          }
-        }
-        flush_file_events();
-      }
-
-      if (overflow_detected) {
-        // Recover from a dropped-event window: re-register watches (directories may
-        // have appeared during the gap) and resync the whole index with a fresh full
-        // scan. is_initial=true makes the consumer replace the index wholesale, so the
-        // partial `changes` gathered this cycle are intentionally discarded.
-        //
-        // One walk for both, as at project open. WalkSubtree observes
-        // stop_native_setup, which stays true across the worker join, so a
-        // teardown arriving mid-recovery bails promptly instead of blocking
-        // worker.join() for the whole scan budget.
-        project::ProjectTraversalFilter recovery_filter(root, exclude_globs);
-        IndexUpdateBatch resync;
-        resync.is_initial = true;
-        // The dropped window may have contained directory creations/removals, and a
-        // wholesale index replace says nothing about them: flag the resync so the
-        // coarse consumers (sidebar tree, finder, search) rebuild too.
-        resync.tree_structure_changed = true;
-        WalkSubtree(root, &recovery_filter, &resync.changes, &resync.truncated);
-        if (callback) {
-          callback(std::move(resync));
-        }
+      DrainCycle cycle(root, exclude_globs);
+      DrainInotifyEvents(cycle);
+      if (cycle.overflow_detected) {
+        ResyncAfterOverflow();
         continue;
       }
-
-      if ((!changes.empty() || structure_changed) && callback) {
+      if ((!cycle.changes.empty() || cycle.structure_changed) && callback) {
         IndexUpdateBatch batch;
         batch.is_initial = false;
-        batch.changes = std::move(changes);
-        batch.tree_structure_changed = structure_changed;
+        batch.changes = std::move(cycle.changes);
+        batch.tree_structure_changed = cycle.structure_changed;
         callback(std::move(batch));
       }
+    }
+  }
+
+  // Read every inotify event available now into `cycle`.
+  void DrainInotifyEvents(DrainCycle& cycle) {
+    alignas(alignof(struct inotify_event)) std::array<char, 4096> buf{};
+    while (true) {
+      const ssize_t bytes_read = read(inotify_fd, buf.data(), buf.size());
+      if (bytes_read <= 0) {
+        if (bytes_read < 0 && errno == EINTR) {
+          continue;
+        }
+        break;
+      }
+      ssize_t offset = 0;
+      while (offset < bytes_read) {
+        const struct inotify_event* ev =
+            reinterpret_cast<const struct inotify_event*>(buf.data() + offset);
+        offset += static_cast<ssize_t>(sizeof(struct inotify_event) + ev->len);
+        HandleInotifyEvent(*ev, cycle);
+      }
+      if (bytes_read < static_cast<ssize_t>(buf.size())) {
+        break;
+      }
+    }
+    FlushFileEvents(cycle);
+  }
+
+  void HandleInotifyEvent(const struct inotify_event& ev, DrainCycle& cycle) {
+    // Kernel queue overflow (wd == -1): an unknown set of events was dropped,
+    // so anything read this cycle is untrustworthy. Flag it and resync fully.
+    if ((ev.mask & IN_Q_OVERFLOW) != 0) {
+      cycle.overflow_detected = true;
+      return;
+    }
+    // Find the directory for this watch descriptor
+    const auto it = wd_to_path.find(ev.wd);
+    if (it == wd_to_path.end()) {
+      return;
+    }
+    // IN_IGNORED: the kernel auto-removed this watch because its directory
+    // was deleted or moved out. When a subtree is removed via the PARENT's
+    // IN_DELETE/IN_MOVED_FROM the child descriptors are not cleaned up
+    // anywhere else, so without this every removed subdirectory leaks a
+    // wd_to_path entry until the watch cap (kMaxIndexWatchEntries) is hit and
+    // the watcher silently degrades to partial-tree mode. The recursive
+    // deletion was already emitted by the parent event, so just drop the
+    // stale mapping (the watch is already gone — no inotify_rm_watch needed).
+    if ((ev.mask & IN_IGNORED) != 0) {
+      wd_to_path.erase(it);
+      rebound_watches.erase(ev.wd);
+      return;
+    }
+    // Valid until HandleWatchedDirectoryGone's last step erases this watch.
+    const std::filesystem::path& dir = it->second;
+    if (ev.len > 0 && ev.name[0] != '\0') {
+      const std::string name(ev.name, ::strnlen(ev.name, ev.len));
+      HandleEntryEvent(ev, util::NormalizedPath(dir / name), cycle);
+    } else if ((ev.mask & (IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
+      FlushFileEvents(cycle);
+      HandleWatchedDirectoryGone(ev, dir, cycle);
+    }
+  }
+
+  // An event about an entry `abs_path` of a watched directory.
+  void HandleEntryEvent(const struct inotify_event& ev, const std::filesystem::path& abs_path,
+                        DrainCycle& cycle) {
+    const bool is_dir = (ev.mask & IN_ISDIR) != 0;
+    if (!is_dir) {
+      const bool removed = (ev.mask & (IN_DELETE | IN_MOVED_FROM | IN_DELETE_SELF | IN_MOVE_SELF)) != 0;
+      const auto [slot, inserted] = cycle.pending_removed.try_emplace(abs_path.native(), removed);
+      if (inserted) {
+        cycle.pending_files.push_back(abs_path);
+      } else {
+        slot->second = removed;
+      }
+      return;
+    }
+    FlushFileEvents(cycle);  // keep file changes on their side of this one
+    if ((ev.mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
+      // New directory: add watches for it recursively. Build a fresh
+      // filter per event (rare) so this single-threaded worker never
+      // shares the filter's mutable cache with another walk.
+      project::ProjectTraversalFilter filter(root, exclude_globs);
+      // A moved-in directory can already be populated, and inotify emits no
+      // per-file events for files that existed before the move. One walk
+      // registers the new subtree's watches AND enqueues creations for the
+      // files that were already in it.
+      // An EMPTY new directory adds no file change at all, so without this
+      // the sidebar tree would not learn about `mkdir` until something else
+      // happened to wake it. Gated on the same prune the walk applies, so
+      // a build creating `node_modules/` does not request a refresh of a
+      // tree that will not show it.
+      if (!ShouldSkipWatchedDirectory(abs_path, &filter)) {
+        cycle.structure_changed = true;
+      }
+      WalkSubtree(abs_path, &filter, &cycle.changes);
+    } else if ((ev.mask & (IN_DELETE | IN_MOVED_FROM)) != 0) {
+      // A subdirectory was deleted or moved out. inotify sends no per-file
+      // deletion for its contents, so emit one recursive deletion and let the
+      // index drop every entry beneath it (otherwise they linger as ghosts).
+      if (!cycle.filter.ShouldSkipDirectory(abs_path)) {
+        cycle.structure_changed = true;
+      }
+      AppendRecursiveDeletion(abs_path, cycle);
+    }
+  }
+
+  // The watched directory `dir` itself was removed or moved.
+  void HandleWatchedDirectoryGone(const struct inotify_event& ev, const std::filesystem::path& dir,
+                                  DrainCycle& cycle) {
+    // A directory renamed within the tree arrives as IN_MOVED_FROM and
+    // IN_MOVED_TO on the parent and THEN IN_MOVE_SELF on the directory:
+    // the moved-to walk above already re-bound this descriptor to the
+    // new path (see AddSingleWatch) and enqueued the files under it.
+    // Reading that new mapping here as the vanished directory undid the
+    // walk — a recursive delete of the NEW path — and unwatched it, so
+    // `mv a b` emptied b from the index until a full rescan.
+    if ((ev.mask & IN_MOVE_SELF) != 0 && rebound_watches.erase(ev.wd) != 0) {
+      return;
+    }
+    // The watched directory itself was removed/moved: drop the watch.
+    //
+    // Only the ROOT emits a recursive deletion here. Every other watched
+    // directory has a watched parent, whose IN_DELETE / IN_MOVED_FROM
+    // already emitted it, in order. This self-event is NOT in order:
+    // the kernel sends it when the directory's last dentry reference
+    // drops, so while anything holds the directory open (this watcher's
+    // own walk of it, a shell cd'd into it) it waits -- past the
+    // parent's IN_CREATE for a new directory at the same path, whose
+    // files the create's walk has just indexed. Read against the path,
+    // it deleted those (`rm -rf build && mkdir build` under a terminal
+    // sitting in build/ lost the whole new build/ from the index).
+    cycle.structure_changed = true;
+    if (dir == root) {
+      AppendRecursiveDeletion(dir, cycle);
+    }
+    // A directory that moved away (out of the tree, or somewhere the
+    // walk prunes) takes its subdirectories with it, and their
+    // watches still name the OLD paths: a file deleted in the
+    // moved-away copy read as a deletion of whatever lives at the old
+    // path now. Unlike IN_DELETE_SELF, IN_MOVE_SELF is sent at the
+    // rename itself, ahead of any create that could re-occupy the
+    // path, so the watches under it are exactly the moved subtree.
+    // (A rename WITHIN the tree re-bound them all in the MOVED_TO
+    // walk and returned above.) Rare, so the linear scan is fine.
+    if ((ev.mask & IN_MOVE_SELF) != 0 && dir != root) {
+      const std::string prefix = dir.native() + '/';
+      for (auto watch = wd_to_path.begin(); watch != wd_to_path.end();) {
+        if (watch->second.native().starts_with(prefix)) {
+          if (inotify_fd >= 0) {
+            inotify_rm_watch(inotify_fd, watch->first);
+          }
+          rebound_watches.erase(watch->first);
+          watch = wd_to_path.erase(watch);
+        } else {
+          ++watch;
+        }
+      }
+    }
+    if (inotify_fd >= 0) {
+      inotify_rm_watch(inotify_fd, ev.wd);
+    }
+    wd_to_path.erase(ev.wd);
+    rebound_watches.erase(ev.wd);
+  }
+
+  // One deletion of everything under `abs_path`, when it is a tracked path.
+  void AppendRecursiveDeletion(const std::filesystem::path& abs_path, DrainCycle& cycle) {
+    std::filesystem::path rel;
+    if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+      return;
+    }
+    IndexUpdateBatch::Change change;
+    change.kind = IndexUpdateBatch::Kind::Deleted;
+    change.entry.relative_path = rel;
+    change.recursive = true;
+    cycle.changes.push_back(std::move(change));
+  }
+
+  // Judge each coalesced file event on its path's final state.
+  void FlushFileEvents(DrainCycle& cycle) {
+    for (const std::filesystem::path& abs_path : cycle.pending_files) {
+      std::filesystem::path rel;
+      if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
+        continue;
+      }
+      IndexUpdateBatch::Change change;
+      if (cycle.pending_removed[abs_path.native()]) {
+        change.kind = IndexUpdateBatch::Kind::Deleted;
+        change.entry.relative_path = rel;
+      } else {
+        // Apply the same regular-file + ignore-filter gate the initial
+        // scan (CollectTrackedCreations) and poll fallback enforce.
+        // Without it, a .gitignore/exclude-glob'd file (or a non-regular
+        // entry like a FIFO/socket/symlink) created in a watched dir
+        // leaks into the index via this incremental event and only
+        // vanishes on a full rescan -- an inconsistent, confusing state.
+        std::error_code type_error;
+        if (!std::filesystem::is_regular_file(abs_path, type_error)) {
+          // "Gone" is the entry itself, not what it names: following a link
+          // made dangling fails like a missing path, and the link was
+          // dropped as gone -- the remote server never learned of it, nor
+          // listed it once its file came back (soak 20f30956197f).
+          std::error_code link_error;
+          const bool present =
+              std::filesystem::exists(std::filesystem::symlink_status(abs_path, link_error));
+          // Not a regular file, but it IS a new entry in a watched
+          // directory: a symlink to a directory, a fifo, a socket. The
+          // index cannot hold it, the sidebar tree shows it, so report
+          // it as a shape change instead of dropping the event. Gated on
+          // the ignore filter so a build writing ignored artifacts does
+          // not turn into a refresh storm. Gone already (a temporary
+          // renamed away): nothing to report.
+          if (present && cycle.filter.Includes(abs_path, platform::PathType::Other)) {
+            cycle.structure_changed = true;
+          }
+          continue;
+        }
+        if (!cycle.filter.Includes(abs_path, platform::PathType::RegularFile)) {
+          continue;
+        }
+        change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
+        change.entry.relative_path = rel;
+        StampEntryMetadata(abs_path, change.entry);
+      }
+      cycle.changes.push_back(std::move(change));
+    }
+    cycle.pending_files.clear();
+    cycle.pending_removed.clear();
+  }
+
+  // Recover from a dropped-event window: re-register watches (directories may
+  // have appeared during the gap) and resync the whole index with a fresh full
+  // scan. is_initial=true makes the consumer replace the index wholesale, so the
+  // partial changes gathered this cycle are intentionally discarded.
+  //
+  // One walk for both, as at project open. WalkSubtree observes
+  // stop_native_setup, which stays true across the worker join, so a teardown
+  // arriving mid-recovery bails promptly instead of blocking worker.join() for
+  // the whole scan budget.
+  void ResyncAfterOverflow() {
+    project::ProjectTraversalFilter recovery_filter(root, exclude_globs);
+    IndexUpdateBatch resync;
+    resync.is_initial = true;
+    // The dropped window may have contained directory creations/removals, and a
+    // wholesale index replace says nothing about them: flag the resync so the
+    // coarse consumers (sidebar tree, finder, search) rebuild too.
+    resync.tree_structure_changed = true;
+    WalkSubtree(root, &recovery_filter, &resync.changes, &resync.truncated);
+    if (callback) {
+      callback(std::move(resync));
     }
   }
 
