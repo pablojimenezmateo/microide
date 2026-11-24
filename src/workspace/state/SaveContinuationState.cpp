@@ -60,12 +60,4 @@ const SaveContinuation* SaveContinuationQueue::Find(std::uint64_t id) const {
   return match == continuations_.end() ? nullptr : &*match;
 }
 
-bool SaveContinuationQueue::IsWaitingOn(std::uint64_t tab_id) const {
-  return std::any_of(continuations_.begin(), continuations_.end(),
-                     [tab_id](const SaveContinuation& c) {
-                       return std::find(c.waiting_tab_ids.begin(), c.waiting_tab_ids.end(),
-                                        tab_id) != c.waiting_tab_ids.end();
-                     });
-}
-
 }  // namespace microide::workspace

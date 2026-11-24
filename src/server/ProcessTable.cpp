@@ -476,13 +476,6 @@ std::size_t ProcessTable::LiveCount() const {
                                                 [](const auto& p) { return !p.second->exited; }));
 }
 
-std::size_t ProcessTable::CountFor(std::uint64_t connection) const {
-  std::lock_guard lock(mutex_);
-  return static_cast<std::size_t>(std::count_if(
-      processes_.begin(), processes_.end(),
-      [connection](const auto& p) { return p.second->connection == connection; }));
-}
-
 std::vector<ProcessTable::Listing> ProcessTable::List() const {
   const auto now = std::chrono::steady_clock::now();
   std::lock_guard lock(mutex_);

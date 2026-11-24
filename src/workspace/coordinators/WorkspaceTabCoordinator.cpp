@@ -52,13 +52,6 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
       operations_(std::move(operations)) {}
 
 
-std::string TabCoordinator::ActiveTitle() const {
-  if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
-    return EditorTabLabel(state_.focused_group().welcome_surface.viewport, 0);
-  }
-  return state_.focused_group().active_tab().title;
-}
-
 bool TabCoordinator::Save(std::size_t index, SaveMode mode) {
   return SaveGroupTab(state_.clamped_focused_group_index(), index, mode);
 }

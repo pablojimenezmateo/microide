@@ -595,12 +595,6 @@ TerminalPaneRectsLayout TerminalPanelService::PaneRects(const WorkspaceLayout& l
   return tab->PaneRects(BottomPanelContentRect(layout));
 }
 
-SDL_FRect TerminalPanelService::ActivePaneBodyRect(const WorkspaceLayout& layout) const {
-  const TerminalTabState* tab = state_.active_terminal_tab();
-  const SDL_FRect body = BottomPanelContentRect(layout);
-  return tab != nullptr ? tab->ActivePaneRect(body) : body;
-}
-
 std::optional<TerminalPaneDividerRect> TerminalPanelService::DividerAt(const WorkspaceLayout& layout,
                                                                        float x,
                                                                        float y) const {

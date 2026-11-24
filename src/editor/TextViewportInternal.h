@@ -350,33 +350,6 @@ class DisjointEditCapture {
     }
   }
 
-  // Call immediately BEFORE applying the highest edit of a footprint.
-  void BeginFootprint(std::size_t start, std::size_t end_exclusive) {
-    open_start_ = std::min(start, buffer_->size());
-    open_before_size_ = std::clamp(end_exclusive, open_start_, buffer_->size()) - open_start_;
-    document_size_at_begin_ = buffer_->size();
-    open_before_lines_ = buffer_->SliceLinesBlob(open_start_, open_start_ + open_before_size_);
-    open_ = true;
-  }
-
-  // Call immediately AFTER applying the lowest edit of the footprint.
-  void EndFootprint() {
-    if (!open_) {
-      return;
-    }
-    open_ = false;
-    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(buffer_->size()) -
-                                 static_cast<std::ptrdiff_t>(document_size_at_begin_);
-    const std::size_t after_size = static_cast<std::size_t>(std::max<std::ptrdiff_t>(
-        0, static_cast<std::ptrdiff_t>(open_before_size_) + delta));
-    const std::size_t after_end = std::min(buffer_->size(), open_start_ + after_size);
-    parts_.push_back(Captured{
-        .before_start = open_start_,
-        .before_lines = std::move(open_before_lines_),
-        .after_lines = buffer_->SliceLinesBlob(std::min(open_start_, after_end), after_end),
-    });
-  }
-
   bool empty() const { return parts_.empty(); }
 
   // Parts were pushed highest-first; this reverses them into the ascending order
@@ -421,6 +394,33 @@ class DisjointEditCapture {
   }
 
  private:
+  // Call immediately BEFORE applying the highest edit of a footprint.
+  void BeginFootprint(std::size_t start, std::size_t end_exclusive) {
+    open_start_ = std::min(start, buffer_->size());
+    open_before_size_ = std::clamp(end_exclusive, open_start_, buffer_->size()) - open_start_;
+    document_size_at_begin_ = buffer_->size();
+    open_before_lines_ = buffer_->SliceLinesBlob(open_start_, open_start_ + open_before_size_);
+    open_ = true;
+  }
+
+  // Call immediately AFTER applying the lowest edit of the footprint.
+  void EndFootprint() {
+    if (!open_) {
+      return;
+    }
+    open_ = false;
+    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(buffer_->size()) -
+                                 static_cast<std::ptrdiff_t>(document_size_at_begin_);
+    const std::size_t after_size = static_cast<std::size_t>(std::max<std::ptrdiff_t>(
+        0, static_cast<std::ptrdiff_t>(open_before_size_) + delta));
+    const std::size_t after_end = std::min(buffer_->size(), open_start_ + after_size);
+    parts_.push_back(Captured{
+        .before_start = open_start_,
+        .before_lines = std::move(open_before_lines_),
+        .after_lines = buffer_->SliceLinesBlob(std::min(open_start_, after_end), after_end),
+    });
+  }
+
   static constexpr std::size_t kNoFootprint = std::numeric_limits<std::size_t>::max();
   struct Footprint {
     std::size_t start = 0;

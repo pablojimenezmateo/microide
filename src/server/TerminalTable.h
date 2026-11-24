@@ -135,8 +135,6 @@ class TerminalTable {
   // `KEY=VALUE` entries every shell opened from now on gets, plus
   // MICROIDE_TERMINAL_HANDLE=<its handle> (what the BROWSER helper names).
   void SetShellEnvironment(std::vector<std::string> environment);
-  // Clients attached to `handle` (for tests and status).
-  std::size_t AttachedCount(std::uint64_t handle) const;
 
   std::size_t LiveCount() const;
   const Limits& limits() const { return limits_; }

@@ -113,7 +113,6 @@ class TabCoordinator {
                  ProjectWorkspaceState& current_project_state,
                  Operations operations);
 
-  std::string ActiveTitle() const;
   bool Save(std::size_t index, SaveMode mode);
   // Group-aware save primitive: saves editor_groups[group_index].open_tabs[index]
   // (Editor/Compare/Merge) with the same disk-conflict guard and plugin-save notify

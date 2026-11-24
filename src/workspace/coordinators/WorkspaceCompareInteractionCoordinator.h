@@ -49,12 +49,6 @@ class CompareInteractionCoordinator {
                        const std::vector<std::filesystem::path>*)>
         open_branch_head_comparison;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
-    std::function<void()> stage_compare_hunk;
-    std::function<void()> stage_compare_selected_lines;
-    std::function<void()> unstage_compare_hunk;
-    std::function<void()> unstage_compare_selected_lines;
-    std::function<void()> open_discard_compare_hunk_prompt;
-    std::function<void()> open_discard_compare_selected_lines_prompt;
     std::function<bool()> save_active_merge_tab;
     std::function<bool(const std::filesystem::path&)> stage_merge_result_path;
     std::function<void()> refresh_git_sidebar;
@@ -95,12 +89,6 @@ class CompareInteractionCoordinator {
   void CopyComparePath();
   void CopyCompareHunkPatch();
   void CopyCompareFilePatch();
-  void StageCompareHunk();
-  void StageCompareSelectedLines();
-  void UnstageCompareHunk();
-  void UnstageCompareSelectedLines();
-  void OpenDiscardCompareHunkPrompt();
-  void OpenDiscardCompareSelectedLinesPrompt();
   void ToggleCompareIgnoreWhitespace();
   void ToggleCompareShowWhitespace();
   void ScrollCompareRows(int delta);

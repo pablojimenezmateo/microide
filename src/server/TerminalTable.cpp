@@ -456,12 +456,6 @@ void TerminalTable::Detach(std::uint64_t connection) {
   }
 }
 
-std::size_t TerminalTable::AttachedCount(std::uint64_t handle) const {
-  std::lock_guard lock(mutex_);
-  const auto it = terminals_.find(handle);
-  return it == terminals_.end() ? 0 : it->second->clients.size();
-}
-
 std::vector<TerminalTable::Listing> TerminalTable::List() const {
   std::lock_guard lock(mutex_);
   std::vector<Listing> list;

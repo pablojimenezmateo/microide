@@ -215,9 +215,6 @@ class TerminalPanelService {
   // The active tab's panes carved out of the panel body. Empty when the panel is
   // not showing a terminal.
   TerminalPaneRectsLayout PaneRects(const WorkspaceLayout& layout) const;
-  // Body rect of the pane the keyboard acts on: the whole panel body for a
-  // single pane, that pane's slice when split.
-  SDL_FRect ActivePaneBodyRect(const WorkspaceLayout& layout) const;
   // Divider under the point, if any.
   std::optional<TerminalPaneDividerRect> DividerAt(const WorkspaceLayout& layout,
                                                    float x,

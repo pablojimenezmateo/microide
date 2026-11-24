@@ -379,65 +379,6 @@ std::optional<std::string> AsyncSubprocess::Read(std::size_t max_bytes, int time
   }
 }
 
-std::optional<std::string> AsyncSubprocess::ReadExact(std::size_t n, int timeout_ms) {
-  if (impl_ == nullptr) {
-    return std::nullopt;
-  }
-  int stdout_fd = -1;
-  {
-    std::lock_guard lock(impl_->state_mutex);
-    if (impl_->stdout_fd < 0) {
-      return std::nullopt;
-    }
-    stdout_fd = impl_->stdout_fd;
-  }
-  std::string result;
-  result.reserve(n);
-
-  while (result.size() < n) {
-    const std::size_t remaining = n - result.size();
-    pollfd pfd{.fd = stdout_fd, .events = POLLIN | POLLHUP, .revents = 0};
-    const int ready = poll(&pfd, 1, timeout_ms);
-    if (ready <= 0) {
-      if (ready < 0 && errno == EINTR) {
-        continue;
-      }
-      return std::nullopt;
-    }
-    if ((pfd.revents & POLLIN) == 0) {
-      return std::nullopt;
-    }
-    const std::size_t old_size = result.size();
-    result.resize(old_size + remaining);
-    // Read under state_mutex, re-checking stdout_fd, so a concurrent Close()
-    // cannot close (and the OS reuse) the descriptor between poll and read.
-    ssize_t bytes_read = -1;
-    {
-      std::lock_guard lock(impl_->state_mutex);
-      if (impl_->stdout_fd != stdout_fd) {
-        return std::nullopt;
-      }
-      bytes_read = read(stdout_fd, result.data() + old_size, remaining);
-    }
-    if (bytes_read > 0) {
-      result.resize(old_size + static_cast<std::size_t>(bytes_read));
-      continue;
-    }
-    if (bytes_read < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
-      result.resize(old_size);
-      continue;
-    }
-    if (bytes_read == 0 || bytes_read < 0) {
-      std::lock_guard lock(impl_->state_mutex);
-      if (impl_->stdout_fd == stdout_fd) {
-        impl_->CloseStdout();
-      }
-      return std::nullopt;
-    }
-  }
-  return result;
-}
-
 void AsyncSubprocess::CloseStdin() {
   if (impl_ == nullptr) {
     return;

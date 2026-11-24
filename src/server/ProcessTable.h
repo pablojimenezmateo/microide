@@ -111,7 +111,6 @@ class ProcessTable {
   void Detach(std::uint64_t connection);
 
   std::size_t LiveCount() const;
-  std::size_t CountFor(std::uint64_t connection) const;
 
   // One process as server/status lists it (remote-host-activity D3): what a user
   // needs to recognise it ("clangd", kept since a detach) and what it holds.

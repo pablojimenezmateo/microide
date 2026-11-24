@@ -62,9 +62,6 @@ class AsyncSubprocess {
   // Returns an empty string if the timeout expired without any data.
   std::optional<std::string> Read(std::size_t max_bytes = 65536, int timeout_ms = 1000);
 
-  // Read exactly `n` bytes from stdout (blocking until available or error).
-  // Returns nullopt on EOF/error.
-  std::optional<std::string> ReadExact(std::size_t n, int timeout_ms = 10000);
 
   // Close the stdin pipe while keeping stdout available for draining.
   void CloseStdin();

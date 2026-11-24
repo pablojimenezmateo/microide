@@ -248,11 +248,6 @@ bool FileTreeWatcher::TreeTooLarge() const {
   return tree_too_large_;
 }
 
-void FileTreeWatcher::SetDeferInitialSnapshot(bool defer) {
-  std::scoped_lock lock(mutex_);
-  defer_initial_snapshot_ = defer;
-}
-
 void FileTreeWatcher::SetEntryFilter(TreeTraversalFilter filter) {
   std::scoped_lock lock(mutex_);
   entry_filter_ = std::move(filter);
@@ -271,22 +266,17 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
                          normalized_roots.end());
 
   TreeTraversalFilter filter;
-  bool defer_initial_snapshot = false;
-  bool has_wake_callback = false;
   {
     std::scoped_lock lock(mutex_);
     filter = entry_filter_;
     roots_ = normalized_roots;
     pending_change_ = false;
-    defer_initial_snapshot = defer_initial_snapshot_;
-    has_wake_callback = static_cast<bool>(wake_callback_);
   }
 
   // Build the native backend and (optionally) the snapshot WITHOUT holding the
   // lock so a peer SetRoots/Clear/Poll never blocks on this tree walk.
   PreparedNativeBackend prepared = PrepareNativeBackend(normalized_roots, filter);
-  bool capture_snapshot =
-      !defer_initial_snapshot || prepared.polling_required || !has_wake_callback;
+  bool capture_snapshot = true;
   std::vector<TreeSnapshotEntry> snapshot;
   if (capture_snapshot) {
     bool snapshot_truncated = false;

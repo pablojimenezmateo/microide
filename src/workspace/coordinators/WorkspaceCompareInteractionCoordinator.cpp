@@ -875,28 +875,4 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   operations_.request_frame();
 }
 
-void CompareInteractionCoordinator::StageCompareHunk() {
-  util::InvokeIfSet(operations_.stage_compare_hunk);
-}
-
-void CompareInteractionCoordinator::StageCompareSelectedLines() {
-  util::InvokeIfSet(operations_.stage_compare_selected_lines);
-}
-
-void CompareInteractionCoordinator::UnstageCompareHunk() {
-  util::InvokeIfSet(operations_.unstage_compare_hunk);
-}
-
-void CompareInteractionCoordinator::UnstageCompareSelectedLines() {
-  util::InvokeIfSet(operations_.unstage_compare_selected_lines);
-}
-
-void CompareInteractionCoordinator::OpenDiscardCompareHunkPrompt() {
-  util::InvokeIfSet(operations_.open_discard_compare_hunk_prompt);
-}
-
-void CompareInteractionCoordinator::OpenDiscardCompareSelectedLinesPrompt() {
-  util::InvokeIfSet(operations_.open_discard_compare_selected_lines_prompt);
-}
-
 }  // namespace microide::workspace

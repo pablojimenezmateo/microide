@@ -346,13 +346,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
-          .stage_compare_hunk = [this]() { StageCompareHunk(); },
-          .stage_compare_selected_lines = [this]() { StageCompareSelectedLines(); },
-          .unstage_compare_hunk = [this]() { UnstageCompareHunk(); },
-          .unstage_compare_selected_lines = [this]() { UnstageCompareSelectedLines(); },
-          .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
-          .open_discard_compare_selected_lines_prompt =
-              [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
           .save_active_merge_tab =
               [this]() {
                 MergeTabState* merge_tab = ActiveMergeTab();

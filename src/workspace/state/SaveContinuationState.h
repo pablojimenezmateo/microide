@@ -72,7 +72,6 @@ class SaveContinuationQueue {
   std::optional<SaveContinuation> Remove(std::uint64_t id);
 
   const SaveContinuation* Find(std::uint64_t id) const;
-  bool IsWaitingOn(std::uint64_t tab_id) const;
   bool Empty() const { return continuations_.empty(); }
   const std::vector<SaveContinuation>& All() const { return continuations_; }
 
