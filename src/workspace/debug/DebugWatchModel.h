@@ -8,7 +8,7 @@
 
 #include "editor/SingleLineEditor.h"
 #include "workspace/debug/DapProtocol.h"
-#include "workspace/debug/DebugValueTree.h"
+#include "workspace/debug/DebugValueTreePane.h"
 
 namespace microide::workspace {
 
@@ -22,10 +22,8 @@ namespace microide::workspace {
 // Unlike DebugVariablesModel, the expression list is NOT frame-scoped: it
 // survives steps, frame switches and session restarts (persisted in the project
 // `debug` record). Only the evaluated tree is cleared on resume/stop.
-class DebugWatchModel {
+class DebugWatchModel : public DebugValueTreePane {
  public:
-  using EditTarget = DebugValueTree::EditTarget;
-
   const std::vector<std::string>& Expressions() const { return expressions_; }
   bool HasExpressions() const { return !expressions_.empty(); }
 
@@ -52,37 +50,6 @@ class DebugWatchModel {
   // still rebuilding on the stop/frame-switch path where prior values are present.
   bool NeedsPlaceholderRebuild() const { return needs_placeholder_rebuild_; }
 
-  // Tree pass-throughs (lazy expand + child setVariable edit reuse the shared
-  // DebugValueTree verbatim).
-  DebugValueTree::ChildFetch ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
-  // Returns the cascade fetches DebugValueTree::ApplyVariables produced (auto-expand of
-  // a freshly-attached child whose path is still remembered in expanded_paths_). The
-  // caller MUST issue them, exactly like the Variables pane does — dropping them leaves
-  // an auto-expanded nested child stuck on the "loading…" placeholder forever.
-  [[nodiscard]] std::vector<DebugValueTree::ChildFetch> ApplyVariables(
-      int variables_reference, const std::vector<dap_protocol::DapVariable>& variables, int start) {
-    return tree_.ApplyVariables(variables_reference, variables, start);
-  }
-  void MarkChildrenError(int variables_reference) { tree_.MarkChildrenError(variables_reference); }
-  void ApplySetVariable(std::uint32_t node_id, const dap_protocol::DapSetVariableResult& result) {
-    tree_.ApplySetVariable(node_id, result);
-  }
-
-  const std::vector<DebugVariableRowView>& Rows() const { return tree_.Rows(); }
-  bool Empty() const { return tree_.Empty(); }
-
-  std::size_t SelectedRow() const { return tree_.SelectedRow(); }
-  void SetSelectedRow(std::size_t row) { tree_.SetSelectedRow(row); }
-  void MoveSelection(int delta) { tree_.MoveSelection(delta); }
-
-  bool BeginEdit(std::size_t row_index) { return tree_.BeginEdit(row_index); }
-  void CancelEdit() { tree_.CancelEdit(); }
-  bool IsEditing() const { return tree_.IsEditing(); }
-  std::optional<std::uint32_t> EditingNodeId() const { return tree_.EditingNodeId(); }
-  std::optional<EditTarget> EditTargetForCommit() const { return tree_.EditTargetForCommit(); }
-  editor::SingleLineEditor& EditBuffer() { return tree_.EditBuffer(); }
-  const editor::SingleLineEditor& EditBuffer() const { return tree_.EditBuffer(); }
-
   // Row depth 0 is an expression root (edited as a string via a prompt); deeper
   // rows are evaluated children (edited inline via setVariable). Returns the
   // expression index for a root row, else nullopt.
@@ -92,7 +59,6 @@ class DebugWatchModel {
   void ClearResults();
 
  private:
-  DebugValueTree tree_;
   std::vector<std::string> expressions_;
   std::vector<std::uint32_t> expression_root_ids_;  // parallel to expressions_
   // Set by ApplyEvaluate (a value was folded in), cleared by BeginEvaluation (the

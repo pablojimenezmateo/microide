@@ -112,7 +112,7 @@ void SeedVariables(WorkspaceShell& shell, int child_count) {
     variable.variables_reference = (i % 3 == 0) ? 3000 + i : 0;
     children.push_back(std::move(variable));
   }
-  variables.ApplyVariables(1000, children, 0);
+  (void)variables.ApplyVariables(1000, children, 0);
 }
 
 // Painting must not depend on a window: every assertion here is that the frame
@@ -310,7 +310,7 @@ void TestTheDebugPaneRepaintsWhatChangedWithNoDamageRequest() {
     variable.variables_reference = (i % 3 == 0) ? 3000 + i : 0;
     changed.push_back(std::move(variable));
   }
-  WorkspaceShellTestAccess::DebugVariables(shell).ApplyVariables(1000, changed, 0);
+  (void)WorkspaceShellTestAccess::DebugVariables(shell).ApplyVariables(1000, changed, 0);
   ExpectFreshPane(shell, canvas, "a variable's value rewritten by the adapter with no damage request");
 }
 

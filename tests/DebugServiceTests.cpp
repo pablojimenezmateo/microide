@@ -848,7 +848,7 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   session->RequestVariables(locals_ref, 0, DebugValueTree::kChildPageSize,
                             [&](bool ok, std::vector<codec::DapVariable> vars) {
                               (void)ok;
-                              model.ApplyVariables(locals_ref, vars, 0);
+                              (void)model.ApplyVariables(locals_ref, vars, 0);
                               locals_done = true;
                             });
   Expect(PollUntil(manager, [&]() { return locals_done; }), "Locals variables should resolve");
@@ -866,7 +866,7 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   session->RequestVariables(obj_ref, 0, DebugValueTree::kChildPageSize,
                             [&](bool ok, std::vector<codec::DapVariable> vars) {
                               (void)ok;
-                              model.ApplyVariables(obj_ref, vars, 0);
+                              (void)model.ApplyVariables(obj_ref, vars, 0);
                               obj_done = true;
                             });
   Expect(PollUntil(manager, [&]() { return obj_done; }), "obj variables should resolve");
@@ -1175,7 +1175,7 @@ void TestDebugVariablesModelTreeBehavior() {
 
   Expect(model.ToggleRow(0).reference == 1000,
          "expanding a not-loaded scope returns its reference to fetch");
-  model.ApplyVariables(1000,
+  (void)model.ApplyVariables(1000,
                        {
                            codec::DapVariable{
                                .name = "x", .value = "1", .type = "int", .variables_reference = 0},
@@ -1190,7 +1190,7 @@ void TestDebugVariablesModelTreeBehavior() {
          "child x sits at depth 1");
 
   Expect(model.ToggleRow(2).reference == 1001, "expanding obj returns its reference");
-  model.ApplyVariables(
+  (void)model.ApplyVariables(
       1001, {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}}, 0);
   Expect(model.Rows().size() == 5 && model.Rows()[3].depth == 2, "nested field flattens at depth 2");
   Expect(model.ToggleRow(2).reference == 0 && model.Rows().size() == 4,
@@ -1231,7 +1231,7 @@ void TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly() {
   model.ApplyScopes({codec::DapScope{.name = "Arguments", .variables_reference = 1000}});
   Expect(model.ToggleRow(0).reference == 1000, "expanding the scope fetches its ref");
   // Two expandable children that share the name "item".
-  model.ApplyVariables(1000,
+  (void)model.ApplyVariables(1000,
                        {
                            codec::DapVariable{.name = "item",
                                               .value = "a",
@@ -1246,7 +1246,7 @@ void TestDebugVariablesModelExpansionIsPerSiblingNotByNameOnly() {
   Expect(model.Rows().size() == 3, "scope plus two same-named children flatten to three rows");
   // Expand ONLY the first "item".
   Expect(model.ToggleRow(1).reference == 1001, "expanding the first item fetches its ref");
-  model.ApplyVariables(
+  (void)model.ApplyVariables(
       1001, {codec::DapVariable{.name = "leaf", .value = "1", .variables_reference = 0}}, 0);
   Expect(model.Rows().size() == 4 && model.Rows()[1].expanded && !model.Rows()[3].expanded,
          "only the first item is expanded before the next stop");
@@ -1277,7 +1277,7 @@ void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
   model.ToggleRow(0);  // expand the scope
   // A child container that CLAIMS 5 indexed children (count_reported) but will only
   // ever return 2.
-  model.ApplyVariables(1000,
+  (void)model.ApplyVariables(1000,
                        {codec::DapVariable{.name = "arr",
                                            .value = "[...]",
                                            .type = "int[]",
@@ -1294,7 +1294,7 @@ void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
     }
   }
   model.ToggleRow(arr_row);
-  model.ApplyVariables(
+  (void)model.ApplyVariables(
       1001,
       {codec::DapVariable{.name = "[0]", .value = "1", .variables_reference = 0},
        codec::DapVariable{.name = "[1]", .value = "2", .variables_reference = 0}},
@@ -1307,7 +1307,7 @@ void TestDebugVariablesShowMoreClearsOnEmptyOverReportedPage() {
 
   // The adapter answers the next page (start = 2) with an empty success; the
   // affordance must clear rather than persist forever.
-  model.ApplyVariables(1001, {}, 2);
+  (void)model.ApplyVariables(1001, {}, 2);
   bool still_show_more = false;
   for (const auto& row : model.Rows()) {
     still_show_more = still_show_more || row.is_show_more;
@@ -1340,7 +1340,7 @@ void TestDebugVariablesLocalsOpenByDefault() {
          "a non-default scope stays collapsed");
 
   // Populate Locals, then the user collapses it.
-  model.ApplyVariables(
+  (void)model.ApplyVariables(
       1000, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
   Expect(model.Rows()[0].expanded && model.Rows()[1].display_name == "x",
          "Locals shows its child after the page arrives");
@@ -1407,7 +1407,7 @@ void TestDebugVariablesValueKindAndPlaceholder() {
          "the placeholder is a dim, non-expandable depth-1 row");
 
   // The response replaces the placeholder with the real children, each classified.
-  model.ApplyVariables(
+  (void)model.ApplyVariables(
       1000,
       {
           codec::DapVariable{.name = "i", .value = "42", .type = "int"},
@@ -1438,7 +1438,7 @@ void TestDebugVariablesValueKindAndPlaceholder() {
   // A loaded, expanded node recurses to children — no placeholder reappears.
   Expect(model.ToggleRow(6).reference == 1001, "expanding pt returns its reference");
   Expect(model.Rows().back().is_placeholder, "pt's children are still pending → placeholder");
-  model.ApplyVariables(1001, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
+  (void)model.ApplyVariables(1001, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
   Expect(!model.Rows().back().is_placeholder && model.Rows().back().display_name == "x",
          "pt's fetched child replaces its placeholder");
 }
@@ -1457,7 +1457,7 @@ void TestDebugVariablesPagingAndErrors() {
   Expect(model.ToggleRow(0).reference == 1000, "expanding the scope requests its children");
   // The scope holds one big array that reports 300 indexed children (gdb reports
   // indexedVariables; a garbage container would report billions here).
-  model.ApplyVariables(1000,
+  (void)model.ApplyVariables(1000,
                        {codec::DapVariable{.name = "arr",
                                            .value = "{...}",
                                            .type = "int[300]",
@@ -1477,7 +1477,7 @@ void TestDebugVariablesPagingAndErrors() {
   for (int i = 0; i < kPage; ++i) {
     page0.push_back(codec::DapVariable{.name = "[" + std::to_string(i) + "]", .value = "0"});
   }
-  model.ApplyVariables(1001, page0, 0);
+  (void)model.ApplyVariables(1001, page0, 0);
   // Locals + arr + kPage children + one trailing "show more…" row.
   Expect(model.Rows().size() == static_cast<std::size_t>(kPage) + 3,
          "the first page is followed by a clickable 'show more' row (300 > kPage)");
@@ -1501,7 +1501,7 @@ void TestDebugVariablesPagingAndErrors() {
   for (int i = kPage; i < 300; ++i) {
     page1.push_back(codec::DapVariable{.name = "[" + std::to_string(i) + "]", .value = "0"});
   }
-  model.ApplyVariables(1001, page1, kPage);
+  (void)model.ApplyVariables(1001, page1, kPage);
   Expect(model.Rows().size() == static_cast<std::size_t>(300) + 2,
          "the final page appends to 300 children with no further 'show more'");
   Expect(model.Rows().back().display_name == "[299]" && !model.Rows().back().is_show_more,
@@ -1541,7 +1541,7 @@ void TestDebugVariablesPagingAndErrors() {
   empty_child.ApplyScopes(
       {codec::DapScope{.name = "Registers", .variables_reference = 4000, .named_variables = 1}});
   empty_child.ToggleRow(0);
-  empty_child.ApplyVariables(4000,
+  (void)empty_child.ApplyVariables(4000,
                              {codec::DapVariable{.name = "v",
                                                  .value = "std::vector of length 0",
                                                  .type = "std::vector<int>",
@@ -1565,7 +1565,7 @@ void TestDebugVariablesPagingAndErrors() {
                  .empty(),
          "first stop: nothing was expanded yet, so nothing to restore");
   keep.ToggleRow(0);  // expand the scope (ref 1)
-  keep.ApplyVariables(1,
+  (void)keep.ApplyVariables(1,
                       {codec::DapVariable{.name = "n", .value = "5", .type = "int"},
                        codec::DapVariable{.name = "pt",
                                           .value = "",
@@ -1574,7 +1574,7 @@ void TestDebugVariablesPagingAndErrors() {
                                           .named_variables = 2}},
                       0);
   keep.ToggleRow(2);  // expand "pt" (ref 9)
-  keep.ApplyVariables(9,
+  (void)keep.ApplyVariables(9,
                       {codec::DapVariable{.name = "x", .value = "1", .type = "int"},
                        codec::DapVariable{.name = "y", .value = "2", .type = "int"}},
                       0);
@@ -1596,7 +1596,7 @@ void TestDebugVariablesPagingAndErrors() {
                           0);
   Expect(restore_children.size() == 1 && restore_children[0].reference == 109,
          "the previously-expanded 'pt' child (new ref) cascades into a follow-up fetch");
-  keep.ApplyVariables(109,
+  (void)keep.ApplyVariables(109,
                       {codec::DapVariable{.name = "x", .value = "1", .type = "int"},
                        codec::DapVariable{.name = "y", .value = "2", .type = "int"}},
                       0);
