@@ -35,6 +35,19 @@ constexpr const char* kDefinitionTitle = "LSP Definition";
 }  // namespace
 
 bool NavigationAssist::GoToDefinition(std::string* error_message) {
+  // The server is authoritative for its language: navigation waits for its answer
+  // and uses the plugin result only if the server comes back empty, so a slower LSP
+  // reply can't be pre-empted by a stale plugin hit.
+  return QueryLocations(LocationQuery::Definition, error_message);
+}
+
+bool NavigationAssist::FindReferences(std::string* error_message) {
+  // The de-duplicated union renders once both sources have resolved (LSP-first for
+  // served languages); a single output-channel rebuild avoids mid-flight flicker.
+  return QueryLocations(LocationQuery::References, error_message);
+}
+
+bool NavigationAssist::QueryLocations(LocationQuery query, std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
   }
@@ -44,48 +57,68 @@ bool NavigationAssist::GoToDefinition(std::string* error_message) {
   }
 
   // Query the plugin provider and the language server CONCURRENTLY (mirrors
-  // completion / code actions). The server is authoritative for its language:
-  // navigation waits for its answer and uses the plugin result only if the
-  // server comes back empty, so a slower LSP reply can't be pre-empted by a
-  // stale plugin hit.
+  // completion / code actions); `Settle` decides once the answers are in.
+  const bool references = query == LocationQuery::References;
   const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
   const std::size_t request_line = viewport->cursor_line();
   const std::size_t request_column = viewport->cursor_column();
 
   auto merge = std::make_shared<Merge>();
-  merge->generation = ++navigation_generation_;
+  merge->generation = references ? ++references_generation_ : ++navigation_generation_;
+  const auto settle = [this, query](const std::shared_ptr<Merge>& settled,
+                                    const std::filesystem::path& path) {
+    if (query == LocationQuery::References) {
+      PublishReferences(settled, path);
+    } else {
+      ResolveDefinition(settled, path);
+    }
+  };
 
   LspClient* client = host_.ops().lsp_client_for_viewport(*viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
   if (client != nullptr) {
     host_.ops().ensure_lsp_document_open(*viewport, *client, language_id);
     host_.ops().begin_tracked_lsp_request();
+    // Recorded on the merge so the response's columns can be read back in the
+    // same units the request was phrased in.
     merge->lsp_encoding = LspEncodingForClient(*client);
-    client->RequestGoToDefinitionAsync(
-        FileUriForPath(request_path),
-        ByteColumnToLspPosition(*viewport, request_line, request_column, merge->lsp_encoding),
-        [this, request_path, merge](LspResult<std::vector<LspClient::Location>> locations) {
-          host_.ops().finish_tracked_lsp_request();
-          merge->sources.lsp_pending = false;
-          merge->sources.lsp_failed = !locations.answered();
-          if (locations.has_value()) {
-            merge->lsp_locations = std::move(*locations);
-          }
-          ResolveDefinition(merge, request_path);
-        });
+    auto on_lsp = [this, request_path, merge,
+                   settle](LspResult<std::vector<LspClient::Location>> locations) {
+      host_.ops().finish_tracked_lsp_request();
+      merge->sources.lsp_pending = false;
+      merge->sources.lsp_failed = !locations.answered();
+      if (locations.has_value()) {
+        merge->lsp_locations = std::move(*locations);
+      }
+      settle(merge, request_path);
+    };
+    const std::string uri = FileUriForPath(request_path);
+    const LspClient::Position position =
+        ByteColumnToLspPosition(*viewport, request_line, request_column, merge->lsp_encoding);
+    if (references) {
+      client->RequestFindReferencesAsync(uri, position, true, std::move(on_lsp));
+    } else {
+      client->RequestGoToDefinitionAsync(uri, position, std::move(on_lsp));
+    }
   } else {
     merge->sources.lsp_pending = false;
   }
 
-  host_.plugins().Host().QueryDefinitionAsync(
-      language_id, request_path, request_line + 1, request_column + 1,
-      [this, request_path, merge](std::vector<plugin::PluginHost::LocationResult> locations,
-                                  std::string /*provider_error*/) {
-        merge->sources.plugin_pending = false;
-        merge->plugin_locations = std::move(locations);
-        ResolveDefinition(merge, request_path);
-      });
+  auto on_plugin = [request_path, merge, settle](
+                       std::vector<plugin::PluginHost::LocationResult> locations,
+                       std::string /*provider_error*/) {
+    merge->sources.plugin_pending = false;
+    merge->plugin_locations = std::move(locations);
+    settle(merge, request_path);
+  };
+  if (references) {
+    host_.plugins().Host().QueryReferencesAsync(language_id, request_path, request_line + 1,
+                                                request_column + 1, true, std::move(on_plugin));
+  } else {
+    host_.plugins().Host().QueryDefinitionAsync(language_id, request_path, request_line + 1,
+                                                request_column + 1, std::move(on_plugin));
+  }
   return true;
 }
 
@@ -222,62 +255,6 @@ bool NavigationAssist::GoToImplementation(std::string* error_message) {
 
 bool NavigationAssist::GoToDeclaration(std::string* error_message) {
   return GoToLspNavigation(LspNavigationKind::Declaration, error_message);
-}
-
-bool NavigationAssist::FindReferences(std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
-  if (viewport == nullptr) {
-    return false;
-  }
-
-  // Query the plugin provider and the language server CONCURRENTLY, then render
-  // the de-duplicated union once both have resolved (LSP-first for served
-  // languages). A single output-channel rebuild avoids mid-flight flicker.
-  const std::string language_id = viewport->language_id();
-  const std::filesystem::path request_path = viewport->path();
-  const std::size_t request_line = viewport->cursor_line();
-  const std::size_t request_column = viewport->cursor_column();
-
-  auto merge = std::make_shared<Merge>();
-  merge->generation = ++references_generation_;
-
-  LspClient* client = host_.ops().lsp_client_for_viewport(*viewport, nullptr);
-  merge->sources.lsp_authoritative = client != nullptr;
-  if (client != nullptr) {
-    host_.ops().ensure_lsp_document_open(*viewport, *client, language_id);
-    host_.ops().begin_tracked_lsp_request();
-    // Recorded on the merge so the response's columns can be read back in the
-    // same units the request was phrased in.
-    merge->lsp_encoding = LspEncodingForClient(*client);
-    client->RequestFindReferencesAsync(
-        FileUriForPath(request_path),
-        ByteColumnToLspPosition(*viewport, request_line, request_column, merge->lsp_encoding),
-        true,
-        [this, request_path, merge](LspResult<std::vector<LspClient::Location>> locations) {
-          host_.ops().finish_tracked_lsp_request();
-          merge->sources.lsp_pending = false;
-          merge->sources.lsp_failed = !locations.answered();
-          if (locations.has_value()) {
-            merge->lsp_locations = std::move(*locations);
-          }
-          PublishReferences(merge, request_path);
-        });
-  } else {
-    merge->sources.lsp_pending = false;
-  }
-
-  host_.plugins().Host().QueryReferencesAsync(
-      language_id, request_path, request_line + 1, request_column + 1, true,
-      [this, request_path, merge](std::vector<plugin::PluginHost::LocationResult> locations,
-                                  std::string /*provider_error*/) {
-        merge->sources.plugin_pending = false;
-        merge->plugin_locations = std::move(locations);
-        PublishReferences(merge, request_path);
-      });
-  return true;
 }
 
 void NavigationAssist::PublishReferences(const std::shared_ptr<Merge>& merge,

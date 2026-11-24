@@ -88,6 +88,10 @@ class NavigationAssist {
     std::uint64_t generation = 0;
   };
 
+  // Go to definition and find references ask both sources the same way; only the
+  // request and what settles the answers differ.
+  enum class LocationQuery { Definition, References };
+  bool QueryLocations(LocationQuery query, std::string* error_message);
   // Navigate once the preferred source resolves (go-to-definition). Waits for the
   // language server when it serves the buffer, else uses the plugin result.
   void ResolveDefinition(const std::shared_ptr<Merge>& merge,
