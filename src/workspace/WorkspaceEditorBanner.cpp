@@ -149,7 +149,7 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       // Every tab still holding the failed read goes back to "not loaded yet" and
       // is restored again — off the shell thread when the file is large, as the
       // first try was. A failure lands back here through the completion.
-      MakeTabCoordinator().RetryFailedOpen(path);
+      MakeEditorTabService().RetryFailedOpen(path);
       SyncActiveEditorTabMetadata();
       RequestEditorSurfaceRedraw();
       RequestTabStripRedraw();

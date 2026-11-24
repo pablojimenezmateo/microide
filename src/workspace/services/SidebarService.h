@@ -1,68 +1,12 @@
 #pragma once
 
-#include <cstddef>
-#include <filesystem>
-#include <string>
-#include <string_view>
-#include <vector>
-
 #include "workspace/coordinators/WorkspaceSidebarCoordinator.h"
 
 namespace microide::workspace {
 
-class SidebarService {
- public:
-  explicit SidebarService(SidebarCoordinator coordinator);
-
-  void ShowMode(SidebarMode mode, bool temporary = false);
-  void ShowTree(const std::filesystem::path& root = {});
-  void ShowSearch(std::string query = {}, bool temporary = false);
-  void ShowProblems();
-  void ShowGit();
-  void ShowTests();
-  void ShowOutline();
-  void ShowHostView(SidebarMode mode);
-  void RefreshHostView();
-  bool ShowPlugin(std::string_view id, bool temporary = false);
-  void Close();
-  void Toggle();
-  void RestorePrevious();
-  void RefreshProjectFiles();
-  void RefreshGit();
-  bool RefreshProblems();
-  bool CatchUpSearchResults(const editor::TextViewport& viewport);
-  bool RefreshTests();
-  bool RefreshPlugin();
-  void RevealSelectedTreeLine();
-  void RevealSelectedGitLine();
-  void RevealSelectedProblemsLine();
-  void RevealSelectedTestsLine();
-  void RevealSelectedPluginLine();
-  void MoveGitSelection(int delta);
-  bool TypeNavigateGit(char typed, std::uint64_t now_ns);
-  void MoveProblemsSelection(int delta);
-  void MoveTestsSelection(int delta);
-  void MovePluginSelection(int delta);
-  bool OpenProblemItem();
-  bool OpenTestItem();
-  bool RunTestItem();
-  bool OpenPluginItem();
-  bool TogglePluginItem();
-  bool EndPluginItem();
-  bool CanStageAllGitEntries() const;
-  bool CanDiscardAllGitEntries() const;
-  bool StageAllGitEntries();
-  void OpenDiscardAllGitPrompt();
-  bool DiscardAllGitEntries();
-  bool StageGitEntry(std::size_t entry_index);
-  bool DiscardGitEntry(std::size_t entry_index,
-                       const std::optional<std::filesystem::path>& expected_path = {});
-  void OpenDiscardGitEntryPrompt(std::size_t entry_index);
-  bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
-  void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
-
- private:
-  SidebarCoordinator coordinator_;
-};
+// The workspace's sidebar service (openspec workspace-architecture): sidebar mode,
+// refresh, open-or-select. SidebarCoordinator implements it directly; a separate
+// class that forwarded each of its methods one-to-one added nothing.
+using SidebarService = SidebarCoordinator;
 
 }  // namespace microide::workspace

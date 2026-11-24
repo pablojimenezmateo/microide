@@ -794,7 +794,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/WorkspaceShellRenderMerge.cpp
   src/workspace/services/NotificationService.cpp
   src/workspace/coordinators/WorkspaceSidebarCoordinator.cpp
-  src/workspace/services/SidebarService.cpp
   src/workspace/coordinators/WorkspaceSidebarCoordinatorRefresh.cpp
   src/workspace/coordinators/WorkspaceSidebarCoordinatorActions.cpp
   src/workspace/coordinators/WorkspaceSidebarMouseCoordinator.cpp
@@ -802,7 +801,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspaceSidebarMouseCoordinatorScroll.cpp
   src/workspace/coordinators/WorkspaceTabMouseCoordinator.cpp
   src/workspace/coordinators/WorkspaceTabMouseCoordinatorDrag.cpp
-  src/workspace/services/EditorTabService.cpp
   src/workspace/coordinators/WorkspaceTabCoordinator.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorDirty.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorGroups.cpp

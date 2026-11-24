@@ -1,105 +1,13 @@
 #pragma once
 
-#include "util/TextFileIO.h"
-#include "workspace/SavePreparation.h"
-
-#include <cstddef>
-#include <filesystem>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
-
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
 
 namespace microide::workspace {
 
-class EditorTabService {
- public:
-  using DeferredTabHandle = TabEntry::DeferredTabHandle;
-  explicit EditorTabService(TabCoordinator coordinator);
-
-  std::string ActiveTitle() const;
-  bool Save(std::size_t index, SaveMode mode);
-  bool SaveGroupTab(std::size_t group_index, std::size_t index,
-                    SaveMode mode);
-  bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
-                      const std::filesystem::path& path, std::string* error);
-  bool IsDirty(std::size_t index) const;
-  bool CloseWouldDiscardEdits(std::size_t index) const;
-  std::vector<std::size_t> DirtyIndices() const;
-  std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
-  bool HasDirtyTabForProject(std::size_t project_index) const;
-  std::vector<GroupTabRef> DirtyGroupTabs() const;
-  std::vector<GroupTabRef> DirtyGroupTabsForProject(std::size_t project_index) const;
-  bool ActiveTabIsEditor() const;
-  TabEntry::EditorTabState* ActiveEditorTab();
-  const TabEntry::EditorTabState* ActiveEditorTab() const;
-  editor::TextViewport* ActiveEditorViewport();
-  const editor::TextViewport* ActiveEditorViewport() const;
-  void Activate(std::size_t index);
-  void SyncActiveEditorTab();
-  bool ActivateCurrentTabAfterStateLoad();
-  void SyncActiveEditorTabMetadata();
-  using EchoGuard = TabCoordinator::EchoGuard;
-  bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
-                                    EchoGuard echo_guard = EchoGuard::Check,
-                                    std::vector<std::filesystem::path>* reloaded_paths = nullptr);
-  void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
-  void NoteDiskChangedUnderEditsForPath(const std::filesystem::path& path);
-  bool NoteMissedDiskChangeUnderEdits(const std::filesystem::path& path);
-  bool RevertEditorTabsForPath(const std::filesystem::path& path);
-  bool ReopenEditor(DeferredTabHandle view);
-  bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
-  bool DiskSignatureMatchesOpenView(const std::filesystem::path& path) const;
-  using ExternalChangeVerdict = TabCoordinator::ExternalChangeVerdict;
-  ExternalChangeVerdict ClassifyExternalChange(const std::filesystem::path& path) const;
-  bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
-                               std::uint64_t disk_content_hash,
-                               const util::FileSignature& read_signature) const;
-  std::vector<std::filesystem::path> OpenSymlinkAliasesOf(
-      const std::filesystem::path& normalized_target) const;
-  void RefreshRealPathsOf(const std::filesystem::path& normalized_path);
-  bool OpenUntitled();
-  bool OpenFileInNewTab(const std::filesystem::path& path);
-  bool OpenNewBufferInNewTab(const std::filesystem::path& path);
-  bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
-                                   std::string_view content,
-                                   std::string_view title);
-  void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
-                                 std::string_view content);
-  void Close(std::size_t index);
-  void CloseGroupTab(std::size_t group_index, std::size_t index);
-  // Save for a close that waits for the write rather than blocking the shell
-  // thread on the formatter. See TabCoordinator::SaveForClose; the close of a
-  // deferred tab is a save continuation (DirtyPromptCoordinator::SaveThenClose).
-  TabCoordinator::SaveForCloseResult SaveForClose(std::size_t index);
-  bool SplitEditorGroup(EditorSplitOrientation orientation);
-  bool FocusOtherGroup();
-  bool FocusEditorGroupAt(std::size_t index);
-  void ReconcileActiveCaretsWithDocuments();
-  void ObserveNavigationLocation();
-  std::optional<EditorNavigationHistory::Location> StepNavigation(int direction);
-  bool FocusEditorGroupInDirection(EditorGroupDirection direction);
-  bool MoveEditorGroupInDirection(EditorGroupDirection direction);
-  bool CloseEditorGroup();
-  std::size_t EditorGroupCount() const;
-  bool MoveActiveTo(std::size_t index);
-  bool MoveTabToGroup(std::size_t from_group,
-                      std::size_t from_index,
-                      std::size_t to_group,
-                      std::size_t to_slot);
-  bool MoveTabToNewGroup(std::size_t from_group,
-                         std::size_t from_index,
-                         std::size_t target_group,
-                         EditorSplitOrientation orientation,
-                         bool insert_before);
-  std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
-                                                  std::string* error_message) const;
-  bool ReopenActive();
-
- private:
-  TabCoordinator coordinator_;
-};
+// The workspace's editor-tab service (openspec workspace-architecture): the tab
+// list, active tab, splits, dirty state, save/load and view restore, and the
+// owner of the active editor viewport. TabCoordinator implements it directly; a
+// separate class that forwarded each of its methods one-to-one added nothing.
+using EditorTabService = TabCoordinator;
 
 }  // namespace microide::workspace

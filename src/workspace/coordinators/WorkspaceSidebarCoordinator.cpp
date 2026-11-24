@@ -322,7 +322,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                     viewport, [this](const std::filesystem::path& path, const std::string& error,
                                      std::vector<plugin::PluginHost::DocumentSymbolNode> symbols) {
                       // Fresh coordinator: the transient one that issued the query is gone.
-                      MakeSidebarCoordinator().ApplyOutlineResult(path, error, symbols);
+                      MakeSidebarService().ApplyOutlineResult(path, error, symbols);
                     });
               },
           .apply_plugin_sidebar_result =
@@ -330,7 +330,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                      std::vector<plugin::PluginHost::SidebarItem> items,
                      std::string error_message) {
                 // Fresh coordinator: the transient one that issued the query is gone.
-                MakeSidebarCoordinator().ApplyPluginSidebarResult(
+                MakeSidebarService().ApplyPluginSidebarResult(
                     request_view_id, ok, std::move(items), std::move(error_message));
               },
           .open_git_conflict_merge =
