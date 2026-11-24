@@ -34,167 +34,58 @@ WorkspaceEventDispatcher::WorkspaceEventDispatcher(Runtime runtime,
 EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceEventDispatcher::Handle");
   const ScopeExit sync_terminal_focus{operations_.sync_terminal_focus};
-  const auto finish = [this](bool handled) {
-    // A handler may request a redraw (e.g. UpdateMouseCursor queuing a present so
-    // the compositor re-latches the hardware cursor plane) yet still return false
-    // because nothing "interesting" changed. The app loop ignores result.redraw
-    // unless result.handled is set, so treat any pending redraw as handled —
-    // otherwise the queued present is silently dropped and the cursor goes stale.
-    RenderInvalidation redraw = operations_.consume_pending_render_invalidation();
-    return EventResult{
-        .handled = handled || redraw.HasAnyRedraw(),
-        .redraw = std::move(redraw),
-    };
-  };
-
-  if (runtime_.project_open_dialog_event_type != 0 &&
-      event.type == runtime_.project_open_dialog_event_type) {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceEventDispatcher::Handle::ProjectOpenDialogEvent");
-    // Every native picker shares this wake event. Consuming here, not only in
-    // frame prep, is what makes an answer land without some other reason to
-    // paint: Open File… on a welcome page (no caret blinking) used to keep the
-    // picked file until the next unrelated frame.
-    operations_.consume_pending_dialog_results();
-    return finish(true);
+  if (std::optional<EventResult> woke = HandleWakeEvent(event); woke.has_value()) {
+    return std::move(*woke);
   }
-  if (operations_.plugin_runtime_consume_wake_event(event.type)) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::PluginWakeEvent");
-    if (operations_.reload_plugins_if_assets_changed(true)) {
-      return EventResult{
-          .handled = true,
-          .redraw = RenderInvalidation{
-              .full = true,
-              .rects = {},
-          },
-      };
-    }
-    return finish(true);
-  }
-  if (runtime_.project_file_event_type != 0 && event.type == runtime_.project_file_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ProjectFileEvent");
-    // A watcher wake that does not lead to a reload is wasted main-thread work;
-    // the wakes-vs-file_index_apply_batch_calls ratio makes an over-eager watcher
-    // visible without a debugger.
-    util::AddPerformanceCounter(util::PerfCounterId::FileWatcherWakes);
-    // The apply requests the surfaces it changed (the sidebar, an open file's
-    // pane), and `finish` collects them; it used to answer every applied batch
-    // with a full frame (TD-2026-10-15-341). The event type matched, so it is ours
-    // and is consumed either way — a wake whose batch turned out to change nothing
-    // is still handled, not unhandled.
-    (void)operations_.reload_project_if_files_changed(false);
-    return finish(true);
-  }
-  if (operations_.project_search_handles_event(event.type)) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ProjectSearchEvent");
-    operations_.consume_project_search_updates();
-    return finish(true);
-  }
-  if (runtime_.lsp_event_type != 0 && event.type == runtime_.lsp_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::LspEvent");
-    operations_.consume_lsp_callbacks();
-    return finish(true);
-  }
-  if (runtime_.dap_event_type != 0 && event.type == runtime_.dap_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::DapEvent");
-    operations_.consume_dap_callbacks();
-    return finish(true);
-  }
-  if (runtime_.control_event_type != 0 && event.type == runtime_.control_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ControlEvent");
-    operations_.consume_control_callbacks();
-    return finish(true);
-  }
-  if (runtime_.plugin_thread_event_type != 0 &&
-      event.type == runtime_.plugin_thread_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::PluginThreadEvent");
-    operations_.consume_plugin_thread_actions();
-    return finish(true);
-  }
-  if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::GitBlameEvent");
-    // The blame becomes state here, with the repaint that shows it, rather than
-    // whenever the worker wrote it -- which could be between two clips of one
-    // partial frame (TD-2026-10-16-345).
-    if (operations_.apply_git_blame_results()) {
-      operations_.request_frame();
-    }
-    return finish(true);
-  }
-  if (runtime_.git_sidebar_event_type != 0 && event.type == runtime_.git_sidebar_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::GitSidebarEvent");
-    operations_.consume_git_sidebar_refresh();
-    return finish(true);
-  }
-  if (runtime_.terminal_event_type != 0 && event.type == runtime_.terminal_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::TerminalEvent");
-    operations_.consume_terminal_session_updates();
-    return finish(true);
-  }
-  if (runtime_.highlight_prefetch_event_type != 0 &&
-      event.type == runtime_.highlight_prefetch_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::HighlightPrefetchEvent");
-    operations_.consume_highlight_prefetch_results();
-    operations_.request_frame();
-    return finish(true);
-  }
-
-  if (runtime_.raster_decode_event_type != 0 &&
-      event.type == runtime_.raster_decode_event_type) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::RasterDecodeEvent");
-    operations_.apply_decoded_raster_sizes();
-    return finish(true);
-  }
-
   operations_.sync_text_input_surface(nullptr);
 
   switch (event.type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::MouseButtonDown");
-        return finish(operations_.handle_mouse_button_down(event));
+        return Finish(operations_.handle_mouse_button_down(event));
       }
     case SDL_EVENT_MOUSE_BUTTON_UP:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::MouseButtonUp");
-        return finish(operations_.handle_mouse_button_up(event));
+        return Finish(operations_.handle_mouse_button_up(event));
       }
     case SDL_EVENT_MOUSE_MOTION:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::MouseMotion");
-        return finish(operations_.handle_mouse_motion(event));
+        return Finish(operations_.handle_mouse_motion(event));
       }
     case SDL_EVENT_MOUSE_WHEEL:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::MouseWheel");
-        return finish(operations_.handle_mouse_wheel(event));
+        return Finish(operations_.handle_mouse_wheel(event));
       }
     case SDL_EVENT_TEXT_EDITING:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::TextEditing");
-        return finish(operations_.handle_text_editing(event.edit));
+        return Finish(operations_.handle_text_editing(event.edit));
       }
     case SDL_EVENT_TEXT_INPUT:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::TextInput");
-        return finish(operations_.handle_text_input(event.text));
+        return Finish(operations_.handle_text_input(event.text));
       }
     case SDL_EVENT_DROP_FILE:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::DropFile");
         if (!operations_.handle_file_drop) {
-          return finish(false);
+          return Finish(false);
         }
         // SDL owns event.drop.data and frees it after dispatch, so the handler
         // must copy anything it keeps. It does (into a std::filesystem::path).
-        return finish(operations_.handle_file_drop(event.drop.data, event.drop.x, event.drop.y));
+        return Finish(operations_.handle_file_drop(event.drop.data, event.drop.x, event.drop.y));
       }
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseLeave");
       operations_.handle_window_mouse_leave();
       operations_.request_window_redraw();
-      return finish(true);
+      return Finish(true);
       }
     case SDL_EVENT_WINDOW_MOUSE_ENTER:
       {
@@ -206,7 +97,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       // reassert would sit latent until unrelated work or motion triggered a paint.
       util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
-      return finish(true);
+      return Finish(true);
       }
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
       {
@@ -217,7 +108,7 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       util::InvokeIfSet(operations_.window_focus_gained);
       util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
-      return finish(true);
+      return Finish(true);
       }
     case SDL_EVENT_WINDOW_FOCUS_LOST:
       {
@@ -236,30 +127,139 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       // pointer-enter (which separately forces) crosses the window edge.
       util::InvokeIfSet(operations_.force_cursor_reassert);
       operations_.request_window_redraw();
-      return finish(true);
+      return Finish(true);
       }
     case SDL_EVENT_KEY_DOWN:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::KeyDown");
-        const bool shift_changed = ((state_.key_modifiers ^ event.key.mod) & SDL_KMOD_SHIFT) != 0;
-        state_.key_modifiers = event.key.mod;
-        if (shift_changed && operations_.pointer_modifiers_changed) {
-          operations_.pointer_modifiers_changed();
-        }
-        return finish(operations_.handle_key_down(event.key));
+        NoteKeyModifiers(event.key.mod);
+        return Finish(operations_.handle_key_down(event.key));
       }
     case SDL_EVENT_KEY_UP:
-      {
-        const bool shift_changed = ((state_.key_modifiers ^ event.key.mod) & SDL_KMOD_SHIFT) != 0;
-        state_.key_modifiers = event.key.mod;
-        if (shift_changed && operations_.pointer_modifiers_changed) {
-          operations_.pointer_modifiers_changed();
-        }
-      }
-      return finish(operations_.handle_key_up && operations_.handle_key_up(event.key));
+      NoteKeyModifiers(event.key.mod);
+      return Finish(operations_.handle_key_up && operations_.handle_key_up(event.key));
     default:
-      return finish(false);
+      return Finish(false);
   }
+}
+
+EventResult WorkspaceEventDispatcher::Finish(bool handled) const {
+  // A handler may request a redraw (e.g. UpdateMouseCursor queuing a present so
+  // the compositor re-latches the hardware cursor plane) yet still return false
+  // because nothing "interesting" changed. The app loop ignores result.redraw
+  // unless result.handled is set, so treat any pending redraw as handled —
+  // otherwise the queued present is silently dropped and the cursor goes stale.
+  RenderInvalidation redraw = operations_.consume_pending_render_invalidation();
+  return EventResult{
+      .handled = handled || redraw.HasAnyRedraw(),
+      .redraw = std::move(redraw),
+  };
+}
+
+void WorkspaceEventDispatcher::NoteKeyModifiers(SDL_Keymod modifiers) const {
+  const bool shift_changed = ((state_.key_modifiers ^ modifiers) & SDL_KMOD_SHIFT) != 0;
+  state_.key_modifiers = modifiers;
+  if (shift_changed) {
+    util::InvokeIfSet(operations_.pointer_modifiers_changed);
+  }
+}
+
+// The wake events background work posts to the main thread: each is consumed
+// whole, and is never offered to the input handlers below.
+std::optional<EventResult> WorkspaceEventDispatcher::HandleWakeEvent(const SDL_Event& event) const {
+  if (runtime_.project_open_dialog_event_type != 0 &&
+      event.type == runtime_.project_open_dialog_event_type) {
+    util::PerformanceTrace::Scope scope(
+        "WorkspaceEventDispatcher::Handle::ProjectOpenDialogEvent");
+    // Every native picker shares this wake event. Consuming here, not only in
+    // frame prep, is what makes an answer land without some other reason to
+    // paint: Open File… on a welcome page (no caret blinking) used to keep the
+    // picked file until the next unrelated frame.
+    operations_.consume_pending_dialog_results();
+    return Finish(true);
+  }
+  if (operations_.plugin_runtime_consume_wake_event(event.type)) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::PluginWakeEvent");
+    if (operations_.reload_plugins_if_assets_changed(true)) {
+      return EventResult{.handled = true, .redraw = RenderInvalidation{.full = true, .rects = {}}};
+    }
+    return Finish(true);
+  }
+  if (runtime_.project_file_event_type != 0 && event.type == runtime_.project_file_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ProjectFileEvent");
+    // A watcher wake that does not lead to a reload is wasted main-thread work;
+    // the wakes-vs-file_index_apply_batch_calls ratio makes an over-eager watcher
+    // visible without a debugger.
+    util::AddPerformanceCounter(util::PerfCounterId::FileWatcherWakes);
+    // The apply requests the surfaces it changed (the sidebar, an open file's
+    // pane), and `finish` collects them; it used to answer every applied batch
+    // with a full frame (TD-2026-10-15-341). The event type matched, so it is ours
+    // and is consumed either way — a wake whose batch turned out to change nothing
+    // is still handled, not unhandled.
+    (void)operations_.reload_project_if_files_changed(false);
+    return Finish(true);
+  }
+  if (operations_.project_search_handles_event(event.type)) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ProjectSearchEvent");
+    operations_.consume_project_search_updates();
+    return Finish(true);
+  }
+  if (runtime_.lsp_event_type != 0 && event.type == runtime_.lsp_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::LspEvent");
+    operations_.consume_lsp_callbacks();
+    return Finish(true);
+  }
+  if (runtime_.dap_event_type != 0 && event.type == runtime_.dap_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::DapEvent");
+    operations_.consume_dap_callbacks();
+    return Finish(true);
+  }
+  if (runtime_.control_event_type != 0 && event.type == runtime_.control_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ControlEvent");
+    operations_.consume_control_callbacks();
+    return Finish(true);
+  }
+  if (runtime_.plugin_thread_event_type != 0 &&
+      event.type == runtime_.plugin_thread_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::PluginThreadEvent");
+    operations_.consume_plugin_thread_actions();
+    return Finish(true);
+  }
+  if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::GitBlameEvent");
+    // The blame becomes state here, with the repaint that shows it, rather than
+    // whenever the worker wrote it -- which could be between two clips of one
+    // partial frame (TD-2026-10-16-345).
+    if (operations_.apply_git_blame_results()) {
+      operations_.request_frame();
+    }
+    return Finish(true);
+  }
+  if (runtime_.git_sidebar_event_type != 0 && event.type == runtime_.git_sidebar_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::GitSidebarEvent");
+    operations_.consume_git_sidebar_refresh();
+    return Finish(true);
+  }
+  if (runtime_.terminal_event_type != 0 && event.type == runtime_.terminal_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::TerminalEvent");
+    operations_.consume_terminal_session_updates();
+    return Finish(true);
+  }
+  if (runtime_.highlight_prefetch_event_type != 0 &&
+      event.type == runtime_.highlight_prefetch_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::HighlightPrefetchEvent");
+    operations_.consume_highlight_prefetch_results();
+    operations_.request_frame();
+    return Finish(true);
+  }
+
+  if (runtime_.raster_decode_event_type != 0 &&
+      event.type == runtime_.raster_decode_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::RasterDecodeEvent");
+    operations_.apply_decoded_raster_sizes();
+    return Finish(true);
+  }
+  return std::nullopt;
 }
 
 WorkspaceWakeController::WorkspaceWakeController(Operations operations)

@@ -96,6 +96,13 @@ class WorkspaceEventDispatcher {
   EventResult Handle(const SDL_Event& event) const;
 
  private:
+  std::optional<EventResult> HandleWakeEvent(const SDL_Event& event) const;
+  // The result of a handled (or not) event, with any redraw a handler requested
+  // on the side.
+  EventResult Finish(bool handled) const;
+  // Track the keyboard modifiers; a Shift change re-reads what the pointer means.
+  void NoteKeyModifiers(SDL_Keymod modifiers) const;
+
   Runtime runtime_;
   State state_;
   Operations operations_;
