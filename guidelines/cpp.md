@@ -56,6 +56,11 @@ Choose the narrowest type that expresses the real contract. Do not force callers
 - Return structured failure information for operational errors that callers are expected to handle.
 - Use assertions for impossible internal states, not as a substitute for input validation at real boundaries.
 
+Optional out-parameters and hooks:
+
+- A `bool Do(..., std::string* error)` API reports through `util::Fail(error, "why")` (returns false), `util::SetError` and `util::ClearError` from `src/util/ErrorOut.h`; do not hand-write the null-checked assignment.
+- An Operations struct's optional `std::function` hook is called through `util::InvokeIfSet(hook, args...)` (`src/util/InvokeIfSet.h`). Its arguments are evaluated even when the hook is unset, so keep the hand-written `if (hook) { hook(Expensive()); }` only where building an argument costs something.
+
 Parsing policy:
 
 - Use the non-throwing helpers in `src/util/Parse.{h,cpp}` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`) for every numeric token. They return `std::optional`; handle the absent case directly.
