@@ -190,6 +190,108 @@ void SetWindowIconFromAssets(SDL_Window* window) {
   SDL_DestroySurface(icon);
 }
 
+
+// The cold-start control spec at `spec_path`, parsed; an invalid spec (logged) when
+// the file is not a regular file, is over the cap, or cannot be read.
+workspace::ControlSpec ReadControlSpecFile(const std::filesystem::path& spec_path) {
+  // Bound the slurp like the control-channel descriptor reads: a spec file is
+  // operator-supplied, but capping it keeps the cold-start path from OOMing on a
+  // mistakenly-huge path. Mirrors ControlChannelService's kMaxDescriptorFileBytes.
+  constexpr std::uintmax_t kMaxControlSpecBytes = 1u << 20;  // 1 MiB
+  // Require a regular file. A FIFO, device, or procfs node reports no usable size
+  // (or a wrong one) and would drop us into an unbounded/blocking slurp; only a
+  // real file is a valid cold-start spec.
+  std::error_code status_ec;
+  const std::filesystem::file_status status = std::filesystem::status(spec_path, status_ec);
+  if (status_ec || !std::filesystem::is_regular_file(status)) {
+    SDL_Log("control spec is not a regular file: %s", spec_path.string().c_str());
+    return {};
+  }
+  const auto log_too_large = [&spec_path]() {
+    SDL_Log("control spec too large (> %llu byte cap): %s",
+            static_cast<unsigned long long>(kMaxControlSpecBytes), spec_path.string().c_str());
+  };
+  if (std::error_code size_ec;
+      std::filesystem::file_size(spec_path, size_ec) > kMaxControlSpecBytes && !size_ec) {
+    log_too_large();
+    return {};
+  }
+  std::ifstream in(spec_path, std::ios::binary);
+  if (!in) {
+    SDL_Log("could not read control spec: %s", spec_path.string().c_str());
+    return {};
+  }
+  // Read at most cap+1 bytes so the actual read is bounded even if the file grew
+  // past the pre-check (TOCTOU): an unbounded iterator slurp would defeat the size
+  // cap. Crossing cap+1 means the file is over the limit — reject.
+  std::string json(static_cast<std::size_t>(kMaxControlSpecBytes) + 1, '\0');
+  in.read(json.data(), static_cast<std::streamsize>(json.size()));
+  json.resize(static_cast<std::size_t>(in.gcount()));
+  if (json.size() > kMaxControlSpecBytes) {
+    log_too_large();
+    return {};
+  }
+  workspace::ControlSpec spec = workspace::ParseControlSpec(json);
+  if (!spec.valid) {
+    SDL_Log("control spec parse error: %s", spec.parse_error.c_str());
+  }
+  return spec;
+}
+
+// The launching shell's working directory, or empty when it cannot be resolved.
+// Non-throwing: the directory may be deleted, permission-revoked, or hit
+// ELOOP/overlong resolution, and the throwing overload would terminate the process
+// before WorkspaceShell::Initialize could open an empty project. An unresolvable
+// cwd degrades to an empty initial project (as safe mode). (TD-2026-07-16-41.)
+std::filesystem::path CurrentDirectoryOrEmpty() {
+  std::error_code cwd_ec;
+  std::filesystem::path cwd = std::filesystem::current_path(cwd_ec);
+  if (cwd_ec) {
+    SDL_Log("could not resolve current working directory (%s); starting with no project",
+            cwd_ec.message().c_str());
+    return {};
+  }
+  return cwd;
+}
+
+
+// What the main loop owes the screen: the damage it has gathered from events and
+// wakes since the last render, and the reason the trace reports for it.
+struct PendingRedraw {
+  bool full = true;
+  std::vector<SDL_FRect> rects;
+  // A re-present with no damage (an event-time cursor change; see
+  // RenderInvalidation::present). Any render presents too, so it only drives a
+  // frame of its own when nothing else is owed.
+  bool present = false;
+  // A frame owed whose damage frame prep derives (RenderInvalidation::frame). Any
+  // render prepares a frame too, so it only drives one of its own when nothing
+  // else is owed.
+  bool frame = false;
+  const char* reason = "startup";
+
+  bool DamageOwed() const { return full || !rects.empty(); }
+  bool FrameOwed() const { return DamageOwed() || frame; }
+
+  // How a handler's redraw request landed: a full redraw, damage added to a
+  // partial one, or damage already covered by a full redraw owed.
+  enum class Absorbed { Full, Partial, Covered };
+  Absorbed Absorb(const workspace::RenderInvalidation& redraw) {
+    present = present || redraw.present;
+    frame = frame || redraw.frame;
+    if (redraw.full) {
+      full = true;
+      rects.clear();
+      return Absorbed::Full;
+    }
+    if (full) {
+      return Absorbed::Covered;
+    }
+    rects.insert(rects.end(), redraw.rects.begin(), redraw.rects.end());
+    return Absorbed::Partial;
+  }
+};
+
 }  // namespace
 
 Application::Application(AppStartupOptions startup_options)
@@ -208,18 +310,8 @@ int Application::Run() {
   // MICROIDE_TRACE_STALL_MS: a loop turn that runs that long prints where the
   // main thread is (platform/CrashDiagnostics.h). Off unless asked.
   (void)platform::StartStallWatchdogFromEnvironment();
-  bool full_redraw_pending = true;
-  // A re-present with no damage (an event-time cursor change; see
-  // RenderInvalidation::present). Any render presents too, so it only drives a
-  // frame of its own when nothing else is owed.
-  bool present_pending = false;
-  // A frame owed whose damage frame prep derives (RenderInvalidation::frame). Any
-  // render prepares a frame too, so it only drives one of its own when nothing
-  // else is owed.
-  bool frame_pending = false;
+  PendingRedraw pending;
   bool window_shown = false;
-  std::vector<SDL_FRect> dirty_rects;
-  const char* redraw_reason = "startup";
   // A timed wait an event cut short keeps its deadline (OwedWakeDeadline): past it,
   // the scheduled wake runs whether or not the next wait times out.
   std::optional<Uint64> owed_wake_deadline;
@@ -229,9 +321,11 @@ int Application::Run() {
     if (!scheduled.handled) {
       return;
     }
-    present_pending = present_pending || scheduled.redraw.present;
-    frame_pending = frame_pending || scheduled.redraw.frame;
-    if (scheduled.redraw.full) {
+    const PendingRedraw::Absorbed absorbed = pending.Absorb(scheduled.redraw);
+    if (absorbed == PendingRedraw::Absorbed::Partial) {
+      pending.reason = "scheduled-partial";
+    } else if (absorbed == PendingRedraw::Absorbed::Full) {
+      pending.reason = "scheduled-full";
       // A full-redraw repaints the whole scene, so any cursor surface may have
       // moved underneath a stationary pointer (tree refresh, plugin/outline
       // population, asset reload). These EventResult literals bypass the
@@ -239,22 +333,16 @@ int Application::Run() {
       // universal seam where async full redraws are applied — so the next
       // frame's UpdateMouseCursor re-runs the hit-test instead of skipping it.
       workspace_shell_.InvalidateCursorKindFingerprint();
-      full_redraw_pending = true;
-      dirty_rects.clear();
-      redraw_reason = "scheduled-full";
-    } else if (!full_redraw_pending) {
-      dirty_rects.insert(dirty_rects.end(), scheduled.redraw.rects.begin(), scheduled.redraw.rects.end());
-      redraw_reason = "scheduled-partial";
     }
   };
 
   while (running_) {
     platform::NoteMainLoopTurn();
-    if (full_redraw_pending || !dirty_rects.empty()) {
+    if (pending.DamageOwed()) {
       const bool was_first_frame = !first_render_complete_;
-      Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
-      present_pending = false;
-      frame_pending = false;
+      Render(pending.full ? std::vector<SDL_FRect>{} : pending.rects, pending.reason);
+      pending.present = false;
+      pending.frame = false;
 
       // Map the window exactly once, as soon as a real frame has been painted.
       // The window was created hidden, so this is its first and only map: it
@@ -292,26 +380,26 @@ int Application::Run() {
         }
       } else if (auto settle = workspace_shell_.ConsumePostRenderRedrawRequest();
                  settle.has_value()) {
-        full_redraw_pending = settle->full;
-        dirty_rects.assign(settle->rects.begin(), settle->rects.end());
-        redraw_reason = "render-settle";
+        pending.full = settle->full;
+        pending.rects.assign(settle->rects.begin(), settle->rects.end());
+        pending.reason = "render-settle";
         continue;
       }
-      full_redraw_pending = false;
-      dirty_rects.clear();
-      redraw_reason = "event";
+      pending.full = false;
+      pending.rects.clear();
+      pending.reason = "event";
 
       // After a frame settles, ask the background worker to tokenize a band
       // around the (possibly newly scrolled) editor viewport so later frames
       // hit the highlight cache instead of tokenizing on the render path.
       workspace_shell_.RequestActiveHighlightPrefetch();
-    } else if (frame_pending) {
-      frame_pending = false;
+    } else if (pending.frame) {
+      pending.frame = false;
       // Presents when it paints, so a re-present owed alongside is paid by it --
       // or, when prep damaged nothing, by the branch below on the next turn.
       Render({}, "prepared", /*prepared_only=*/true);
-    } else if (present_pending) {
-      present_pending = false;
+    } else if (pending.present) {
+      pending.present = false;
       if (scene_texture_.valid()) {
         PresentRetainedScene();
       } else {
@@ -321,7 +409,7 @@ int Application::Run() {
 
     if (owed_wake_deadline.has_value() && SDL_GetTicks() >= *owed_wake_deadline) {
       apply_scheduled_wake();
-      if (full_redraw_pending || !dirty_rects.empty() || frame_pending) {
+      if (pending.FrameOwed()) {
         continue;
       }
     }
@@ -400,19 +488,13 @@ int Application::Run() {
       }
       const auto result = HandleEvent(event);
       if (result.handled) {
-        present_pending = present_pending || result.redraw.present;
-        frame_pending = frame_pending || result.redraw.frame;
-        if (result.redraw.full) {
+        pending.reason = result.redraw.full ? "event-full" : "event-partial";
+        if (pending.Absorb(result.redraw) == PendingRedraw::Absorbed::Full) {
           // See the scheduled-wake path above: a full redraw can reshuffle cursor
           // surfaces under a still pointer, and the EventResult literals that drive
           // it (file/plugin reloads, window show/expose) skip the Request* bump.
           workspace_shell_.InvalidateCursorKindFingerprint();
-          full_redraw_pending = true;
-          dirty_rects.clear();
-        } else if (!full_redraw_pending) {
-          dirty_rects.insert(dirty_rects.end(), result.redraw.rects.begin(), result.redraw.rects.end());
         }
-        redraw_reason = result.redraw.full ? "event-full" : "event-partial";
         if (result.redraw.full || !result.redraw.rects.empty()) {
           frame_event_type_ = event.type;
         }
@@ -421,7 +503,7 @@ int Application::Run() {
       // sustained event flood cannot starve the frame. Remaining queued events are
       // handled on the next iteration (after a render).
       ++events_processed;
-      if (ShouldYieldEventDrain(events_processed, full_redraw_pending || !dirty_rects.empty() || frame_pending)) {
+      if (ShouldYieldEventDrain(events_processed, pending.FrameOwed())) {
         break;
       }
     } while (SDL_PollEvent(&event));
@@ -555,46 +637,7 @@ bool Application::Initialize() {
     // Parse a cold-start control spec (if any) up front: its `project` selects
     // the project to open, overriding the positional path / cwd.
     if (startup_options_.control_spec_path.has_value()) {
-      // Bound the slurp like the control-channel descriptor reads: a spec file is
-      // operator-supplied, but capping it keeps the cold-start path from OOMing on a
-      // mistakenly-huge path. Mirrors ControlChannelService's kMaxDescriptorFileBytes.
-      constexpr std::uintmax_t kMaxControlSpecBytes = 1u << 20;  // 1 MiB
-      const std::filesystem::path& spec_path = *startup_options_.control_spec_path;
-      // Require a regular file. A FIFO, device, or procfs node reports no usable size
-      // (or a wrong one) and would drop us into an unbounded/blocking iterator slurp
-      // below; only a real file is a valid cold-start spec.
-      std::error_code status_ec;
-      const std::filesystem::file_status status = std::filesystem::status(spec_path, status_ec);
-      if (status_ec || !std::filesystem::is_regular_file(status)) {
-        SDL_Log("control spec is not a regular file: %s", spec_path.string().c_str());
-      } else if (std::error_code size_ec;
-                 std::filesystem::file_size(spec_path, size_ec) > kMaxControlSpecBytes &&
-                 !size_ec) {
-        SDL_Log("control spec too large (> %llu byte cap): %s",
-                static_cast<unsigned long long>(kMaxControlSpecBytes), spec_path.string().c_str());
-      } else {
-        std::ifstream in(spec_path, std::ios::binary);
-        if (in) {
-          // Read at most cap+1 bytes so the actual read is bounded even if the file
-          // grew past the pre-check (TOCTOU): an unbounded iterator slurp would defeat
-          // the size cap. Crossing cap+1 means the file is over the limit — reject.
-          std::string json(static_cast<std::size_t>(kMaxControlSpecBytes) + 1, '\0');
-          in.read(json.data(), static_cast<std::streamsize>(json.size()));
-          json.resize(static_cast<std::size_t>(in.gcount()));
-          if (json.size() > kMaxControlSpecBytes) {
-            SDL_Log("control spec too large (> %llu byte cap): %s",
-                    static_cast<unsigned long long>(kMaxControlSpecBytes),
-                    spec_path.string().c_str());
-          } else {
-            control_spec = workspace::ParseControlSpec(json);
-            if (!control_spec.valid) {
-              SDL_Log("control spec parse error: %s", control_spec.parse_error.c_str());
-            }
-          }
-        } else {
-          SDL_Log("could not read control spec: %s", spec_path.string().c_str());
-        }
-      }
+      control_spec = ReadControlSpecFile(*startup_options_.control_spec_path);
     }
 
     // The explicit project (spec `project` wins over the positional path) makes
@@ -615,24 +658,10 @@ bool Application::Initialize() {
     shell_startup.setting_overrides = startup_options_.setting_overrides;
     workspace_shell_.SetStartupOptions(std::move(shell_startup));
 
-    std::filesystem::path initial_project;
-    if (explicit_project.has_value()) {
-      initial_project = *explicit_project;
-    } else if (!startup_options_.safe_mode) {
-      // Non-throwing cwd: the launching shell's working directory may be deleted,
-      // permission-revoked, or hit ELOOP/overlong resolution. The throwing overload
-      // would terminate the process before WorkspaceShell::Initialize could open an
-      // empty project. An unresolvable cwd degrades to an empty initial project (same
-      // as safe mode). (TD-2026-07-16-41.)
-      std::error_code cwd_ec;
-      std::filesystem::path cwd = std::filesystem::current_path(cwd_ec);
-      if (cwd_ec) {
-        SDL_Log("could not resolve current working directory (%s); starting with no project",
-                cwd_ec.message().c_str());
-      } else {
-        initial_project = std::move(cwd);
-      }
-    }
+    const std::filesystem::path initial_project =
+        explicit_project.has_value()  ? *explicit_project
+        : startup_options_.safe_mode ? std::filesystem::path{}
+                                     : CurrentDirectoryOrEmpty();
 
     util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
     if (!workspace_shell_.Initialize(initial_project)) {
