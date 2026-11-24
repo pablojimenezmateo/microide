@@ -156,7 +156,12 @@ def flow_terminal_escapes(app: q.App) -> None:
     _shell(app, "printf 'top\\n\\033[2;3r\\033[2;1Hr1\\nr2\\nr3\\nr4\\033[r\\033[6;1H'", "r4", "a scroll region keeps the top line")
     app.expect("top" in _screen(app), "the line above the scroll region stays")
     _shell(app, "printf '\\033[2J\\033[Hcleared\\n'", "cleared", "erase display")
-    app.expect("r4" not in _screen(app), "erase display cleared the earlier lines")
+    # ED 2 clears the SCREEN, not the scrollback `terminal-output` also returns: in a
+    # six-row panel the shell's echo of these long commands can wrap far enough to
+    # scroll r4 off before the erase, where it rightly stays. The cursor went home,
+    # so the screen is what follows the printed `cleared` (the last occurrence: the
+    # first is the command's echo).
+    app.expect("r4" not in _screen(app).rsplit("cleared", 1)[-1], "erase display cleared the earlier lines")
     # SGR 58 colours an underline and `4:3` curls it (a TUI's diagnostic); SGR 1 /
     # 3 draw in the font's bold and italic faces. The red is the program's own,
     # so it is on screen only if the underline took the colour it was given.
