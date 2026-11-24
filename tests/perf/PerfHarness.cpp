@@ -924,7 +924,7 @@ std::vector<ScenarioContext::DebugValues> ScenarioContext::DebugVariableSteps(st
 }
 
 void ScenarioContext::ApplyDebugVariables(const DebugValues& values) {
-  workspace::WorkspaceShell::TestAccess::DebugVariables(shell_).ApplyVariables(1000, values, 0);
+  (void)workspace::WorkspaceShell::TestAccess::DebugVariables(shell_).ApplyVariables(1000, values, 0);
 }
 
 void ScenarioContext::ShowDebugPaneVariables(bool variables) {
