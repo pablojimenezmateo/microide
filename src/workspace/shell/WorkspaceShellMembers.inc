@@ -196,6 +196,9 @@
   // `this`, so the whole struct is invariant for the shell's lifetime — while
   // rebuilding it cost ~180 std::function constructions per dispatched action.
   WorkspaceActionContext& MakeActionContext();
+  // Its two largest operations, members of their own.
+  bool ActionContextRunCompareCommand(ActionId id, std::string* error);
+  SaveAllOutcome ActionContextSaveAllDirtyTabs();
 
   // Test seam: the full TestAccess definition lives in the test-only header
   // WorkspaceShellTestAccess.h. Forward-declared + friended unconditionally so
@@ -659,13 +662,11 @@
   // by the three label entry points so each builds only the string it was asked
   // for (TD-2026-08-06-159).
   const TabEntry* TabForLabels(std::size_t group_index, std::size_t index) const;
-  WorkspaceTabTextModel TabTextModel(std::size_t group_index, std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;
   std::string TabTooltipLabel(std::size_t index) const;
   std::string TabTooltipLabel(std::size_t group_index, std::size_t index) const;
   std::vector<std::size_t> DirtyEditorTabIndices() const;
-  static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
   bool HasDirtyEditorTabForProject(std::size_t project_index) const;
   // All-groups dirty enumerators (VSCode "Save All" semantics) used by the quit
@@ -1785,14 +1786,11 @@
   }
   void QueueEditorHoverRefresh();
   util::InlineVector<SDL_FRect, 5> CurrentChromeRects() const;
-  std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
   std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,
                                                       std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentCompareRowRangeRect(std::size_t start_row,
                                                       std::size_t end_row) const;
-  std::optional<SDL_FRect> CurrentMergeResultLineRangeRect(std::size_t start_line,
-                                                           std::size_t end_line) const;
-  std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
+  std::optional<SDL_FRect> CurrentMergeResultLineRangeRect(std::size_t start_line, std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
   // "After delay" autosave (WorkspaceTabCoordinatorShellBridge.cpp). MaybeArmAutosaveTimer

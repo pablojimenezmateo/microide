@@ -507,49 +507,6 @@ util::InlineVector<SDL_FRect, 5> WorkspaceShell::CurrentChromeRects() const {
   return rects;
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value()) {
-    return std::nullopt;
-  }
-
-  if (ActiveTabIsCompare()) {
-    CompareTabState* compare_tab = const_cast<WorkspaceShell*>(this)->ActiveCompareTab();
-    if (compare_tab == nullptr || !compare_tab->right_editable || !compare_tab->right_view_active) {
-      return std::nullopt;
-    }
-    const CompareSurfaceLayout surface_layout =
-        ComputeCompareSurfaceLayout(ActiveTabSurface(*layout), *compare_tab);
-    return BuildCompareRightInteractionLayout(surface_layout, *compare_tab).rect;
-  }
-
-  if (ActiveTabIsMerge()) {
-    const MergeTabState* merge_tab = ActiveMergeTab();
-    if (merge_tab == nullptr) {
-      return std::nullopt;
-    }
-    const SDL_FRect surface = ActiveTabSurface(*layout);
-    const MergeSurfaceLayout surface_layout = ComputeMergeSurfaceLayout(surface, *merge_tab);
-    return ComputeMergeResultViewportRect(surface, surface_layout.center_x,
-                                          surface_layout.rows_y, surface_layout.gutter_width,
-                                          surface_layout.center_width,
-                                          surface_layout.show_horizontal);
-  }
-
-  if (!ActiveTabIsEditor()) {
-    return std::nullopt;
-  }
-
-  if (const_cast<WorkspaceShell*>(this)->ActiveEditorTab() == nullptr) {
-    return layout->editor_surface;
-  }
-  const auto panes = ComputeEditorPaneLayouts(*layout);
-  const auto active_pane =
-      std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
-  return active_pane != panes.end() ? std::optional<SDL_FRect>(active_pane->rect)
-                                    : std::optional<SDL_FRect>(layout->editor_surface);
-}
-
 std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t start_line,
                                                                     std::size_t end_line) const {
   if (!ActiveTabIsEditor()) {

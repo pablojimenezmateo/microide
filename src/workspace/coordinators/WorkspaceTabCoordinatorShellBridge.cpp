@@ -847,20 +847,10 @@ const TabEntry* WorkspaceShell::TabForLabels(std::size_t group_index, std::size_
   return &state.editor_groups[group_index].open_tabs[index];
 }
 
-WorkspaceTabTextModel WorkspaceShell::TabTextModel(std::size_t group_index,
-                                                   std::size_t index) const {
-  const TabEntry* tab = TabForLabels(group_index, index);
-  if (tab == nullptr) {
-    return {};
-  }
-  return BuildWorkspaceTabTextModel(context_.current_project_state.root, TabLabelPath(*tab),
-                                    TabLabelFallback(*tab), TabCoordinator::TabStateIsDirty(*tab));
-}
-
 std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
-  // NOT `TabTextModel(...).display_title`: that also resolves the tooltip's
-  // project-relative label, which the tab strip asks for through its own provider
-  // anyway — so every tab paid for it twice (TD-2026-08-06-159).
+  // The title alone, not BuildWorkspaceTabTextModel: that also resolves the
+  // tooltip's project-relative label, which the tab strip asks for through its own
+  // provider anyway -- so every tab paid for it twice (TD-2026-08-06-159).
   const TabEntry* tab = TabForLabels(group_index, index);
   if (tab == nullptr) {
     return {};
@@ -909,18 +899,6 @@ std::string WorkspaceShell::TabTooltipLabel(std::size_t group_index, std::size_t
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
   return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyIndices();
-}
-
-std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
-    const ProjectWorkspaceState& state) {
-  std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(state.focused_group().open_tabs.size());
-  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
-    if (TabCoordinator::TabStateIsDirty(state.focused_group().open_tabs[i])) {
-      dirty_tabs.push_back(i);
-    }
-  }
-  return dirty_tabs;
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(

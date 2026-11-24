@@ -929,24 +929,27 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
     // text at places the user could not see.
     std::vector<editor::RowFillSpan>& right_column_fills = compare_right_fill_scratch_;
     right_column_fills.clear();
+    // A selection's part on this line (`sel` ordered, start first).
+    const auto append_selection = [&](const editor::SelectionRange& sel) {
+      if (right_line_index < sel.start.line || right_line_index > sel.end.line) {
+        return;
+      }
+      // Resolution happens in the builder against this map; build it now so the
+      // caret below reuses the same table.
+      ensure_right_visual_map();
+      right_column_fills.push_back(editor::RowFillSpan{
+          .start_column = right_line_index == sel.start.line ? sel.start.column : 0,
+          .end_column = right_line_index == sel.end.line ? sel.end.column : compare_row.right_text.size(),
+          .color = theme_.selection_fill,
+          .geometry = editor::RowFillSpan::Geometry::kRange,
+      });
+    };
     if (right_selection.has_value()) {
       // Copy out of the optional so GCC's optimizer sees a definitely-initialized
       // SelectionRange instead of complaining about `*right_selection` storage
       // bytes through the inlined `std::optional` access path.
       const editor::SelectionRange sel = *right_selection;
-      if (right_line_index >= sel.start.line && right_line_index <= sel.end.line) {
-        const std::size_t line_start = right_line_index == sel.start.line ? sel.start.column : 0;
-        const std::size_t line_end = right_line_index == sel.end.line ? sel.end.column : compare_row.right_text.size();
-        // Resolution happens in the builder against this map; build it now so the
-        // caret below reuses the same table.
-        ensure_right_visual_map();
-        right_column_fills.push_back(editor::RowFillSpan{
-            .start_column = line_start,
-            .end_column = line_end,
-            .color = theme_.selection_fill,
-            .geometry = editor::RowFillSpan::Geometry::kRange,
-        });
-      }
+      append_selection(sel);
     }
     // Every secondary caret's selection, same rule per caret, over the binary-
     // searched run for this line rather than the whole set.
@@ -958,15 +961,7 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
       if (sel.end.line < sel.start.line || (sel.end.line == sel.start.line && sel.end.column < sel.start.column)) {
         std::swap(sel.start, sel.end);
       }
-      if (right_line_index < sel.start.line || right_line_index > sel.end.line)
-        continue;
-      ensure_right_visual_map();
-      right_column_fills.push_back(editor::RowFillSpan{
-          .start_column = right_line_index == sel.start.line ? sel.start.column : 0,
-          .end_column = right_line_index == sel.end.line ? sel.end.column : compare_row.right_text.size(),
-          .color = theme_.selection_fill,
-          .geometry = editor::RowFillSpan::Geometry::kRange,
-      });
+      append_selection(sel);
     }
     if (bracket_match_pair.has_value()) {
       const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
@@ -1084,48 +1079,37 @@ void WorkspaceShell::PaintCompareRightSide(const CompareRowsPass& rows, const Co
                 selected ? theme_.current_line_number : theme_.line_number,
                 FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
     }
-    if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
+    // A caret at byte `column` of this line, drawn when its cell is on this row:
+    // under wrap the caret belongs to exactly one segment, and its on-screen cell
+    // is the hanging indent plus the offset into that segment.
+    const auto draw_caret = [&](std::size_t column) {
       const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
       const std::size_t caret_visual =
-          caret_map != nullptr ? caret_map->VisualColumnFor(compare_tab->right_viewport.cursor_column())
-                               : std::min(compare_tab->right_viewport.cursor_column(), compare_row.right_text.size());
-      // Under wrap the caret belongs to exactly one segment, and its on-screen
-      // cell is the hanging indent plus the offset into that segment.
-      const bool caret_on_this_row =
+          caret_map != nullptr ? caret_map->VisualColumnFor(column) : std::min(column, compare_row.right_text.size());
+      const bool on_this_row =
           wrapped ? compare_tab->wrap_layout.RowForUnitColumn(presentation_index, caret_visual, /*right_side=*/true) ==
                         static_cast<std::size_t>(visual_index)
                   : caret_visual >= right_row_start && caret_visual <= right_row_end;
-      if (caret_on_this_row) {
-        const std::size_t caret_cell =
-            wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
-        DrawFilledRect(renderer,
-                       MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f, surface.line_height),
-                       theme_.cursor);
+      if (!on_this_row) {
+        return;
       }
+      const std::size_t caret_cell = wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
+      DrawFilledRect(renderer,
+                     MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f, surface.line_height),
+                     theme_.cursor);
+    };
+    if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
+      draw_caret(compare_tab->right_viewport.cursor_column());
     }
     // Every SECONDARY caret on this line, by the same rule. Ctrl+D and the box
     // gesture both resolve through ActiveEditableViewport, which IS this pane on
     // a compare tab, so a multi-caret set here is reachable -- and until this
     // loop existed it edited text at places with no caret drawn.
-    if (draw_compare_caret && !row_secondaries.empty()) {
-      const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
+    if (draw_compare_caret) {
       for (const auto& caret : row_secondaries) {
-        if (caret.position.line != right_line_index)
-          continue;
-        const std::size_t caret_visual = caret_map != nullptr
-                                             ? caret_map->VisualColumnFor(caret.position.column)
-                                             : std::min(caret.position.column, compare_row.right_text.size());
-        const bool on_this_row = wrapped ? compare_tab->wrap_layout.RowForUnitColumn(presentation_index, caret_visual,
-                                                                                     /*right_side=*/true) ==
-                                               static_cast<std::size_t>(visual_index)
-                                         : caret_visual >= right_row_start && caret_visual <= right_row_end;
-        if (!on_this_row)
-          continue;
-        const std::size_t caret_cell =
-            wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
-        DrawFilledRect(renderer,
-                       MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f, surface.line_height),
-                       theme_.cursor);
+        if (caret.position.line == right_line_index) {
+          draw_caret(caret.position.column);
+        }
       }
     }
     // The annotation is anchored past the END of the line, i.e. on its last

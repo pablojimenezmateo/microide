@@ -364,9 +364,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
         });
   };
   glue_->action_context = std::make_unique<WorkspaceActionContext>(
-      context_.project_catalog,
-      context_.current_project_state,
-      ui_scale_,
+      context_.project_catalog, context_.current_project_state, ui_scale_,
       WorkspaceActionContext::Services{
           .assist = assist_service_,
           .debug = debug_service_,
@@ -402,19 +400,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 return accepted;
               },
-          .open_project =
-              [this](const std::filesystem::path& root, bool restore, bool log_feedback) {
-                return OpenProjectTab(root, restore, log_feedback);
-              },
+          .open_project = [this](const std::filesystem::path& root, bool restore,
+                                 bool log_feedback) { return OpenProjectTab(root, restore, log_feedback); },
           .request_close_project = [this](std::size_t index) { RequestCloseProject(index); },
-          .switch_project =
-              [this](std::size_t index, bool log_feedback) {
-                return SwitchProject(index, log_feedback);
-              },
-          .open_native_project_picker =
-              [this]() { return OpenNativeProjectPicker(nullptr); },
-          .open_native_file_picker =
-              [this]() { return OpenNativeFilePicker(nullptr); },
+          .switch_project = [this](std::size_t index, bool log_feedback) { return SwitchProject(index, log_feedback); },
+          .open_native_project_picker = [this]() { return OpenNativeProjectPicker(nullptr); },
+          .open_native_file_picker = [this]() { return OpenNativeFilePicker(nullptr); },
           .begin_project_search_edit = [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
           .paste_tree_path =
               [this](const std::filesystem::path& source, bool cut, const std::filesystem::path& directory) {
@@ -432,16 +423,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](ActionId id, const std::vector<std::string>& args) {
                 return DispatchGitOperationAction(id, args);
               },
-          .tree_mutation_base_path =
-              [this](ActionSource source) { return TreeMutationBasePath(source); },
-          .resolve_tree_action_path =
-              [this](ActionSource source) { return ResolveTreeActionPath(source); },
+          .tree_mutation_base_path = [this](ActionSource source) { return TreeMutationBasePath(source); },
+          .resolve_tree_action_path = [this](ActionSource source) { return ResolveTreeActionPath(source); },
           .active_tab_path = [this]() { return ActiveTabPath(); },
-          .open_prompt_surface =
-              [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,
-                     const std::filesystem::path& path, std::string input) {
-                OpenPromptSurface(action, kind, path, std::move(input));
-              },
+          .open_prompt_surface = [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,
+                                        const std::filesystem::path& path,
+                                        std::string input) { OpenPromptSurface(action, kind, path, std::move(input)); },
           .open_command_arguments_prompt =
               [this](std::string_view command_name, std::string prefill) {
                 OpenPromptSurface(PromptSurfaceState::Action::CommandArguments,
@@ -450,8 +437,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 context_.prompts.surface.command_name.assign(command_name);
               },
           .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
-          .write_primary_selection_text =
-              [this](std::string_view text) { return WritePrimarySelectionText(text); },
+          .write_primary_selection_text = [this](std::string_view text) { return WritePrimarySelectionText(text); },
           .reveal_path_in_file_explorer =
               [this](const std::filesystem::path& dir) { return RevealPathInFileExplorer(dir); },
           .reveal_path_in_tree =
@@ -575,43 +561,30 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     });
               },
           .discover_tests_for_active_buffer =
-              [this](std::string* error_message) {
-                return DiscoverTestsForActiveBuffer(error_message);
-              },
-          .run_tests =
-              [this](const std::vector<std::string>& test_ids, std::string* error_message) {
-                return RunTests(test_ids, error_message);
-              },
+              [this](std::string* error_message) { return DiscoverTestsForActiveBuffer(error_message); },
+          .run_tests = [this](const std::vector<std::string>& test_ids,
+                              std::string* error_message) { return RunTests(test_ids, error_message); },
           .run_all_discovered_tests =
-              [this](std::string* error_message) {
-                return RunAllDiscoveredTests(error_message);
-              },
+              [this](std::string* error_message) { return RunAllDiscoveredTests(error_message); },
           .run_off_shell_thread = run_off_shell_thread,
           .open_conflict_review = [make_review]() { return make_review().OpenConflictReview(); },
-          .open_branch_review =
-              [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },
-          .open_commit_review =
-              [make_review](const std::string& ref) { return make_review().OpenCommitReview(ref); },
+          .open_branch_review = [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },
+          .open_commit_review = [make_review](const std::string& ref) { return make_review().OpenCommitReview(ref); },
           .open_checkpoint_review = [make_review]() { return make_review().OpenCheckpointReview(); },
           .mark_review_checkpoint = [make_review]() { return make_review().MarkCheckpoint(); },
-          .ensure_active_folding_model_fresh =
-              [this]() { return EnsureActiveFoldingModelFresh(); },
+          .ensure_active_folding_model_fresh = [this]() { return EnsureActiveFoldingModelFresh(); },
           .replace_active_editor_view =
-              [this](const editor::TextViewport& viewport) {
-                return ReplaceActiveEditorView(viewport);
-              },
+              [this](const editor::TextViewport& viewport) { return ReplaceActiveEditorView(viewport); },
           .open_editor_view_for_path =
               [this](const std::filesystem::path& path, editor::TextViewport& view) {
                 return MakeTabCoordinator().OpenEditorViewForPath(path, view);
               },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
-          .open_file_in_new_tab =
-              [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
+          .open_file_in_new_tab = [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
-          .save_tab_deferred =
-              [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
+          .save_tab_deferred = [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
           .revert_active_file =
               [this]() {
                 const editor::TextViewport* viewport = ActiveEditableViewport();
@@ -630,46 +603,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 RequestTabStripRedraw();
                 return true;
               },
-          .save_all_dirty_tabs =
-              [this]() {
-                SaveAllOutcome outcome;
-                std::lock_guard<std::mutex> lock(save_tab_mutex_);
-                auto& tabs = MakeEditorTabService();
-                // One file open in two groups is one document: its second tab is
-                // saved by the first one's write, and saving it again would run
-                // the formatter twice.
-                std::vector<const editor::TextViewport*> saved_views;
-                for (const GroupTabRef& ref : tabs.DirtyGroupTabs()) {
-                  const TabEntry& tab =
-                      context_.current_project_state.editor_groups[ref.group_index].open_tabs[ref.tab_index];
-                  const editor::TextViewport* view =
-                      tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-                              !tab.editor_state->content_pending()
-                          ? &tab.editor_state->viewport
-                          : nullptr;
-                  if (view != nullptr && view->path().empty()) {
-                    ++outcome.untitled;
-                    continue;
-                  }
-                  if (view != nullptr &&
-                      std::any_of(saved_views.begin(), saved_views.end(),
-                                  [view](const editor::TextViewport* saved) {
-                                    return saved->SharesDocumentWith(*view);
-                                  })) {
-                    continue;
-                  }
-                  const std::string title = tab.title;
-                  if (tabs.SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Deferred)) {
-                    ++outcome.saved;
-                    if (view != nullptr) {
-                      saved_views.push_back(view);
-                    }
-                  } else {
-                    outcome.failed.push_back(title);
-                  }
-                }
-                return outcome;
-              },
+          .save_all_dirty_tabs = [this]() { return ActionContextSaveAllDirtyTabs(); },
           .save_tab_as =
               [this](std::size_t index, const std::filesystem::path& path, std::string* error) {
                 std::lock_guard<std::mutex> lock(save_tab_mutex_);
@@ -680,13 +614,11 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
-          .request_close_tabs =
-              [this](std::vector<std::size_t> indices) { RequestCloseTabs(std::move(indices)); },
+          .request_close_tabs = [this](std::vector<std::size_t> indices) { RequestCloseTabs(std::move(indices)); },
           .close_all_tabs = [this]() { CloseAllTabs(); },
           .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
           .move_tab_to_group =
-              [this](std::size_t from_group, std::size_t from_index, std::size_t to_group,
-                     std::size_t to_slot) {
+              [this](std::size_t from_group, std::size_t from_index, std::size_t to_group, std::size_t to_slot) {
                 // Same geometry drop the drag path does: both strips change length.
                 tab_strip_service_.InvalidateTabStripGeometry();
                 return MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group,
@@ -698,77 +630,14 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .mark_branch_file_reviewed = [this]() { MakeCompareReviewService().SetActiveFileReviewed(true); },
           .unmark_branch_file_reviewed = [this]() { MakeCompareReviewService().SetActiveFileReviewed(false); },
           .mark_branch_hunk_reviewed = [this]() { MakeCompareReviewService().SetSelectedHunkReviewed(true); },
-          .run_compare_command =
-              [this](ActionId id, std::string* error) {
-                if (id == ActionId::MergeCopyIncoming || id == ActionId::MergeCopyCurrent ||
-                    id == ActionId::MergeResetConflict) {
-                  const MergeTabState* merge = ActiveMergeTab();
-                  if (merge == nullptr) {
-                    *error = "Not a merge: open one from the git view's conflicts";
-                    return false;
-                  }
-                  if (merge->conflicts.empty()) {
-                    *error = id == ActionId::MergeResetConflict ? "No conflict to reset" : "No conflict to copy";
-                    return false;
-                  }
-                  if (id == ActionId::MergeResetConflict) {
-                    MakeCompareMergeService().ResetMergeHunk();
-                  } else {
-                    MakeCompareMergeService().CopyMergeSideSnippet(id == ActionId::MergeCopyIncoming);
-                  }
-                  return true;
-                }
-                const CompareTabState* tab = ActiveCompareTab();
-                if (tab == nullptr) {
-                  *error = "Not a diff: open one from the git view, a commit or Compare";
-                  return false;
-                }
-                CompareMergeService& compare = MakeCompareMergeService();
-                switch (id) {
-                  case ActionId::CompareToggleIgnoreWhitespace:
-                    compare.ToggleCompareIgnoreWhitespace();
-                    return true;
-                  case ActionId::CompareToggleShowWhitespace:
-                    compare.ToggleCompareShowWhitespace();
-                    return true;
-                  case ActionId::CompareCopyHunkPatch:
-                    if (CompareTabSelectedHunkIndex(*tab) < 0) {
-                      *error = "No change at the selection to copy";
-                      return false;
-                    }
-                    compare.CopyCompareHunkPatch();
-                    return true;
-                  case ActionId::CompareCopyFilePatch:
-                    if (tab->model.rows.empty()) {
-                      *error = "The diff is empty";
-                      return false;
-                    }
-                    compare.CopyCompareFilePatch();
-                    return true;
-                  case ActionId::CompareCopyPath:
-                    compare.CopyComparePath();
-                    return true;
-                  case ActionId::CompareNextReviewFile:
-                  case ActionId::ComparePreviousReviewFile:
-                    if (tab->review_files.size() < 2) {
-                      *error = "This diff is not part of a review of several files";
-                      return false;
-                    }
-                    compare.JumpCompareReviewFile(id == ActionId::CompareNextReviewFile ? 1 : -1);
-                    return true;
-                  case ActionId::CompareNextChange:
-                  case ActionId::ComparePreviousChange:
-                    JumpCompareHunk(id == ActionId::CompareNextChange ? 1 : -1);
-                    return true;
-                  default:
-                    *error = "Not a diff command";
-                    return false;
-                }
-              },
+          .run_compare_command = [this](ActionId id,
+                                        std::string* error) { return ActionContextRunCompareCommand(id, error); },
           .unmark_branch_hunk_reviewed = [this]() { MakeCompareReviewService().SetSelectedHunkReviewed(false); },
           .clear_branch_review_state = [this]() { MakeCompareReviewService().ClearReview(); },
           .review_comments =
-              [this](const std::filesystem::path& scope) { return MakeCompareReviewService().CommentsAsReferences(scope); },
+              [this](const std::filesystem::path& scope) {
+                return MakeCompareReviewService().CommentsAsReferences(scope);
+              },
           .edit_branch_review_note =
               [this](std::string note_text) { MakeCompareReviewService().EditSelectedNote(note_text); },
           .apply_git_selected_ranges =
@@ -802,14 +671,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
-              [this](MergeTabState& merge_tab) {
-                UpdateMergeTrackingAfterViewportEdit(merge_tab);
-              },
-          .note_active_editable_edit =
-              [this]() { NoteActiveEditableEdit(); },
+              [this](MergeTabState& merge_tab) { UpdateMergeTrackingAfterViewportEdit(merge_tab); },
+          .note_active_editable_edit = [this]() { NoteActiveEditableEdit(); },
           .request_active_editable_change_redraw =
-              [this](const std::vector<std::string>& before_lines,
-                     const std::vector<std::string>& after_lines) {
+              [this](const std::vector<std::string>& before_lines, const std::vector<std::string>& after_lines) {
                 RequestActiveEditableChangeRedraw(before_lines, after_lines);
               },
           .selection_text_with_context = [this]() { return SelectionTextWithContext(); },
@@ -920,16 +785,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 return context_.interaction_state.caret_hover.active;
               },
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
-          .get_setting_value =
-              [this](std::string_view id) { return GetSettingValue(id); },
-          .set_setting_value =
-              [this](std::string_view id, std::string value) {
-                return SetSettingValue(id, std::move(value));
-              },
-          .notify =
-              [this](NotificationService::Tone tone, std::string message) {
-                Notify(tone, std::move(message));
-              },
+          .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
+          .set_setting_value = [this](std::string_view id,
+                                      std::string value) { return SetSettingValue(id, std::move(value)); },
+          .notify = [this](NotificationService::Tone tone, std::string message) { Notify(tone, std::move(message)); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .activate_editor_banner =
@@ -989,12 +848,9 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 return MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces)
                     .CancelSaveContinuation(id);
               },
-          .request_toggle_fullscreen =
-              [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
+          .request_toggle_fullscreen = [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
           .reload_plugins_for_current_project =
-              [this](bool announce) {
-                ReloadPluginsForCurrentProject(PluginReloadRequest{.announce = announce});
-              },
+              [this](bool announce) { ReloadPluginsForCurrentProject(PluginReloadRequest{.announce = announce}); },
           .request_quit = [this]() { RequestQuit(); },
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
@@ -1024,17 +880,13 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 });
               },
           .open_command_palette = [this](std::string seed) { OpenCommandPalette(std::move(seed)); },
-          .edit_breakpoint_modifier_from_menu =
-              [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
-          .breakpoint_quick_action_from_menu =
-              [this](ActionId id) { BreakpointQuickActionFromMenu(id); },
+          .edit_breakpoint_modifier_from_menu = [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
+          .breakpoint_quick_action_from_menu = [this](ActionId id) { BreakpointQuickActionFromMenu(id); },
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
           .show_debug_output = [this]() { ShowDebugOutput(); },
-          .start_named_debug_config =
-              [this](const std::string& name) { return StartNamedDebugConfig(name); },
-          .start_ad_hoc_debug =
-              [this](const std::string& program, const std::vector<std::string>& args,
-                     const std::string& type) { return StartAdHocDebug(program, args, type); },
+          .start_named_debug_config = [this](const std::string& name) { return StartNamedDebugConfig(name); },
+          .start_ad_hoc_debug = [this](const std::string& program, const std::vector<std::string>& args,
+                                       const std::string& type) { return StartAdHocDebug(program, args, type); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .reveal_buffer_search_match =
               [this](const editor::SelectionRange& match) {
@@ -1043,6 +895,108 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
       });
   return *glue_->action_context;
+}
+
+bool WorkspaceShell::ActionContextRunCompareCommand(ActionId id, std::string* error) {
+  if (id == ActionId::MergeCopyIncoming || id == ActionId::MergeCopyCurrent || id == ActionId::MergeResetConflict) {
+    const MergeTabState* merge = ActiveMergeTab();
+    if (merge == nullptr) {
+      *error = "Not a merge: open one from the git view's conflicts";
+      return false;
+    }
+    if (merge->conflicts.empty()) {
+      *error = id == ActionId::MergeResetConflict ? "No conflict to reset" : "No conflict to copy";
+      return false;
+    }
+    if (id == ActionId::MergeResetConflict) {
+      MakeCompareMergeService().ResetMergeHunk();
+    } else {
+      MakeCompareMergeService().CopyMergeSideSnippet(id == ActionId::MergeCopyIncoming);
+    }
+    return true;
+  }
+  const CompareTabState* tab = ActiveCompareTab();
+  if (tab == nullptr) {
+    *error = "Not a diff: open one from the git view, a commit or Compare";
+    return false;
+  }
+  CompareMergeService& compare = MakeCompareMergeService();
+  switch (id) {
+    case ActionId::CompareToggleIgnoreWhitespace:
+      compare.ToggleCompareIgnoreWhitespace();
+      return true;
+    case ActionId::CompareToggleShowWhitespace:
+      compare.ToggleCompareShowWhitespace();
+      return true;
+    case ActionId::CompareCopyHunkPatch:
+      if (CompareTabSelectedHunkIndex(*tab) < 0) {
+        *error = "No change at the selection to copy";
+        return false;
+      }
+      compare.CopyCompareHunkPatch();
+      return true;
+    case ActionId::CompareCopyFilePatch:
+      if (tab->model.rows.empty()) {
+        *error = "The diff is empty";
+        return false;
+      }
+      compare.CopyCompareFilePatch();
+      return true;
+    case ActionId::CompareCopyPath:
+      compare.CopyComparePath();
+      return true;
+    case ActionId::CompareNextReviewFile:
+    case ActionId::ComparePreviousReviewFile:
+      if (tab->review_files.size() < 2) {
+        *error = "This diff is not part of a review of several files";
+        return false;
+      }
+      compare.JumpCompareReviewFile(id == ActionId::CompareNextReviewFile ? 1 : -1);
+      return true;
+    case ActionId::CompareNextChange:
+    case ActionId::ComparePreviousChange:
+      JumpCompareHunk(id == ActionId::CompareNextChange ? 1 : -1);
+      return true;
+    default:
+      *error = "Not a diff command";
+      return false;
+  }
+}
+
+SaveAllOutcome WorkspaceShell::ActionContextSaveAllDirtyTabs() {
+  SaveAllOutcome outcome;
+  std::lock_guard<std::mutex> lock(save_tab_mutex_);
+  auto& tabs = MakeEditorTabService();
+  // One file open in two groups is one document: its second tab is
+  // saved by the first one's write, and saving it again would run
+  // the formatter twice.
+  std::vector<const editor::TextViewport*> saved_views;
+  for (const GroupTabRef& ref : tabs.DirtyGroupTabs()) {
+    const TabEntry& tab = context_.current_project_state.editor_groups[ref.group_index].open_tabs[ref.tab_index];
+    const editor::TextViewport* view =
+        tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() && !tab.editor_state->content_pending()
+            ? &tab.editor_state->viewport
+            : nullptr;
+    if (view != nullptr && view->path().empty()) {
+      ++outcome.untitled;
+      continue;
+    }
+    if (view != nullptr &&
+        std::any_of(saved_views.begin(), saved_views.end(),
+                    [view](const editor::TextViewport* saved) { return saved->SharesDocumentWith(*view); })) {
+      continue;
+    }
+    const std::string title = tab.title;
+    if (tabs.SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Deferred)) {
+      ++outcome.saved;
+      if (view != nullptr) {
+        saved_views.push_back(view);
+      }
+    } else {
+      outcome.failed.push_back(title);
+    }
+  }
+  return outcome;
 }
 
 }  // namespace microide::workspace

@@ -123,7 +123,7 @@
 
 namespace microide::workspace {
 
-struct WorkspaceTabTextModel;
+struct SaveAllOutcome;
 class WorkspaceActionContext;
 class PromptSurfaceService;
 class ProjectCatalogService;

@@ -275,8 +275,11 @@ void TestArchitectureFileSizes() {
              // 1516: the merge-conflict tracking, popup geometry, KeycodeToAscii and the
              // editor-group accessors moved out as free functions, paying for the cursor,
              // mouse-dispatch and compare-side steps.
+             // 1512: four dead members (TabTextModel, the static DirtyEditorTabIndices,
+             // CurrentFocusedEditorRedrawRect, CurrentMergeResultLineToBottomRect)
+             // removed, paying for the action context's two operation members.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1516);
+                                                     1512);
            });
 
   AssertRuleResultsPass(results);

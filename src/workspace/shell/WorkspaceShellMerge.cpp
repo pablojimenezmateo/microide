@@ -346,23 +346,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineRangeRect(std::si
   return band.has_value() ? std::optional<SDL_FRect>(DirtyRectWithHalo(*band)) : std::nullopt;
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentMergeResultLineToBottomRect(
-    std::size_t start_line) const {
-  const auto line_rect =
-      CurrentMergeResultLineRangeRect(start_line, std::numeric_limits<std::size_t>::max());
-  if (!line_rect.has_value()) {
-    return std::nullopt;
-  }
-
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value()) {
-    return line_rect;
-  }
-  const SDL_FRect surface = ActiveTabSurface(*layout);
-  return MakeRect(surface.x, line_rect->y, surface.w,
-                  std::max(0.0f, surface.y + surface.h - line_rect->y));
-}
-
 std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t conflict_index) const {
   const auto layout = CurrentWorkspaceLayout();
   MergeTabState* merge_tab = const_cast<WorkspaceShell*>(this)->ActiveMergeTab();
