@@ -56,10 +56,34 @@ class ActionCoordinator {
                              const std::vector<std::string>& args,
                              ActionSource source,
                              std::string* rejection_feedback);
+  DispatchResult ExecuteRemote(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                               std::string* rejection_feedback);
+  DispatchResult ExecuteDebug(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                              std::string* rejection_feedback);
   DispatchResult ExecuteGlobal(ActionId id,
                                const std::vector<std::string>& args,
                                ActionSource source,
                                std::string* rejection_feedback);
+
+  // ExecuteEdit's larger actions, one member each.
+  DispatchResult ExecuteFormatJson(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                                   std::string* rejection_feedback);
+  DispatchResult ExecutePointer(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                                std::string* rejection_feedback);
+  DispatchResult ExecuteSortLines(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                                  std::string* rejection_feedback);
+  DispatchResult ExecuteAddCursorAtMatch(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                                         std::string* rejection_feedback);
+
+  // ExecuteTab's larger actions, one member each.
+  DispatchResult ExecuteOpen(ActionId id, const std::vector<std::string>& args, ActionSource source,
+                             std::string* rejection_feedback);
+
+  // ExecuteGlobal's larger actions, one member each.
+
+  // ExecuteSearch's larger actions, one member each.
+
+  // ExecuteSidebar's larger actions, one member each.
 
   WorkspaceActionContext& context_;
 };

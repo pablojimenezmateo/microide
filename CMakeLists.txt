@@ -657,6 +657,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceEventOrchestrator.cpp
   src/workspace/actions/WorkspaceGlobalActionExecutor.cpp
+  src/workspace/actions/WorkspaceDebugActionExecutor.cpp
+  src/workspace/actions/WorkspaceRemoteActionExecutor.cpp
   src/workspace/WorkspaceIndentDetectApply.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinator.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorBindings.cpp

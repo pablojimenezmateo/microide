@@ -95,6 +95,12 @@ bool ActionCoordinator::Execute(ActionId id,
       handled.has_value()) {
     return *handled;
   }
+  if (const auto handled = dispatch_result(ExecuteRemote(id, args, source, &rejection_feedback)); handled.has_value()) {
+    return *handled;
+  }
+  if (const auto handled = dispatch_result(ExecuteDebug(id, args, source, &rejection_feedback)); handled.has_value()) {
+    return *handled;
+  }
   if (const auto handled =
           dispatch_result(ExecuteGlobal(id, args, source, &rejection_feedback));
       handled.has_value()) {

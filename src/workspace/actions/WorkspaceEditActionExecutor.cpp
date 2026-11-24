@@ -86,90 +86,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
-    case ActionId::FormatJson: {
-      // Optional path argument: open/focus that file first (resolved against the
-      // project root like `open`), then format its buffer. With no argument the
-      // command targets the active buffer. Feedback surfaces via toast per the
-      // command's contract; disk is never touched (the edit stays in memory).
-      if (!args.empty()) {
-        if (!context_.HasProjectRoot()) {
-          context_.Notify(NotificationService::Tone::Error, "No active project");
-          return DispatchResult::Handled;
-        }
-        const std::optional<OpenPathRequest> request =
-            BuildOpenPathRequest(args, context_.ProjectRoot());
-        if (!request.has_value()) {
-          context_.Notify(NotificationService::Tone::Error, "format-json requires a valid path");
-          return DispatchResult::Handled;
-        }
-        std::string open_error;
-        if (!context_.OpenPath(request->path, &open_error)) {
-          context_.Notify(NotificationService::Tone::Error,
-                          open_error.empty() ? "Could not open file" : open_error);
-          return DispatchResult::Handled;
-        }
-      }
-      auto* viewport = context_.ActiveEditableViewport();
-      if (viewport == nullptr) {
-        context_.Notify(NotificationService::Tone::Warning, "No active buffer to format");
-        return DispatchResult::Handled;
-      }
-      // The piece tree already holds the document '\n'-joined, so take it in one
-      // walk rather than two tree descents per line (which also materializes
-      // every piece-spanning line into the per-line cache on the way).
-      std::string source;
-      viewport->lines().AppendWholeText(source);
-      // Indentation follows the buffer's own editor settings (VSCode-style).
-      const std::string indent_unit = viewport->soft_tabs()
-                                          ? std::string(viewport->indent_width(), ' ')
-                                          : std::string("\t");
-      const util::JsonFormatResult formatted = util::FormatJson(source, indent_unit);
-      if (!formatted.ok) {
-        // Byte offset -> 1-based line:col for a helpful toast.
-        std::size_t line = 1;
-        std::size_t col = 1;
-        for (std::size_t i = 0; i < formatted.error_offset && i < source.size(); ++i) {
-          if (source[i] == '\n') {
-            ++line;
-            col = 1;
-          } else {
-            ++col;
-          }
-        }
-        context_.Notify(NotificationService::Tone::Error,
-                        "Invalid JSON (" + std::to_string(line) + ":" + std::to_string(col) +
-                            "): " + formatted.error);
-        return DispatchResult::Handled;
-      }
-      if (formatted.text == source) {
-        // Already formatted: no edit, no undo churn (VSCode is silent here).
-        return DispatchResult::Handled;
-      }
-      // Replace the whole document as one undo step (the same whole-document
-      // replace path editor::SortLines uses). The formatter emits '\n'-joined
-      // lines with no trailing newline.
-      std::vector<std::string> new_lines;
-      {
-        std::size_t start = 0;
-        const std::string& text = formatted.text;
-        for (std::size_t i = 0; i <= text.size(); ++i) {
-          if (i == text.size() || text[i] == '\n') {
-            new_lines.emplace_back(text.substr(start, i - start));
-            start = i + 1;
-          }
-        }
-      }
-      // A whole-document replace snaps the caret to the top; keep the user's
-      // line (clamped) so formatting does not scroll them away from their spot.
-      const std::size_t caret_line = viewport->cursor_line();
-      const std::size_t caret_column = viewport->cursor_column();
-      if (viewport->ReplaceLines(0, viewport->line_count(), std::move(new_lines),
-                                 /*record_undo=*/true)) {
-        viewport->JumpCursorTo(std::min(caret_line, viewport->line_count() - 1), caret_column);
-        context_.NotifyEditorViewportChanged(/*last_change=*/true);
-      }
-      return DispatchResult::Handled;
-    }
+    case ActionId::FormatJson:
+      return ExecuteFormatJson(id, args, source, rejection_feedback);
     case ActionId::RenameSymbol: {
       // `rename-symbol <new-name>` renames outright (a headless driver cannot
       // answer a prompt); bare, it opens the prompt prefilled with the symbol.
@@ -436,119 +354,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         return reject("No hover at the caret");
       }
       return DispatchResult::Handled;
-    case ActionId::Pointer: {
-      // `pointer [mods+]<verb> <x> <y> ...`: the mouse, for a driver with no
-      // window-system input to send (a Wayland session, an agent) -- x and y in
-      // layout units, the coordinates `ui` reports. Every verb moves the pointer
-      // there first, as a real hand would; `move x y left` is a drag step.
-      static constexpr std::string_view kUsage =
-          "usage: pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks], "
-          "or pointer drop <x> <y> <path>";
-      if (args.size() < 3) {
-        return reject(std::string(kUsage));
-      }
-      const std::string_view chord = args[0];
-      const std::size_t plus = chord.rfind('+');
-      const std::string verb = util::ToLowerAscii(plus == std::string_view::npos ? chord : chord.substr(plus + 1));
-      SDL_Keymod modifiers = SDL_KMOD_NONE;
-      if (plus != std::string_view::npos) {
-        // The modifier prefix spelled as for `key`, on a stand-in key.
-        SDL_Keycode ignored = SDLK_UNKNOWN;
-        if (!ParseKeyChord(std::string(chord.substr(0, plus + 1)) + "a", &ignored, &modifiers)) {
-          return reject(std::string(kUsage));
-        }
-      }
-      const std::optional<float> x = util::ParseFloat(args[1]);
-      const std::optional<float> y = util::ParseFloat(args[2]);
-      if (!x.has_value() || !y.has_value()) {
-        return reject("pointer: x and y are numbers (layout units)");
-      }
-      const auto parse_button = [](std::string_view name) -> std::optional<Uint8> {
-        const std::string lower = util::ToLowerAscii(name);
-        if (lower == "left" || lower == "1") return SDL_BUTTON_LEFT;
-        if (lower == "middle" || lower == "2") return SDL_BUTTON_MIDDLE;
-        if (lower == "right" || lower == "3") return SDL_BUTTON_RIGHT;
-        return std::nullopt;
-      };
-      std::optional<Uint8> button;
-      if (args.size() > 3 && verb != "wheel" && verb != "drop") {
-        button = parse_button(args[3]);
-        if (!button.has_value()) {
-          return reject("pointer: button is left, middle or right");
-        }
-      }
-      int clicks = 1;
-      if (args.size() > 4) {
-        const std::optional<int> parsed = util::ParseInt(args[4]);
-        if (!parsed.has_value() || *parsed < 1 || *parsed > 3) {
-          return reject("pointer: clicks must be 1-3");
-        }
-        clicks = *parsed;
-      }
-      const auto move = [&](SDL_MouseButtonFlags held) {
-        SDL_Event event{};
-        event.type = SDL_EVENT_MOUSE_MOTION;
-        event.motion.x = *x;
-        event.motion.y = *y;
-        event.motion.state = held;
-        context_.InjectPointerEvent(event, modifiers);
-      };
-      const auto press = [&](Uint8 which, bool down, int count) {
-        SDL_Event event{};
-        event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
-        event.button.button = which;
-        event.button.down = down;
-        event.button.clicks = static_cast<Uint8>(count);
-        event.button.x = *x;
-        event.button.y = *y;
-        context_.InjectPointerEvent(event, modifiers);
-      };
-      if (verb == "move") {
-        move(button.has_value() ? SDL_BUTTON_MASK(*button) : 0);
-      } else if (verb == "down" || verb == "up" || verb == "click") {
-        const Uint8 which = button.value_or(SDL_BUTTON_LEFT);
-        move(verb == "up" ? SDL_BUTTON_MASK(which) : 0);
-        if (verb == "click") {
-          // A double click is two presses, the second counted 2: what SDL sends.
-          for (int count = 1; count <= clicks; ++count) {
-            press(which, /*down=*/true, count);
-            press(which, /*down=*/false, count);
-          }
-        } else {
-          press(which, verb == "down", clicks);
-        }
-      } else if (verb == "drop") {
-        // A file dragged in from another application and released here.
-        if (args.size() < 4 || args[3].empty()) {
-          return reject("usage: pointer drop <x> <y> <path>");
-        }
-        move(0);
-        SDL_Event event{};
-        event.type = SDL_EVENT_DROP_FILE;
-        event.drop.x = *x;
-        event.drop.y = *y;
-        event.drop.data = args[3].c_str();
-        context_.InjectPointerEvent(event, modifiers);
-      } else if (verb == "wheel") {
-        const std::optional<int> notches = args.size() > 3 ? util::ParseInt(args[3]) : std::optional<int>(1);
-        if (!notches.has_value() || *notches == 0 || *notches < -100 || *notches > 100) {
-          return reject("pointer: wheel notches are -100..100, not 0 (positive scrolls down)");
-        }
-        move(0);
-        SDL_Event event{};
-        event.type = SDL_EVENT_MOUSE_WHEEL;
-        event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
-        // SDL's y is positive away from the user (up); a notch down is -1.
-        event.wheel.y = static_cast<float>(-*notches);
-        event.wheel.integer_y = -*notches;
-        event.wheel.mouse_x = *x;
-        event.wheel.mouse_y = *y;
-        context_.InjectPointerEvent(event, modifiers);
-      } else {
-        return reject(std::string(kUsage));
-      }
-      return DispatchResult::Handled;
-    }
+    case ActionId::Pointer:
+      return ExecutePointer(id, args, source, rejection_feedback);
     case ActionId::TestsDiscover: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
@@ -631,81 +438,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     case ActionId::OutdentLines:
     case ActionId::JoinLines:
     case ActionId::SortLinesAscending:
-    case ActionId::SortLinesDescending: {
-      auto* viewport = context_.ActiveEditableViewport();
-      if (viewport == nullptr) return DispatchResult::Handled;
-      if (const char* gate = ShapingActionGateSettingKey(id);
-          gate != nullptr && !SettingEnabled(context_, gate, true)) {
-        return DispatchResult::Handled;
-      }
-      bool changed = false;
-      switch (id) {
-        case ActionId::ToggleLineComment: {
-          // Comment markers are language-dependent: read them from the buffer's
-          // resolved language contract (populated by ApplyEditorPreferences on
-          // open/language change), falling back to C-style when a language
-          // provides none.
-          const editor::LanguageContractView& lc = viewport->language_contract_view();
-          const std::string_view line_marker =
-              lc.line_comment.empty() ? std::string_view("//")
-                                      : std::string_view(lc.line_comment);
-          changed = editor::ToggleLineComment(*viewport, line_marker);
-          break;
-        }
-        case ActionId::ToggleBlockComment: {
-          const editor::LanguageContractView& lc = viewport->language_contract_view();
-          const bool has_block =
-              !lc.block_comment_open.empty() && !lc.block_comment_close.empty();
-          const std::string_view open =
-              has_block ? std::string_view(lc.block_comment_open) : std::string_view("/*");
-          const std::string_view close =
-              has_block ? std::string_view(lc.block_comment_close) : std::string_view("*/");
-          changed = editor::ToggleBlockComment(*viewport, open, close);
-          break;
-        }
-        case ActionId::MoveLineUp:
-          changed = editor::MoveLineUp(*viewport);
-          break;
-        case ActionId::MoveLineDown:
-          changed = editor::MoveLineDown(*viewport);
-          break;
-        case ActionId::DuplicateLine:
-          changed = editor::CopyLines(*viewport, /*downward=*/true);
-          break;
-        case ActionId::CopyLineUp:
-          changed = editor::CopyLines(*viewport, /*downward=*/false);
-          break;
-        case ActionId::InsertLineBelow:
-          changed = editor::InsertLineBelow(*viewport);
-          break;
-        case ActionId::InsertLineAbove:
-          changed = editor::InsertLineAbove(*viewport);
-          break;
-        case ActionId::DeleteLine:
-          changed = editor::DeleteLine(*viewport);
-          break;
-        case ActionId::IndentLines:
-          changed = editor::IndentSelection(*viewport);
-          break;
-        case ActionId::OutdentLines:
-          changed = editor::OutdentSelection(*viewport);
-          break;
-        case ActionId::JoinLines:
-          changed = editor::JoinLinesAtCarets(*viewport);
-          break;
-        case ActionId::SortLinesAscending:
-          changed = editor::SortLines(*viewport, /*ascending=*/true);
-          break;
-        case ActionId::SortLinesDescending:
-          changed = editor::SortLines(*viewport, /*ascending=*/false);
-          break;
-        default: break;
-      }
-      if (changed) {
-        context_.NotifyEditorViewportChanged(/*last_change=*/true);
-      }
-      return DispatchResult::Handled;
-    }
+    case ActionId::SortLinesDescending:
+      return ExecuteSortLines(id, args, source, rejection_feedback);
     case ActionId::ExpandSelection:
     case ActionId::ShrinkSelection: {
       // A selection, not an edit: read-only buffers take it too.
@@ -733,136 +467,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::AddCursorAtNextMatch:
-    case ActionId::AddCursorAtAllMatches: {
-      if (!SettingEnabled(context_, "editor.multicursor.add_at_match.enabled", true)) {
-        return DispatchResult::Handled;
-      }
-      auto* viewport = context_.ActiveEditableViewport();
-      if (viewport == nullptr) return DispatchResult::Handled;
-      // No selection: the word under the caret becomes the needle. For the
-      // next-match chord that IS the first press (VS Code's Ctrl+D selects the
-      // word and stops; the next press adds the next occurrence); select-all
-      // goes on to take every occurrence at once.
-      if (!viewport->has_selection()) {
-        viewport->SelectWordAtCursor();
-        if (id == ActionId::AddCursorAtNextMatch) {
-          context_.NotifyEditorCaretMoved();
-          return DispatchResult::Handled;
-        }
-      }
-      auto sel = viewport->selection_range();
-      if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
-        return DispatchResult::Handled;
-      }
-      // Scan through the piece tree's zero-copy LineView rather than snapshotting
-      // the whole document into a vector<std::string> on every press.
-      const editor::TextBuffer& lines = viewport->lines();
-      if (sel->start.line >= lines.LineCount()) return DispatchResult::Handled;
-      const std::string_view line = lines.LineView(sel->start.line);
-      std::size_t a = std::min(sel->start.column, sel->end.column);
-      std::size_t b = std::max(sel->start.column, sel->end.column);
-      if (b > line.size()) return DispatchResult::Handled;
-      const std::string needle(line.substr(a, b - a));
-      if (needle.empty()) return DispatchResult::Handled;
-      const std::string_view needle_view = needle;
-      const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
-      if (id == ActionId::AddCursorAtNextMatch) {
-        // Each press adds the next occurrence that is not a caret yet, walking
-        // forward from the one the previous press added (VS Code's Ctrl+D). The
-        // search is seeded from the primary selection and wraps once; it used to
-        // stop there, so the third press re-found the second press's match and
-        // the dedupe swallowed it -- two carets was the most the chord could make.
-        const std::span<const editor::TextViewportUndoHistory::SecondaryCaret> taken =
-            viewport->secondary_caret_range_view();
-        std::size_t seed_line = sel->start.line;
-        std::size_t seed_start = a;
-        std::size_t seed_end = b;
-        // The presses so far took a prefix of the occurrences in cyclic document
-        // order from the primary, so the one added last is the farthest along
-        // that order: the last caret before the primary if the walk has wrapped,
-        // else the last caret after it. Seeding there makes a press one search;
-        // the hop loop below only has to skip carets placed by other means.
-        const editor::TextPosition primary_start{sel->start.line, a};
-        const auto precedes = [](const editor::TextPosition& lhs, const editor::TextPosition& rhs) {
-          return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
-        };
-        const editor::TextViewportUndoHistory::SecondaryCaret* last_added = nullptr;
-        bool wrapped = false;
-        for (const auto& caret : taken) {
-          if (!caret.selection_anchor.has_value()) {
-            continue;
-          }
-          const bool before_primary = precedes(caret.position, primary_start);
-          if (last_added == nullptr || (before_primary && !wrapped) ||
-              (before_primary == wrapped && precedes(last_added->position, caret.position))) {
-            last_added = &caret;
-            wrapped = before_primary;
-          }
-        }
-        if (last_added != nullptr && last_added->selection_anchor->line == last_added->position.line) {
-          seed_line = last_added->position.line;
-          seed_start = std::min(last_added->selection_anchor->column, last_added->position.column);
-          seed_end = std::max(last_added->selection_anchor->column, last_added->position.column);
-        }
-        std::optional<editor::SelectionRange> fresh;
-        for (std::size_t hops = 0; hops <= taken.size(); ++hops) {
-          const auto next = FindNextLiteralMatchAfterSeedWrapOnce(
-              lines, seed_line, seed_start, seed_end, needle_view, case_sensitive);
-          if (!next.has_value() || (next->line == sel->start.line && next->column == a)) {
-            break;  // wrapped back to the primary: every occurrence is a caret already
-          }
-          const editor::SelectionRange range{
-              editor::TextPosition{next->line, next->column},
-              editor::TextPosition{next->line, next->column + needle_view.size()},
-          };
-          const bool already_a_caret = std::any_of(
-              taken.begin(), taken.end(),
-              [&](const editor::TextViewportUndoHistory::SecondaryCaret& caret) {
-                return caret.position == range.end && caret.selection_anchor == range.start;
-              });
-          if (!already_a_caret) {
-            fresh = range;
-            break;
-          }
-          seed_line = range.start.line;
-          seed_start = range.start.column;
-          seed_end = range.end.column;
-        }
-        if (fresh.has_value()) {
-          // Add the match as a RANGED secondary caret (anchor at match start,
-          // cursor at match end) so multi-caret typing replaces the occurrence
-          // and copy aggregates it -- VS Code parity. Bare positions through
-          // SetSecondaryCarets would drop the selection anchor. This appends to
-          // and preserves any secondary carets from prior presses.
-          viewport->AddSecondaryCaretWithRange(*fresh);
-        }
-      } else {
-        // Add a ranged cursor at every match in the file, each keeping its
-        // selection so a following keystroke replaces all occurrences at once.
-        // CollectAddCursorMatchRanges folds each line once (not once per match)
-        // and caps the installed carets so a dense single-line match set stays
-        // bounded (TD-2026-07-17A-031).
-        AddCursorMatchScan scan = CollectAddCursorMatchRanges(
-            lines, sel->start.line, a, needle_view, case_sensitive);
-        const std::size_t match_count = scan.ranges.size();
-        const bool truncated = scan.truncated;
-        viewport->SetSecondaryCaretsWithRanges(scan.ranges);
-        if (truncated) {
-          context_.Notify(
-              NotificationService::Tone::Warning,
-              "Added cursors at the first " + std::to_string(match_count) +
-                  " matches (more remain)");
-        }
-      }
-      // The carets are in the editor now, so that is where the next keystroke
-      // belongs. Both chords are reachable while the find widget holds focus
-      // (VS Code's Ctrl+D / Alt+Enter from the find input do the same and hand
-      // focus to the editor); leaving it on the widget put the replacement text
-      // into the search box and left every selected occurrence untouched.
-      context_.Focus(FocusRequestTarget::Editor);
-      context_.NotifyEditorCaretMoved();
-      return DispatchResult::Handled;
-    }
+    case ActionId::AddCursorAtAllMatches:
+      return ExecuteAddCursorAtMatch(id, args, source, rejection_feedback);
     case ActionId::Fold:
     case ActionId::Unfold:
     case ActionId::ToggleFoldAtCursor:
@@ -905,6 +511,421 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     default:
       return DispatchResult::Unhandled;
   }
+}
+
+ActionCoordinator::DispatchResult ActionCoordinator::ExecuteAddCursorAtMatch(ActionId id,
+                                                                             const std::vector<std::string>& /*args*/,
+                                                                             ActionSource /*source*/,
+                                                                             std::string* /*rejection_feedback*/) {
+  if (!SettingEnabled(context_, "editor.multicursor.add_at_match.enabled", true)) {
+    return DispatchResult::Handled;
+  }
+  auto* viewport = context_.ActiveEditableViewport();
+  if (viewport == nullptr)
+    return DispatchResult::Handled;
+  // No selection: the word under the caret becomes the needle. For the
+  // next-match chord that IS the first press (VS Code's Ctrl+D selects the
+  // word and stops; the next press adds the next occurrence); select-all
+  // goes on to take every occurrence at once.
+  if (!viewport->has_selection()) {
+    viewport->SelectWordAtCursor();
+    if (id == ActionId::AddCursorAtNextMatch) {
+      context_.NotifyEditorCaretMoved();
+      return DispatchResult::Handled;
+    }
+  }
+  auto sel = viewport->selection_range();
+  if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
+    return DispatchResult::Handled;
+  }
+  // Scan through the piece tree's zero-copy LineView rather than snapshotting
+  // the whole document into a vector<std::string> on every press.
+  const editor::TextBuffer& lines = viewport->lines();
+  if (sel->start.line >= lines.LineCount())
+    return DispatchResult::Handled;
+  const std::string_view line = lines.LineView(sel->start.line);
+  std::size_t a = std::min(sel->start.column, sel->end.column);
+  std::size_t b = std::max(sel->start.column, sel->end.column);
+  if (b > line.size())
+    return DispatchResult::Handled;
+  const std::string needle(line.substr(a, b - a));
+  if (needle.empty())
+    return DispatchResult::Handled;
+  const std::string_view needle_view = needle;
+  const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
+  if (id == ActionId::AddCursorAtNextMatch) {
+    // Each press adds the next occurrence that is not a caret yet, walking
+    // forward from the one the previous press added (VS Code's Ctrl+D). The
+    // search is seeded from the primary selection and wraps once; it used to
+    // stop there, so the third press re-found the second press's match and
+    // the dedupe swallowed it -- two carets was the most the chord could make.
+    const std::span<const editor::TextViewportUndoHistory::SecondaryCaret> taken =
+        viewport->secondary_caret_range_view();
+    std::size_t seed_line = sel->start.line;
+    std::size_t seed_start = a;
+    std::size_t seed_end = b;
+    // The presses so far took a prefix of the occurrences in cyclic document
+    // order from the primary, so the one added last is the farthest along
+    // that order: the last caret before the primary if the walk has wrapped,
+    // else the last caret after it. Seeding there makes a press one search;
+    // the hop loop below only has to skip carets placed by other means.
+    const editor::TextPosition primary_start{sel->start.line, a};
+    const auto precedes = [](const editor::TextPosition& lhs, const editor::TextPosition& rhs) {
+      return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
+    };
+    const editor::TextViewportUndoHistory::SecondaryCaret* last_added = nullptr;
+    bool wrapped = false;
+    for (const auto& caret : taken) {
+      if (!caret.selection_anchor.has_value()) {
+        continue;
+      }
+      const bool before_primary = precedes(caret.position, primary_start);
+      if (last_added == nullptr || (before_primary && !wrapped) ||
+          (before_primary == wrapped && precedes(last_added->position, caret.position))) {
+        last_added = &caret;
+        wrapped = before_primary;
+      }
+    }
+    if (last_added != nullptr && last_added->selection_anchor->line == last_added->position.line) {
+      seed_line = last_added->position.line;
+      seed_start = std::min(last_added->selection_anchor->column, last_added->position.column);
+      seed_end = std::max(last_added->selection_anchor->column, last_added->position.column);
+    }
+    std::optional<editor::SelectionRange> fresh;
+    for (std::size_t hops = 0; hops <= taken.size(); ++hops) {
+      const auto next =
+          FindNextLiteralMatchAfterSeedWrapOnce(lines, seed_line, seed_start, seed_end, needle_view, case_sensitive);
+      if (!next.has_value() || (next->line == sel->start.line && next->column == a)) {
+        break;  // wrapped back to the primary: every occurrence is a caret already
+      }
+      const editor::SelectionRange range{
+          editor::TextPosition{next->line, next->column},
+          editor::TextPosition{next->line, next->column + needle_view.size()},
+      };
+      const bool already_a_caret =
+          std::any_of(taken.begin(), taken.end(), [&](const editor::TextViewportUndoHistory::SecondaryCaret& caret) {
+            return caret.position == range.end && caret.selection_anchor == range.start;
+          });
+      if (!already_a_caret) {
+        fresh = range;
+        break;
+      }
+      seed_line = range.start.line;
+      seed_start = range.start.column;
+      seed_end = range.end.column;
+    }
+    if (fresh.has_value()) {
+      // Add the match as a RANGED secondary caret (anchor at match start,
+      // cursor at match end) so multi-caret typing replaces the occurrence
+      // and copy aggregates it -- VS Code parity. Bare positions through
+      // SetSecondaryCarets would drop the selection anchor. This appends to
+      // and preserves any secondary carets from prior presses.
+      viewport->AddSecondaryCaretWithRange(*fresh);
+    }
+  } else {
+    // Add a ranged cursor at every match in the file, each keeping its
+    // selection so a following keystroke replaces all occurrences at once.
+    // CollectAddCursorMatchRanges folds each line once (not once per match)
+    // and caps the installed carets so a dense single-line match set stays
+    // bounded (TD-2026-07-17A-031).
+    AddCursorMatchScan scan = CollectAddCursorMatchRanges(lines, sel->start.line, a, needle_view, case_sensitive);
+    const std::size_t match_count = scan.ranges.size();
+    const bool truncated = scan.truncated;
+    viewport->SetSecondaryCaretsWithRanges(scan.ranges);
+    if (truncated) {
+      context_.Notify(NotificationService::Tone::Warning,
+                      "Added cursors at the first " + std::to_string(match_count) + " matches (more remain)");
+    }
+  }
+  // The carets are in the editor now, so that is where the next keystroke
+  // belongs. Both chords are reachable while the find widget holds focus
+  // (VS Code's Ctrl+D / Alt+Enter from the find input do the same and hand
+  // focus to the editor); leaving it on the widget put the replacement text
+  // into the search box and left every selected occurrence untouched.
+  context_.Focus(FocusRequestTarget::Editor);
+  context_.NotifyEditorCaretMoved();
+  return DispatchResult::Handled;
+}
+
+ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSortLines(ActionId id,
+                                                                      const std::vector<std::string>& /*args*/,
+                                                                      ActionSource /*source*/,
+                                                                      std::string* /*rejection_feedback*/) {
+  auto* viewport = context_.ActiveEditableViewport();
+  if (viewport == nullptr)
+    return DispatchResult::Handled;
+  if (const char* gate = ShapingActionGateSettingKey(id); gate != nullptr && !SettingEnabled(context_, gate, true)) {
+    return DispatchResult::Handled;
+  }
+  bool changed = false;
+  switch (id) {
+    case ActionId::ToggleLineComment: {
+      // Comment markers are language-dependent: read them from the buffer's
+      // resolved language contract (populated by ApplyEditorPreferences on
+      // open/language change), falling back to C-style when a language
+      // provides none.
+      const editor::LanguageContractView& lc = viewport->language_contract_view();
+      const std::string_view line_marker =
+          lc.line_comment.empty() ? std::string_view("//") : std::string_view(lc.line_comment);
+      changed = editor::ToggleLineComment(*viewport, line_marker);
+      break;
+    }
+    case ActionId::ToggleBlockComment: {
+      const editor::LanguageContractView& lc = viewport->language_contract_view();
+      const bool has_block = !lc.block_comment_open.empty() && !lc.block_comment_close.empty();
+      const std::string_view open = has_block ? std::string_view(lc.block_comment_open) : std::string_view("/*");
+      const std::string_view close = has_block ? std::string_view(lc.block_comment_close) : std::string_view("*/");
+      changed = editor::ToggleBlockComment(*viewport, open, close);
+      break;
+    }
+    case ActionId::MoveLineUp:
+      changed = editor::MoveLineUp(*viewport);
+      break;
+    case ActionId::MoveLineDown:
+      changed = editor::MoveLineDown(*viewport);
+      break;
+    case ActionId::DuplicateLine:
+      changed = editor::CopyLines(*viewport, /*downward=*/true);
+      break;
+    case ActionId::CopyLineUp:
+      changed = editor::CopyLines(*viewport, /*downward=*/false);
+      break;
+    case ActionId::InsertLineBelow:
+      changed = editor::InsertLineBelow(*viewport);
+      break;
+    case ActionId::InsertLineAbove:
+      changed = editor::InsertLineAbove(*viewport);
+      break;
+    case ActionId::DeleteLine:
+      changed = editor::DeleteLine(*viewport);
+      break;
+    case ActionId::IndentLines:
+      changed = editor::IndentSelection(*viewport);
+      break;
+    case ActionId::OutdentLines:
+      changed = editor::OutdentSelection(*viewport);
+      break;
+    case ActionId::JoinLines:
+      changed = editor::JoinLinesAtCarets(*viewport);
+      break;
+    case ActionId::SortLinesAscending:
+      changed = editor::SortLines(*viewport, /*ascending=*/true);
+      break;
+    case ActionId::SortLinesDescending:
+      changed = editor::SortLines(*viewport, /*ascending=*/false);
+      break;
+    default:
+      break;
+  }
+  if (changed) {
+    context_.NotifyEditorViewportChanged(/*last_change=*/true);
+  }
+  return DispatchResult::Handled;
+}
+
+ActionCoordinator::DispatchResult ActionCoordinator::ExecutePointer(ActionId /*id*/,
+                                                                    const std::vector<std::string>& args,
+                                                                    ActionSource /*source*/,
+                                                                    std::string* rejection_feedback) {
+  const auto reject = RejectInto(rejection_feedback);
+  // `pointer [mods+]<verb> <x> <y> ...`: the mouse, for a driver with no
+  // window-system input to send (a Wayland session, an agent) -- x and y in
+  // layout units, the coordinates `ui` reports. Every verb moves the pointer
+  // there first, as a real hand would; `move x y left` is a drag step.
+  static constexpr std::string_view kUsage =
+      "usage: pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks], "
+      "or pointer drop <x> <y> <path>";
+  if (args.size() < 3) {
+    return reject(std::string(kUsage));
+  }
+  const std::string_view chord = args[0];
+  const std::size_t plus = chord.rfind('+');
+  const std::string verb = util::ToLowerAscii(plus == std::string_view::npos ? chord : chord.substr(plus + 1));
+  SDL_Keymod modifiers = SDL_KMOD_NONE;
+  if (plus != std::string_view::npos) {
+    // The modifier prefix spelled as for `key`, on a stand-in key.
+    SDL_Keycode ignored = SDLK_UNKNOWN;
+    if (!ParseKeyChord(std::string(chord.substr(0, plus + 1)) + "a", &ignored, &modifiers)) {
+      return reject(std::string(kUsage));
+    }
+  }
+  const std::optional<float> x = util::ParseFloat(args[1]);
+  const std::optional<float> y = util::ParseFloat(args[2]);
+  if (!x.has_value() || !y.has_value()) {
+    return reject("pointer: x and y are numbers (layout units)");
+  }
+  const auto parse_button = [](std::string_view name) -> std::optional<Uint8> {
+    const std::string lower = util::ToLowerAscii(name);
+    if (lower == "left" || lower == "1")
+      return SDL_BUTTON_LEFT;
+    if (lower == "middle" || lower == "2")
+      return SDL_BUTTON_MIDDLE;
+    if (lower == "right" || lower == "3")
+      return SDL_BUTTON_RIGHT;
+    return std::nullopt;
+  };
+  std::optional<Uint8> button;
+  if (args.size() > 3 && verb != "wheel" && verb != "drop") {
+    button = parse_button(args[3]);
+    if (!button.has_value()) {
+      return reject("pointer: button is left, middle or right");
+    }
+  }
+  int clicks = 1;
+  if (args.size() > 4) {
+    const std::optional<int> parsed = util::ParseInt(args[4]);
+    if (!parsed.has_value() || *parsed < 1 || *parsed > 3) {
+      return reject("pointer: clicks must be 1-3");
+    }
+    clicks = *parsed;
+  }
+  const auto move = [&](SDL_MouseButtonFlags held) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = *x;
+    event.motion.y = *y;
+    event.motion.state = held;
+    context_.InjectPointerEvent(event, modifiers);
+  };
+  const auto press = [&](Uint8 which, bool down, int count) {
+    SDL_Event event{};
+    event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+    event.button.button = which;
+    event.button.down = down;
+    event.button.clicks = static_cast<Uint8>(count);
+    event.button.x = *x;
+    event.button.y = *y;
+    context_.InjectPointerEvent(event, modifiers);
+  };
+  if (verb == "move") {
+    move(button.has_value() ? SDL_BUTTON_MASK(*button) : 0);
+  } else if (verb == "down" || verb == "up" || verb == "click") {
+    const Uint8 which = button.value_or(SDL_BUTTON_LEFT);
+    move(verb == "up" ? SDL_BUTTON_MASK(which) : 0);
+    if (verb == "click") {
+      // A double click is two presses, the second counted 2: what SDL sends.
+      for (int count = 1; count <= clicks; ++count) {
+        press(which, /*down=*/true, count);
+        press(which, /*down=*/false, count);
+      }
+    } else {
+      press(which, verb == "down", clicks);
+    }
+  } else if (verb == "drop") {
+    // A file dragged in from another application and released here.
+    if (args.size() < 4 || args[3].empty()) {
+      return reject("usage: pointer drop <x> <y> <path>");
+    }
+    move(0);
+    SDL_Event event{};
+    event.type = SDL_EVENT_DROP_FILE;
+    event.drop.x = *x;
+    event.drop.y = *y;
+    event.drop.data = args[3].c_str();
+    context_.InjectPointerEvent(event, modifiers);
+  } else if (verb == "wheel") {
+    const std::optional<int> notches = args.size() > 3 ? util::ParseInt(args[3]) : std::optional<int>(1);
+    if (!notches.has_value() || *notches == 0 || *notches < -100 || *notches > 100) {
+      return reject("pointer: wheel notches are -100..100, not 0 (positive scrolls down)");
+    }
+    move(0);
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_WHEEL;
+    event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+    // SDL's y is positive away from the user (up); a notch down is -1.
+    event.wheel.y = static_cast<float>(-*notches);
+    event.wheel.integer_y = -*notches;
+    event.wheel.mouse_x = *x;
+    event.wheel.mouse_y = *y;
+    context_.InjectPointerEvent(event, modifiers);
+  } else {
+    return reject(std::string(kUsage));
+  }
+  return DispatchResult::Handled;
+}
+
+ActionCoordinator::DispatchResult ActionCoordinator::ExecuteFormatJson(ActionId /*id*/,
+                                                                       const std::vector<std::string>& args,
+                                                                       ActionSource /*source*/,
+                                                                       std::string* /*rejection_feedback*/) {
+  // Optional path argument: open/focus that file first (resolved against the
+  // project root like `open`), then format its buffer. With no argument the
+  // command targets the active buffer. Feedback surfaces via toast per the
+  // command's contract; disk is never touched (the edit stays in memory).
+  if (!args.empty()) {
+    if (!context_.HasProjectRoot()) {
+      context_.Notify(NotificationService::Tone::Error, "No active project");
+      return DispatchResult::Handled;
+    }
+    const std::optional<OpenPathRequest> request = BuildOpenPathRequest(args, context_.ProjectRoot());
+    if (!request.has_value()) {
+      context_.Notify(NotificationService::Tone::Error, "format-json requires a valid path");
+      return DispatchResult::Handled;
+    }
+    std::string open_error;
+    if (!context_.OpenPath(request->path, &open_error)) {
+      context_.Notify(NotificationService::Tone::Error, open_error.empty() ? "Could not open file" : open_error);
+      return DispatchResult::Handled;
+    }
+  }
+  auto* viewport = context_.ActiveEditableViewport();
+  if (viewport == nullptr) {
+    context_.Notify(NotificationService::Tone::Warning, "No active buffer to format");
+    return DispatchResult::Handled;
+  }
+  // The piece tree already holds the document '\n'-joined, so take it in one
+  // walk rather than two tree descents per line (which also materializes
+  // every piece-spanning line into the per-line cache on the way).
+  std::string source;
+  viewport->lines().AppendWholeText(source);
+  // Indentation follows the buffer's own editor settings (VSCode-style).
+  const std::string indent_unit =
+      viewport->soft_tabs() ? std::string(viewport->indent_width(), ' ') : std::string("\t");
+  const util::JsonFormatResult formatted = util::FormatJson(source, indent_unit);
+  if (!formatted.ok) {
+    // Byte offset -> 1-based line:col for a helpful toast.
+    std::size_t line = 1;
+    std::size_t col = 1;
+    for (std::size_t i = 0; i < formatted.error_offset && i < source.size(); ++i) {
+      if (source[i] == '\n') {
+        ++line;
+        col = 1;
+      } else {
+        ++col;
+      }
+    }
+    context_.Notify(NotificationService::Tone::Error,
+                    "Invalid JSON (" + std::to_string(line) + ":" + std::to_string(col) + "): " + formatted.error);
+    return DispatchResult::Handled;
+  }
+  if (formatted.text == source) {
+    // Already formatted: no edit, no undo churn (VSCode is silent here).
+    return DispatchResult::Handled;
+  }
+  // Replace the whole document as one undo step (the same whole-document
+  // replace path editor::SortLines uses). The formatter emits '\n'-joined
+  // lines with no trailing newline.
+  std::vector<std::string> new_lines;
+  {
+    std::size_t start = 0;
+    const std::string& text = formatted.text;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+      if (i == text.size() || text[i] == '\n') {
+        new_lines.emplace_back(text.substr(start, i - start));
+        start = i + 1;
+      }
+    }
+  }
+  // A whole-document replace snaps the caret to the top; keep the user's
+  // line (clamped) so formatting does not scroll them away from their spot.
+  const std::size_t caret_line = viewport->cursor_line();
+  const std::size_t caret_column = viewport->cursor_column();
+  if (viewport->ReplaceLines(0, viewport->line_count(), std::move(new_lines),
+                             /*record_undo=*/true)) {
+    viewport->JumpCursorTo(std::min(caret_line, viewport->line_count() - 1), caret_column);
+    context_.NotifyEditorViewportChanged(/*last_change=*/true);
+  }
+  return DispatchResult::Handled;
 }
 
 }  // namespace microide::workspace
