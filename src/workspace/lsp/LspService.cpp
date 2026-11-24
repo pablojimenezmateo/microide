@@ -189,56 +189,40 @@ void LspService::ReconcileFeatureSettings() {
     }
   }
 
-  // Semantic highlighting: clear on disable; re-request on enable (unless the master
-  // off->on reopen above already covered it).
-  if (!semantic && prev.semantic) {
-    semantic_token_generation_.clear();
-    if (state.plugin_presentation != nullptr &&
-        state.plugin_presentation->decorations.ClearOwner("lsp:semantic")) {
-      state.MaybeReleasePluginPresentation();
-      operations_.request_frame();
+  // Semantic tokens, inlay hints and code lenses: each toggle clears its overlay on
+  // disable and re-pulls it for the active document on enable (unless the master
+  // off->on reopen above already covered it). All three are pull-based, so without
+  // the re-pull they would stay blank until an unrelated didOpen/save.
+  const auto apply_overlay_toggle = [&](bool enabled, bool was_enabled, std::string_view owner,
+                                        const auto& forget, const auto& request) {
+    if (!enabled && was_enabled) {
+      if (state.plugin_presentation != nullptr &&
+          state.plugin_presentation->decorations.ClearOwner(owner)) {
+        state.MaybeReleasePluginPresentation();
+        operations_.request_frame();
+      }
+      forget();
+    } else if (enabled && !was_enabled && !master_turned_on && has_active) {
+      std::string language_id;
+      if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
+        EnsureLspDocumentOpen(*viewport, *client, language_id);
+        request(*client);
+      }
     }
-  } else if (semantic && !prev.semantic && !master_turned_on && has_active) {
-    std::string language_id;
-    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
-      EnsureLspDocumentOpen(*viewport, *client, language_id);
-      RequestLspSemanticTokens(*viewport, *client);
-    }
-  }
-
-  // Inlay hints and code lenses mirror semantic tokens: their own toggle clears
-  // the overlay on disable and re-pulls it on enable. Both are pull-based, so
-  // without the re-pull they would stay blank until an unrelated didOpen/save.
-  if (!inlay && prev.inlay) {
-    if (state.plugin_presentation != nullptr &&
-        state.plugin_presentation->decorations.ClearOwner("lsp:inlay")) {
-      state.MaybeReleasePluginPresentation();
-      operations_.request_frame();
-    }
-    inlay_hint_generation_.clear();
-  } else if (inlay && !prev.inlay && !master_turned_on && has_active) {
-    std::string language_id;
-    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
-      EnsureLspDocumentOpen(*viewport, *client, language_id);
-      RequestLspInlayHints(*viewport, *client);
-    }
-  }
-
-  if (!code_lens && prev.code_lens) {
-    if (state.plugin_presentation != nullptr &&
-        state.plugin_presentation->decorations.ClearOwner("lsp:codelens")) {
-      state.MaybeReleasePluginPresentation();
-      operations_.request_frame();
-    }
-    code_lens_generation_.clear();
-    code_lens_commands_.clear();
-  } else if (code_lens && !prev.code_lens && !master_turned_on && has_active) {
-    std::string language_id;
-    if (LspClient* client = LspClientForViewport(*viewport, &language_id); client != nullptr) {
-      EnsureLspDocumentOpen(*viewport, *client, language_id);
-      RequestLspCodeLenses(*viewport, *client);
-    }
-  }
+  };
+  apply_overlay_toggle(
+      semantic, prev.semantic, "lsp:semantic", [this]() { semantic_token_generation_.clear(); },
+      [&](LspClient& client) { RequestLspSemanticTokens(*viewport, client); });
+  apply_overlay_toggle(
+      inlay, prev.inlay, "lsp:inlay", [this]() { inlay_hint_generation_.clear(); },
+      [&](LspClient& client) { RequestLspInlayHints(*viewport, client); });
+  apply_overlay_toggle(
+      code_lens, prev.code_lens, "lsp:codelens",
+      [this]() {
+        code_lens_generation_.clear();
+        code_lens_commands_.clear();
+      },
+      [&](LspClient& client) { RequestLspCodeLenses(*viewport, client); });
 
   // Semantic occurrence highlights need no re-request on enable: the next presented
   // frame re-asks for the caret's symbol on its own. Turning them off just drops the
