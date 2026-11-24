@@ -351,6 +351,61 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderMergeSurface::SideRows");
   const bool wrapped = merge_tab->wrap_layout.active();
   const float char_width_px = editor_text_renderer_.CharWidth();
+  // One side pane's row: incoming on the left, current on the right. They differ
+  // only in geometry, source lines, token window, scratch row and the tint of a
+  // valid conflict.
+  struct MergeSideRow {
+    const std::vector<std::string_view>* lines = nullptr;
+    const MergeTrackedConflict* conflict = nullptr;
+    bool selected = false;
+    bool present = false;
+    float pane_x = 0.0f;
+    float pane_width = 0.0f;
+    std::size_t indent = 0;
+    std::size_t visual_start = 0;
+    std::size_t visual_end = 0;
+    SDL_Color valid_conflict_tint{};
+  };
+  const auto paint_side_row = [&](const MergeSideRow& side, const SurfaceTokenWindow& token_window,
+                                  editor::DecoratedTextRow& scratch_row, std::size_t line_index,
+                                  bool first_wrap_row, float y) {
+    if (line_index >= side.lines->size() || !side.present) {
+      return;
+    }
+    const SDL_Color base = side.selected ? theme_.row_highlight : theme_.editor_background;
+    const SDL_Color background =
+        side.conflict != nullptr
+            ? render::BlendColors(base, side.conflict->valid ? side.valid_conflict_tint : theme_.diff_deleted,
+                                  side.selected ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
+            : base;
+    editor::RowDecorationInput input;
+    input.text_x = side.pane_x + surface.gutter_width + static_cast<float>(side.indent) * char_width_px;
+    input.y = y;
+    input.char_width = char_width_px;
+    input.line_height = surface.line_height;
+    input.row_visual_start = side.visual_start;
+    input.row_visual_end = side.visual_end;
+    input.text = (*side.lines)[line_index];
+    input.line_length = input.text.size();
+    input.tokens = &token_window.Tokens(line_index);
+    input.plain_color = side.selected ? theme_.text_primary : theme_.text_secondary;
+    input.has_background_fill = true;
+    input.background_fill = editor::DecoratedTextFill{
+        .rect = MakeRect(side.pane_x, y - 1.0f, surface.gutter_width + side.pane_width,
+                         surface.line_height),
+        .color = background,
+    };
+    input.text_renderer = &editor_text_renderer_;
+    input.theme = &theme_;
+    editor::BuildDecoratedRow(scratch_row, input);
+    kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, scratch_row);
+    if (first_wrap_row) {
+      std::array<char, 20> line_number_buf;
+      editor_text_renderer_.DrawString(
+          renderer, side.pane_x, y, side.selected ? theme_.current_line_number : theme_.line_number,
+          FormatLineNumber(line_index + 1, line_number_buf));
+    }
+  };
   for (int row = 0; row < surface.visible_rows; ++row) {
     const std::size_t visual_row =
         static_cast<std::size_t>(std::max(0, merge_tab->scroll_row + row));
@@ -364,107 +419,40 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
         conflict_at_source_row(visual_row, true);
     const std::optional<std::size_t> current_conflict_index =
         conflict_at_source_row(visual_row, false);
-    const MergeTrackedConflict* incoming_conflict =
-        incoming_conflict_index.has_value() ? &merge_tab->conflicts[*incoming_conflict_index]
-                                            : nullptr;
-    const MergeTrackedConflict* current_conflict =
-        current_conflict_index.has_value() ? &merge_tab->conflicts[*current_conflict_index]
-                                           : nullptr;
-    const bool selected_incoming =
-        incoming_conflict_index.has_value() && *incoming_conflict_index == selected_hunk;
-    const bool selected_current =
-        current_conflict_index.has_value() && *current_conflict_index == selected_hunk;
-    const std::size_t left_row_start = wrapped ? wrap_row.left_start : merge_tab->horizontal_scroll;
-    const std::size_t left_row_end =
-        wrapped ? wrap_row.left_end : merge_tab->horizontal_scroll + surface.visible_columns;
-    const std::size_t right_row_start =
-        wrapped ? wrap_row.right_start : merge_tab->horizontal_scroll;
-    const std::size_t right_row_end =
-        wrapped ? wrap_row.right_end : merge_tab->horizontal_scroll + surface.visible_columns;
-
-    if (line_index < merge_tab->model.incoming_lines.size() && wrap_row.left_present) {
-      std::array<char, 20> line_number_buf;
-      const SDL_Color background =
-          incoming_conflict != nullptr
-              ? render::BlendColors(selected_incoming ? theme_.row_highlight : theme_.editor_background,
-                           incoming_conflict->valid ? theme_.diff_added : theme_.diff_deleted,
-                           selected_incoming ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
-              : (selected_incoming ? theme_.row_highlight : theme_.editor_background);
-      const SDL_Color number_color =
-          selected_incoming ? theme_.current_line_number : theme_.line_number;
-      const std::vector<editor::SyntaxTokenKind>& tokens =
-          merge_tab->incoming_token_window.Tokens(line_index);
-      editor::RowDecorationInput incoming_input;
-      incoming_input.text_x = surface.left_x + surface.gutter_width +
-                              static_cast<float>(wrap_row.left_indent) * char_width_px;
-      incoming_input.y = y;
-      incoming_input.char_width = char_width_px;
-      incoming_input.line_height = surface.line_height;
-      incoming_input.row_visual_start = left_row_start;
-      incoming_input.row_visual_end = left_row_end;
-      incoming_input.text = merge_tab->model.incoming_lines[line_index];
-      incoming_input.line_length = incoming_input.text.size();
-      incoming_input.tokens = &tokens;
-      incoming_input.plain_color =
-          selected_incoming ? theme_.text_primary : theme_.text_secondary;
-      incoming_input.has_background_fill = true;
-      incoming_input.background_fill = editor::DecoratedTextFill{
-          .rect = MakeRect(surface.left_x, y - 1.0f,
-                           surface.gutter_width + surface.left_width, surface.line_height),
-          .color = background,
-      };
-      incoming_input.text_renderer = &editor_text_renderer_;
-      incoming_input.theme = &theme_;
-      editor::DecoratedTextRow& incoming_row = merge_incoming_scratch_row_;
-      editor::BuildDecoratedRow(incoming_row, incoming_input);
-      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, incoming_row);
-      if (wrap_row.first) {
-        editor_text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
-                                  FormatLineNumber(line_index + 1, line_number_buf));
-      }
-    }
-
-    if (line_index < merge_tab->model.current_lines.size() && wrap_row.right_present) {
-      std::array<char, 20> line_number_buf;
-      const SDL_Color background =
-          current_conflict != nullptr
-              ? render::BlendColors(selected_current ? theme_.row_highlight : theme_.editor_background,
-                           current_conflict->valid ? theme_.diff_modified : theme_.diff_deleted,
-                           selected_current ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
-              : (selected_current ? theme_.row_highlight : theme_.editor_background);
-      const SDL_Color number_color =
-          selected_current ? theme_.current_line_number : theme_.line_number;
-      const std::vector<editor::SyntaxTokenKind>& tokens =
-          merge_tab->current_token_window.Tokens(line_index);
-      editor::RowDecorationInput current_input;
-      current_input.text_x = surface.right_x + surface.gutter_width +
-                             static_cast<float>(wrap_row.right_indent) * char_width_px;
-      current_input.y = y;
-      current_input.char_width = char_width_px;
-      current_input.line_height = surface.line_height;
-      current_input.row_visual_start = right_row_start;
-      current_input.row_visual_end = right_row_end;
-      current_input.text = merge_tab->model.current_lines[line_index];
-      current_input.line_length = current_input.text.size();
-      current_input.tokens = &tokens;
-      current_input.plain_color =
-          selected_current ? theme_.text_primary : theme_.text_secondary;
-      current_input.has_background_fill = true;
-      current_input.background_fill = editor::DecoratedTextFill{
-          .rect = MakeRect(surface.right_x, y - 1.0f,
-                           surface.gutter_width + surface.right_width, surface.line_height),
-          .color = background,
-      };
-      current_input.text_renderer = &editor_text_renderer_;
-      current_input.theme = &theme_;
-      editor::DecoratedTextRow& current_row = merge_current_scratch_row_;
-      editor::BuildDecoratedRow(current_row, current_input);
-      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, current_row);
-      if (wrap_row.first) {
-        editor_text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
-                                  FormatLineNumber(line_index + 1, line_number_buf));
-      }
-    }
+    const MergeSideRow incoming{
+        .lines = &merge_tab->model.incoming_lines,
+        .conflict = incoming_conflict_index.has_value()
+                        ? &merge_tab->conflicts[*incoming_conflict_index]
+                        : nullptr,
+        .selected = incoming_conflict_index.has_value() && *incoming_conflict_index == selected_hunk,
+        .present = wrap_row.left_present,
+        .pane_x = surface.left_x,
+        .pane_width = surface.left_width,
+        .indent = wrap_row.left_indent,
+        .visual_start = wrapped ? wrap_row.left_start : merge_tab->horizontal_scroll,
+        .visual_end = wrapped ? wrap_row.left_end
+                              : merge_tab->horizontal_scroll + surface.visible_columns,
+        .valid_conflict_tint = theme_.diff_added,
+    };
+    const MergeSideRow current{
+        .lines = &merge_tab->model.current_lines,
+        .conflict = current_conflict_index.has_value()
+                        ? &merge_tab->conflicts[*current_conflict_index]
+                        : nullptr,
+        .selected = current_conflict_index.has_value() && *current_conflict_index == selected_hunk,
+        .present = wrap_row.right_present,
+        .pane_x = surface.right_x,
+        .pane_width = surface.right_width,
+        .indent = wrap_row.right_indent,
+        .visual_start = wrapped ? wrap_row.right_start : merge_tab->horizontal_scroll,
+        .visual_end = wrapped ? wrap_row.right_end
+                              : merge_tab->horizontal_scroll + surface.visible_columns,
+        .valid_conflict_tint = theme_.diff_modified,
+    };
+    paint_side_row(incoming, merge_tab->incoming_token_window, merge_incoming_scratch_row_,
+                   line_index, wrap_row.first, y);
+    paint_side_row(current, merge_tab->current_token_window, merge_current_scratch_row_,
+                   line_index, wrap_row.first, y);
   }
   }
 
