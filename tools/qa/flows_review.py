@@ -71,7 +71,7 @@ def flow_review_marks(app: q.App) -> None:
     if not app.wayland:  # no screen to read on a headless weston (App.grab)
         changed = _differs(before, _editor_image(app))
         app.expect(changed > 0, f"the diff draws the hunk's reviewed marker ({changed} pixels changed)")
-    app.expect(app.send("branch-review-note", "checked the loop").get("ok") is True, "a note on the hunk runs")
+    app.expect(app.send("branch-review-comment", "checked the loop").get("ok") is True, "a note on the hunk runs")
     app.wait_until(lambda: _diff_tab(app).get("notedHunks") == 1, 3.0, "the note to count")
     app.send("unmark-branch-hunk-reviewed")
     app.wait_until(lambda: _diff_tab(app).get("reviewedHunks") == 0, 3.0, "the hunk to be unmarked")
@@ -164,7 +164,79 @@ def flow_git_unstage_and_push(app: q.App) -> None:
     step(app, "pushed", 0.3)
 
 
+def flow_review_controls(app: q.App) -> None:
+    """The review done with the mouse alone, on the diff's own controls
+    (render/CompareReviewControls): the selected change's Mark Reviewed marks it
+    and becomes Unmark; Next Change moves the buttons to the second change;
+    Comment opens the prompt, and what is typed shows as a row under the change
+    with Edit and Delete; Delete removes it; Mark File Reviewed marks every
+    change. Then the status bar counts a linked worktree, and a click on it opens
+    Switch Worktree."""
+    app.send("set-setting", "editor.caret_blink.enabled", "false")
+    # The file on main first, then the agent's two changes to it on a branch: two
+    # hunks far enough apart that the run between them collapses.
+    write(app, "controls/calc.txt", "".join(f"line {i}\n" for i in range(1, 31)))
+    git(app, "add", "-A")
+    git(app, "commit", "-q", "-m", "qa: controls base")
+    git(app, "checkout", "-q", "-b", "qa-controls")
+    write(app, "controls/calc.txt",
+          "".join(f"changed {i}\n" if i in (3, 25) else f"line {i}\n" for i in range(1, 31)))
+    git(app, "add", "-A")
+    git(app, "commit", "-q", "-m", "qa: controls fixture")
+    app.key("ctrl+shift+g")
+    if not app.wait_for("row:git/calc.txt", 5.0):
+        app.expect(False, "the git view lists the outgoing file")
+        return
+    app.click_named("row:git/calc.txt")
+    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "calc.txt's outgoing diff")
+    if not app.wait_for("button:compare/hunk-0/toggle-reviewed", 5.0):
+        app.expect(False, "the selected change shows Mark Reviewed")
+        return
+    step(app, "review controls", 0.4)
+
+    app.click_named("button:compare/hunk-0/toggle-reviewed")
+    app.wait_until(lambda: _diff_tab(app).get("reviewedHunks") == 1, 3.0, "the click to mark the change")
+    app.expect(app.element("button:compare/hunk-0/toggle-reviewed").get("label") == "Unmark",
+               "a marked change offers Unmark")
+    app.click_named("button:compare/next-change")
+    app.wait_for("button:compare/hunk-1/comment", 3.0)
+    step(app, "next change", 0.3)
+
+    app.click_named("button:compare/hunk-1/comment")
+    app.wait_until(lambda: app.ui().get("modal") is not None, 3.0, "the comment prompt")
+    app.type("check the upper bound")
+    app.key("Return")
+    app.wait_until(lambda: _diff_tab(app).get("notedHunks") == 1, 3.0, "the comment to be kept")
+    edit = app.wait_for("button:compare/note-1/edit", 3.0) or {}
+    app.expect(edit.get("label") == "check the upper bound", f"the comment shows under its change ({edit})")
+    step(app, "comment row", 0.3)
+    reply = app.send("copy-review-comments")
+    app.expect(reply.get("ok") is True, f"the comment can be handed over ({reply})")
+    app.click_named("button:compare/note-1/delete")
+    app.wait_until(lambda: _diff_tab(app).get("notedHunks") == 0, 3.0, "Delete to remove the comment")
+
+    app.click_named("button:compare/file-reviewed")
+    app.wait_until(lambda: _diff_tab(app).get("reviewedHunks") == 2, 3.0, "Mark File Reviewed to mark both")
+    app.click_named("button:compare/file-reviewed")
+    app.wait_until(lambda: _diff_tab(app).get("reviewedHunks") == 0, 3.0, "Unmark File to take them back")
+    step(app, "file unmarked", 0.3)
+
+    assert app.project is not None
+    tree = app.project.parent / "qa-controls-tree"
+    git(app, "worktree", "add", "-q", "-b", "qa-controls-tree", str(tree))
+    app.send("git-refresh")
+    segment = app.wait_for("status:worktrees", 5.0) or {}
+    app.expect(segment.get("label") == "2 worktrees", f"the status bar counts the linked tree ({segment})")
+    if segment:
+        app.click_named("status:worktrees")
+        app.wait_until(lambda: app.ui().get("overlay", {}).get("visible") is True, 5.0,
+                       "a click on it to open Switch Worktree")
+        app.key("Escape")
+    git(app, "worktree", "remove", "--force", str(tree))
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "review-marks": flow_review_marks,
+    "review-controls": flow_review_controls,
     "git-unstage-and-push": flow_git_unstage_and_push,
 }

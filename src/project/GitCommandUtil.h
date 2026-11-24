@@ -87,6 +87,11 @@ std::optional<std::string> ResolveHeadId(const platform::ProcessLauncher& launch
 inline constexpr std::size_t kMaxGitMetadataLineBytes = 4096;
 std::optional<std::string> ReadFirstLineOfGitFile(const std::filesystem::path& path);
 
+// For a linked worktree, branch refs (and the `worktrees/` list) live in the
+// COMMON git directory, named by `<gitdir>/commondir`. Absent that file (an
+// ordinary checkout), the gitdir IS the common dir. (TD-2026-07-16-63.)
+std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir);
+
 // The repository's git directory: `<root>/.git` when it is a real directory, or
 // the path a `.git` *file* points at (`gitdir: …`, the linked-worktree and
 // submodule layout). Nullopt when `root` has no usable marker.

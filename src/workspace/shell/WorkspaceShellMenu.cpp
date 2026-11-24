@@ -1,3 +1,5 @@
+#include "util/StringUtil.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -468,6 +470,22 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item, bool wi
     const bool staged = git.selected_index < git.entries.size() &&
                         git.entries[git.selected_index].staged;
     return staged ? "Unstage" : "Stage";
+  }
+  // The review-comment exports say how many comments they carry -- the whole
+  // review's, or under the git sidebar row the menu was opened on.
+  if ((item.action == ActionId::CopyBranchReviewNotes || item.action == ActionId::TerminalInsertBranchReviewNotes) &&
+      !item.label.empty()) {
+    const std::size_t count = ReviewCommentCount(context_.current_project_state, ActiveCompareTab(),
+                                                 ReviewCommentMenuScope(context_.menu_state.tree_context_menu));
+    if (count == 0) {
+      return item.label;
+    }
+    thread_local std::string composed;
+    composed.assign(item.label);
+    composed += " (";
+    util::AppendUnsigned(composed, count);
+    composed += ")";
+    return composed;
   }
   const ActionSpec* command_action =
       item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);

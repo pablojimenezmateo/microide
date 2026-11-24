@@ -84,7 +84,7 @@ import x_clipboard as xc
 # verbs that launch external processes. The default profile reads the live
 # catalogue instead (the `commands` query) and excludes FORBIDDEN_COMMANDS.
 MIXED_VERBS = """
-about add-cursor-all-matches add-cursor-next-match branch-review-note breakpoint-clear
+about add-cursor-all-matches add-cursor-next-match branch-review-comment breakpoint-clear
 close-group code-actions colorscheme command-palette compare compare-clipboard compare-files
 completion copy copy-line-down copy-line-up cut delete-line files find find-next find-previous
 find-references focus focus-group-down focus-group-left focus-group-right focus-group-up

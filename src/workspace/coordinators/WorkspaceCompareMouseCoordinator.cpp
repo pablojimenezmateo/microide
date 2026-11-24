@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/ListSelection.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -109,6 +110,18 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     operations_.sync_compare_viewport_scroll(*compare_tab);
     state_.surface.focus = FocusTarget::Editor;
     return true;
+  }
+
+  // The header's buttons and a review's hunk and note buttons: resolved through
+  // the same helper the hover highlight and the cursor shape use.
+  if (event.button.button == SDL_BUTTON_LEFT && operations_.compare_control_at && operations_.run_compare_control) {
+    if (const std::optional<CompareControlHit> hit = operations_.compare_control_at(
+            surface, surface_layout, *compare_tab, static_cast<float>(event.button.x),
+            static_cast<float>(event.button.y));
+        hit.has_value() && operations_.run_compare_control(*compare_tab, *hit)) {
+      state_.surface.focus = FocusTarget::Editor;
+      return true;
+    }
   }
 
   // Reject clicks in the band *above* the first row explicitly: a small negative
@@ -358,7 +371,9 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   }
 
   const std::optional<CompareHoverState> previous_hover = compare_tab->hover_state;
+  const int previous_hover_hunk = CompareHoveredHunk(*compare_tab);
   std::optional<CompareHoverState> next_hover;
+  int next_hover_row = -1;
   if (Contains(surface, event.motion.x, event.motion.y) &&
       !(interaction_state_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
     const auto surface_layout =
@@ -368,6 +383,23 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
     compare_tab->scroll_row = scroll_layout.vertical_scroll;
     compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
     operations_.sync_compare_viewport_scroll(*compare_tab);
+
+    // The hunk under the pointer shows its review buttons; the control under it
+    // highlights.
+    next_hover_row = CompareHoverRowAtY(MakeCompareControlGeometry(surface, surface_layout), *compare_tab,
+                                        static_cast<float>(event.motion.y));
+    if (operations_.compare_control_at) {
+      if (const std::optional<CompareControlHit> control =
+              operations_.compare_control_at(surface, surface_layout, *compare_tab,
+                                             static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+          control.has_value()) {
+        next_hover = CompareHoverState{
+            .kind = control->kind,
+            .presentation_row = control->presentation_row,
+            .hunk = control->hunk,
+        };
+      }
+    }
 
     if (const auto hit = CompareCollapsedContextRowAt(
             *compare_tab, surface, surface_layout.rows_y,
@@ -396,8 +428,13 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   }
 
   compare_tab->hover_state = next_hover;
+  compare_tab->review_hover_visible_row = next_hover_row;
+  const int next_hover_hunk = CompareHoveredHunk(*compare_tab);
+  if (previous_hover_hunk != next_hover_hunk) {
+    operations_.request_frame();  // the hunk's buttons are in its first row's key
+  }
   if (previous_hover == compare_tab->hover_state) {
-    return false;
+    return previous_hover_hunk != next_hover_hunk;
   }
   if (previous_hover.has_value()) {
     operations_.request_frame();
@@ -486,6 +523,16 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
                 return expanded;
               },
           .clear_drag_state = [this]() { ClearDragState(); },
+          .compare_control_at =
+              [this](const SDL_FRect& rect, const CompareSurfaceLayout& surface, const CompareTabState& compare_tab,
+                     float x, float y) {
+                return CompareControlAt(editor_text_renderer_, MakeCompareControlGeometry(rect, surface), compare_tab,
+                                        x, y);
+              },
+          .run_compare_control =
+              [this](CompareTabState& compare_tab, const CompareControlHit& hit) {
+                return MakeCompareReviewService().RunControl(compare_tab, hit);
+              },
       });
   return *glue_->compare_mouse_coordinator;
 }

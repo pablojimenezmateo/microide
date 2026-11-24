@@ -233,10 +233,22 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.tool_id.clear();
   prompts_.surface.capability_scope.clear();
   prompts_.surface.completions.clear();
+  prompts_.surface.review_target = {};
+  prompts_.surface.review_hunk.reset();
+  prompts_.surface.review_replaced_hunk.reset();
   prompts_.surface.button_count = 2;
   prompts_.surface.selected_button = 0;
   state_.surface.focus = FocusTarget::Overlay;
   operations_.request_prompt_redraw();
+}
+
+void PromptSurfaceService::OpenReviewCommentPrompt(ReviewCommentPrompt prompt) {
+  OpenPromptSurface(PromptSurfaceState::Action::ReviewComment, PromptSurfaceState::Kind::TextInput, prompt.path,
+                    std::move(prompt.text));
+  prompts_.surface.review_target = std::move(prompt.target);
+  prompts_.surface.review_hunk = std::move(prompt.hunk);
+  prompts_.surface.review_replaced_hunk = std::move(prompt.replaced_hunk);
+  prompts_.surface.detail = std::move(prompt.detail);
 }
 
 void PromptSurfaceService::OpenConfirmCommandPrompt(std::string command_line, std::string question) {

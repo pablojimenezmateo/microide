@@ -174,6 +174,22 @@ std::optional<std::string> ResolveHeadId(const platform::ProcessLauncher& launch
   return head_id.empty() ? std::nullopt : std::make_optional(std::move(head_id));
 }
 
+std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
+  const std::optional<std::string> line = ReadFirstLineOfGitFile(git_dir / "commondir");
+  if (!line.has_value()) {
+    return git_dir;
+  }
+  const std::string trimmed = util::TrimAsciiWhitespace(*line);
+  if (trimmed.empty()) {
+    return git_dir;
+  }
+  std::filesystem::path resolved(trimmed);
+  if (resolved.is_relative()) {
+    resolved = git_dir / resolved;
+  }
+  return resolved.lexically_normal();
+}
+
 std::optional<std::string> ReadFirstLineOfGitFile(const std::filesystem::path& path) {
   // status() stats without opening, so a special file is rejected before any
   // potentially-blocking stream operation.

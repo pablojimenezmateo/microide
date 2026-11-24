@@ -6,6 +6,7 @@
 #include "util/Fnv1a.h"
 #include "workspace/MergeWrapRows.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/render/EditorRowUnits.h"
 
 namespace microide::workspace {
@@ -156,7 +157,7 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
             static_cast<std::int64_t>(presentation->collapsed_run_start_model_row),
             static_cast<std::int64_t>(presentation->collapsed_run_length), std::int64_t{presentation->context_above},
             std::int64_t{presentation->previous_hunk_index >= 0}, std::int64_t{presentation->next_hunk_index >= 0},
-            std::int64_t{presentation->has_review_note}}) {
+            std::int64_t{presentation->has_review_note}, std::int64_t{presentation->hunk_index}}) {
         content = Mix(content, static_cast<std::uint64_t>(part));
       }
       if (model_row) {
@@ -205,6 +206,20 @@ void AppendCompareRowUnits(const CompareTabState& compare, const CompareRowGeome
     key = Mix(key, wrap.unit == compare.selected_row ? 1u : 2u);
     if (compare.hover_state.has_value() && compare.hover_state->presentation_row == wrap.unit) {
       key = Mix(Mix(key, 0x40), static_cast<std::uint64_t>(compare.hover_state->kind));
+    }
+    // The review controls this row carries (CompareHunkControlsOnRow: a hunk's
+    // first row, or the view's top row inside a longer one): the badge follows
+    // the hunk's mark, the buttons whether it is hovered or selected (the pointer
+    // on ANOTHER row of the hunk shows them here), Comment whether it has a note.
+    if (const int hunk = CompareHunkControlsOnRow(compare, wrap, row); hunk >= 0) {
+      key = Mix(Mix(Mix(Mix(key, 0x4E + static_cast<std::uint64_t>(hunk) * 256u),
+                        static_cast<std::uint64_t>(CompareHunkReviewStatus(compare, hunk))),
+                    CompareHunkShowsReviewButtons(compare, hunk) ? 1u : 2u),
+                CompareHunkHasNote(compare, hunk) ? 1u : 2u);
+    }
+    // A note row's caption says whether its change was edited since.
+    if (presentation->kind == compare::ComparePresentationRowKind::ReviewNote) {
+      key = Mix(key, util::Fnv1aHash(CompareNoteCaption(compare, presentation->hunk_index)));
     }
     if (model_row) {
       const compare::CompareRow& model = compare.model.rows[presentation->model_row_index];

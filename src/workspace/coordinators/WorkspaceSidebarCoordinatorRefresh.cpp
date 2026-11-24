@@ -111,6 +111,7 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
   git_state.upstream_label = snapshot.upstream_label;
   git_state.ahead = snapshot.ahead;
   git_state.behind = snapshot.behind;
+  git_state.worktree_count = snapshot.worktree_count;
   git_state.base_ref = snapshot.base_ref;
   git_state.base_label = snapshot.base_label;
   git_state.snapshot_stale = snapshot.snapshot_stale;

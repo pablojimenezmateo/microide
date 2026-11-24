@@ -27,7 +27,7 @@ class GitRepositoryMetadataTracker {
   std::vector<RepositoryChange> SampleChanges();
   // Every directory whose entries the fingerprint reads: the project root (where
   // `.git` appears or goes), the gitdir (HEAD, index), the common gitdir
-  // (packed-refs) and the directory of the branch ref HEAD names. A change to any
+  // (packed-refs), its `worktrees/` and the directory of the branch ref HEAD names. A change to any
   // file a sample compares is an entry of one of these being created, written or
   // renamed over, so watching them is enough to know when to sample. Recomputed
   // per call: a checkout moves the branch ref's directory.
@@ -54,6 +54,9 @@ class GitRepositoryMetadataTracker {
     // HEAD is. (TD-2026-09-29-306.)
     std::uint64_t index = 0;
     std::uint64_t packed_refs = 0;
+    // `<common>/worktrees`, whose entries `git worktree add/remove/prune` change:
+    // the refresh counts the working trees (the status bar shows them).
+    std::uint64_t worktrees = 0;
   };
 
   std::optional<MetadataFingerprint> ReadCurrentFingerprint() const;

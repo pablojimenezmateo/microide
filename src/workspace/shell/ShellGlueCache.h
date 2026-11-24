@@ -9,6 +9,7 @@ namespace microide::workspace {
 
 class CommandLineCoordinator;
 class CompareMergeService;
+class CompareReviewService;
 class CompareMouseCoordinator;
 class ChromeMouseCoordinator;
 class DebugPaneMouseCoordinator;
@@ -66,6 +67,7 @@ struct ShellGlueCache {
   std::unique_ptr<EditorTabService> editor_tab_service;
   std::unique_ptr<SidebarService> sidebar_service;
   std::unique_ptr<CompareMergeService> compare_merge_service;
+  std::unique_ptr<CompareReviewService> compare_review_service;
   std::unique_ptr<PromptSurfaceService> prompt_surface_service;
   std::unique_ptr<TerminalPanelService> terminal_panel_service;
   // Its sessions' threads post status here until joined; declared like the rest,

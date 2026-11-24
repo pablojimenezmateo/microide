@@ -51,6 +51,17 @@ class PromptSurfaceService {
                          PromptSurfaceState::Kind kind,
                          const std::filesystem::path& path,
                          std::string input);
+  // The comment prompt of a review diff (PromptSurfaceState::ReviewComment): the
+  // note's text to edit, where it goes, and the line that says so.
+  struct ReviewCommentPrompt {
+    std::filesystem::path path;
+    std::string text;
+    compare::BranchReviewTargetIdentity target;
+    std::optional<compare::BranchReviewHunkIdentity> hunk;
+    std::optional<compare::BranchReviewHunkIdentity> replaced_hunk;
+    std::string detail;
+  };
+  void OpenReviewCommentPrompt(ReviewCommentPrompt prompt);
   void OpenExternalUrlPrompt(std::string url);
   // Ask `question`, and run `command_line` on yes (PromptSurfaceState::ConfirmCommand).
   void OpenConfirmCommandPrompt(std::string command_line, std::string question);

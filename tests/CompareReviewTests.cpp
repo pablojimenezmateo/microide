@@ -445,6 +445,44 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          Expect(classify("a\r", "a\n"), "a trailing lone CR normalizes to a trailing LF");
        }});
 
+  // A review's comments show in the diff: a hunk's right after its last row
+  // (before the unchanged run that follows), the file's at the top.
+  tests.push_back({"CompareReview/PresentationReviewNoteRows",
+                   [] {
+                     std::string left;
+                     std::string right;
+                     for (int line = 1; line <= 30; ++line) {
+                       left += "line " + std::to_string(line) + "\n";
+                       right += (line == 3 || line == 25 ? "changed " : "line ") + std::to_string(line) + "\n";
+                     }
+                     const auto model = BuildCompareModel(left, right);
+                     Expect(model.hunks.size() == 2, "two changes");
+                     const std::vector<microide::compare::BranchReviewHunkMarker> notes = {
+                         {}, {.has_note = true, .note_text = "second change"}};
+                     const auto presentation = BuildComparePresentationModel(
+                         model, microide::compare::CompareSemanticFileMetadata{},
+                         ComparePresentationOptions{.hunk_markers = &notes, .file_note = "whole file"},
+                         ComparePresentationCollapseState{});
+                     std::size_t note_rows = 0;
+                     for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
+                       const auto& row = presentation.rows[i];
+                       if (row.kind != ComparePresentationRowKind::ReviewNote) {
+                         continue;
+                       }
+                       ++note_rows;
+                       if (row.hunk_index < 0) {
+                         Expect(i == 0 && row.summary_text == "whole file", "the file's comment leads");
+                         continue;
+                       }
+                       Expect(row.hunk_index == 1 && row.summary_text == "second change", "only the noted change");
+                       const auto& above = presentation.rows[i - 1];
+                       Expect(above.kind == ComparePresentationRowKind::Model &&
+                                  above.model_row_index == static_cast<std::size_t>(model.hunks[1].end_row),
+                              "right under the change's last row");
+                     }
+                     Expect(note_rows == 2, "one row per comment");
+                   }});
+
   tests.push_back({"CompareReview/PresentationMetadataRow",
                    [] {
                      const auto model = BuildCompareModel("a\n", "b\n");

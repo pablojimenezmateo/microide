@@ -3,6 +3,7 @@
 // in a WorkspaceShell*.cpp companion because what it does is answer the query --
 // every element source asks the geometry the matching mouse path hit-tests and
 // reports it by name -- and it grows with every surface a QA driver must reach.
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -735,6 +736,53 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               }
               if (compare_scroll.horizontal_scrollbar.has_value()) {
                 AddControlUiScrollbar(out, "compare/h", *compare_scroll.horizontal_scrollbar);
+              }
+              // The header's buttons, and on a review each hunk's review buttons
+              // (on its first row while they show) and each note row's: by hunk
+              // number ("file" for the file's note), laid out as paint lays them.
+              const CompareControlGeometry controls = MakeCompareControlGeometry(surface_rect, surface);
+              const CompareHeaderButtonRects header =
+                  BuildCompareHeaderButtonRects(editor_text_renderer_, controls, *compare_tab);
+              for (const auto& [rect, name] : {std::pair{header.previous, "compare/previous-change"},
+                                               std::pair{header.next, "compare/next-change"},
+                                               std::pair{header.file_reviewed, "compare/file-reviewed"}}) {
+                if (rect.has_value()) {
+                  AddControlUiElement(out, kButton, name, *rect);
+                }
+              }
+              for (int row = 0; row < surface.visible_rows; ++row) {
+                const std::optional<CompareControlRow> control_row = CompareControlRowAt(*compare_tab, row);
+                if (!control_row.has_value()) {
+                  break;
+                }
+                if (control_row->note) {
+                  const int note_hunk = control_row->row->hunk_index;
+                  const CompareNoteActionRects note = BuildCompareNoteActionRects(editor_text_renderer_, controls, row);
+                  const std::string prefix =
+                      "compare/note-" +
+                      (note_hunk >= 0 ? std::to_string(note_hunk)
+                       : compare::IsCompareDetachedNoteHunk(note_hunk)
+                           ? "detached-" + std::to_string(compare::CompareDetachedNoteIndex(note_hunk))
+                           : std::string("file")) +
+                      "/";
+                  AddControlUiElement(out, kButton, prefix + "edit", note.edit, control_row->row->summary_text);
+                  AddControlUiElement(out, kButton, prefix + "delete", note.remove);
+                  continue;
+                }
+                const int hunk = control_row->controls_hunk;
+                if (hunk < 0) {
+                  continue;
+                }
+                const CompareHunkReviewRects hunk_controls =
+                    BuildCompareHunkReviewRects(editor_text_renderer_, controls, *compare_tab, hunk, row);
+                const std::string prefix = "compare/hunk-" + std::to_string(hunk) + "/";
+                if (hunk_controls.toggle.has_value()) {
+                  AddControlUiElement(out, kButton, prefix + "toggle-reviewed", *hunk_controls.toggle,
+                                      std::string(CompareHunkToggleLabel(CompareHunkReviewStatus(*compare_tab, hunk))));
+                }
+                if (hunk_controls.comment.has_value()) {
+                  AddControlUiElement(out, kButton, prefix + "comment", *hunk_controls.comment);
+                }
               }
               int block = 0;
               const float bottom = surface_rect.y + surface_rect.h;

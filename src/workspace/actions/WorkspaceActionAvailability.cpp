@@ -685,6 +685,12 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
           operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
       return tab != nullptr && tab->review_files.size() > 1;
     }
+    case ActionId::CompareNextChange:
+    case ActionId::ComparePreviousChange: {
+      const CompareTabState* tab =
+          operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
+      return tab != nullptr && !tab->model.hunks.empty();
+    }
     case ActionId::MarkBranchFileReviewed:
     case ActionId::UnmarkBranchFileReviewed:
     case ActionId::MarkBranchHunkReviewed:
@@ -696,16 +702,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     }
     case ActionId::CopyBranchReviewNotes:
     case ActionId::TerminalInsertBranchReviewNotes: {
-      const CompareTabState* tab =
-          operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
-      if (tab == nullptr || !CompareTabTakesReviewMarks(*tab) ||
-          (id == ActionId::TerminalInsertBranchReviewNotes &&
-           context_.current_project_state.active_terminal_pane() == nullptr)) {
+      // Whatever is in front: the review is the active diff's, or the one touched
+      // last (CompareReviewService::ExportTarget).
+      if (id == ActionId::TerminalInsertBranchReviewNotes &&
+          context_.current_project_state.active_terminal_pane() == nullptr) {
         return false;
       }
-      const compare::BranchReviewTargetState* target =
-          context_.current_project_state.branch_review.FindTarget(tab->branch_target);
-      return target != nullptr && !target->notes.empty();
+      return operations_.review_comment_count != nullptr &&
+             operations_.review_comment_count(ReviewCommentMenuScope(context_.menu_state.tree_context_menu)) > 0;
     }
     case ActionId::ClearBranchReviewState:
     case ActionId::GitStageSelectedRanges:

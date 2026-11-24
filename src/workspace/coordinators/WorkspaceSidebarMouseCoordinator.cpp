@@ -1,3 +1,4 @@
+#include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
 
 #include <algorithm>
@@ -310,9 +311,17 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   }
 
   const auto& line = lines[*line_index];
+  // Right-click on a directory, or on the Outgoing header (the whole review):
+  // the review comments under it.
+  if (is_right && (line.kind == GitSidebarLine::Kind::Directory ||
+                   (line.kind == GitSidebarLine::Kind::Header && line.section == GitSidebarEntry::Section::Outgoing))) {
+    const std::filesystem::path scope = state_.root / std::filesystem::path(GitSidebarDirectoryPath(line));
+    operations_.open_tree_context_menu(TreeContextTargetKind::GitReviewScope, scope, PointerAnchor(event));
+    return true;
+  }
   if (line.kind == GitSidebarLine::Kind::Directory) {
     if (!is_left) {
-      return true;  // Right-click on a directory header is a no-op.
+      return true;
     }
     return operations_.toggle_git_sidebar_directory_collapsed != nullptr &&
            operations_.toggle_git_sidebar_directory_collapsed(line.tree_node_key);

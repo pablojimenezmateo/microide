@@ -823,9 +823,9 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `mark-branch-hunk-reviewed`
 - `unmark-branch-hunk-reviewed`
 - `clear-branch-review-state`
-- `copy-review-notes`
-- `term-insert-review-notes`
-- `branch-review-note <text>`
+- `copy-review-comments [path]`
+- `term-insert-review-comments [path]`
+- `branch-review-comment <text>`
 - `diff-ignore-whitespace`
 - `diff-show-whitespace`
 - `diff-copy-hunk`
@@ -833,6 +833,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `diff-copy-path`
 - `diff-next-file`
 - `diff-previous-file`
+- `diff-next-change`
+- `diff-previous-change`
 - `merge-copy-remote`
 - `merge-copy-local`
 - `merge-reset-conflict`

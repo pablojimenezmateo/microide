@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "compare/BranchReviewStateTypes.h"
+#include "compare/CompareReviewTypes.h"
 #include "editor/SingleLineEditor.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
@@ -104,6 +106,9 @@ struct PromptSurfaceState {
     // and Stop on a running item). `detail` is the question; the title and the
     // button come from the command's label ("Remote: End Host Process" -> End).
     ConfirmCommand,
+    // A review comment on a hunk (or the file) of a review diff: the typed text
+    // replaces its note, empty deletes it. The note's place is pinned below.
+    ReviewComment,
   };
 
   Kind kind = Kind::None;
@@ -125,6 +130,15 @@ struct PromptSurfaceState {
   // What Tab completes the input from (the host prompts: known ssh hosts). Empty =
   // Tab does nothing special.
   std::vector<std::string> completions;
+  // A ReviewComment's note: the review, and the hunk of the file at `path` it is
+  // written on (none: the file's own note), pinned when the prompt opened so a
+  // diff that reloads under the prompt -- an agent writing the file -- cannot
+  // move it. `review_replaced_hunk` is the identity the edited note was stored
+  // under when that is not `review_hunk` (its change moved or was edited since):
+  // Save takes it away, so the note is re-pinned rather than doubled.
+  compare::BranchReviewTargetIdentity review_target;
+  std::optional<compare::BranchReviewHunkIdentity> review_hunk;
+  std::optional<compare::BranchReviewHunkIdentity> review_replaced_hunk;
 };
 
 struct PromptState {

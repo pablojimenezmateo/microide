@@ -581,6 +581,7 @@
                                                     PromptSurfaceService& prompt_surfaces);
   CompareInteractionCoordinator MakeCompareInteractionCoordinator();
   CompareMergeService& MakeCompareMergeService();
+  CompareReviewService& MakeCompareReviewService();
   PathMutationCoordinator MakePathMutationCoordinator(EditorTabService& editor_tabs,
                                                       PromptSurfaceService& prompt_surfaces);
   DiffTabCoordinator MakeDiffTabCoordinator();
@@ -967,11 +968,6 @@
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
-  void SetActiveBranchFileReviewed(bool reviewed);
-  void SetActiveBranchHunkReviewed(bool reviewed);
-  void ClearActiveBranchReviewState();
-  void EditActiveBranchReviewNote(const std::string& note_text);
-  void PersistBranchReviewState();
   void StageCompareHunk();
   void StageCompareSelectedLines();
   void UnstageCompareHunk();

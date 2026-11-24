@@ -183,6 +183,7 @@ struct GitSidebarState {
     std::string upstream_label;
     int ahead = 0;
     int behind = 0;
+    std::size_t worktree_count = 0;
     bool snapshot_stale = false;
     std::string refresh_error;
     std::uint64_t generation = 0;
@@ -193,6 +194,9 @@ struct GitSidebarState {
   std::string upstream_label;
   int ahead = 0;
   int behind = 0;
+  // The repository's working trees (GitRepositoryState::worktree_count): the
+  // status bar names them when there is more than one. 0: not known.
+  std::size_t worktree_count = 0;
   std::string base_ref;
   std::string base_label;
   OutgoingBaseChoice outgoing_base_choice;

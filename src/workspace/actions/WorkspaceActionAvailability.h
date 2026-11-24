@@ -46,6 +46,9 @@ class ActionAvailability {
     // service exists yet (cached against the recents revision).
     std::function<const RemoteHostService*()> remote_hosts;
     std::function<bool()> has_remote_recent;
+    // The comments of the review the export acts on (CompareReviewService), under
+    // a path (empty: all of them).
+    std::function<std::size_t(const std::filesystem::path&)> review_comment_count;
   };
 
   // `debug` answers the execution-control gating directly (a session running or

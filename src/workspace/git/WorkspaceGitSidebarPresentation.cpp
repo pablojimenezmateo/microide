@@ -364,4 +364,12 @@ void ResetGitSidebarPresentationCacheForTesting() {
 std::uint64_t GitSidebarPresentationCacheHitsForTesting() { return g_git_sidebar_cache_hits; }
 std::uint64_t GitSidebarPresentationCacheMissesForTesting() { return g_git_sidebar_cache_misses; }
 
+std::string_view GitSidebarDirectoryPath(const GitSidebarLine& line) {
+  // The inverse of DirectoryNodeKey: "<section>|<path>".
+  const std::string_view key = line.tree_node_key;
+  const std::size_t bar = key.find('|');
+  return line.kind == GitSidebarLine::Kind::Directory && bar != std::string_view::npos ? key.substr(bar + 1)
+                                                                                       : std::string_view();
+}
+
 }  // namespace microide::workspace

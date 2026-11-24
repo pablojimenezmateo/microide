@@ -195,6 +195,9 @@ class WorkspaceActionContext {
     std::function<bool(ActionId, std::string*)> run_compare_command;
     std::function<void()> unmark_branch_hunk_reviewed;
     std::function<void()> clear_branch_review_state;
+    // The comments of the review in front (CompareReviewService::ExportTarget)
+    // under a path (empty: all), as `path:line: comment` lines.
+    std::function<std::string(const std::filesystem::path&)> review_comments;
     std::function<void(std::string)> edit_branch_review_note;
     // Stage, unstage or revert (after a preview prompt) the active diff's selected
     // lines, else the change at the caret. False when no diff is active.
@@ -479,10 +482,12 @@ class WorkspaceActionContext {
   // A diff opened from the git view's Outgoing list: the only tabs the branch-review
   // marks and notes apply to.
   bool ActiveTabIsBranchReview() const;
-  // The notes of the review the active tab belongs to, as `path:line: note`
-  // lines (BranchReviewStateService::NotesAsReferences); empty when the tab is
-  // not a review's or the review has none.
-  std::string ActiveBranchReviewNotes() const;
+  // The comments of the review in front -- the active diff's, else the
+  // repository's last touched -- under `scope` (a file or directory; empty: all),
+  // as `path:line: note` lines (BranchReviewStateService::NotesAsReferences).
+  std::string ReviewComments(const std::filesystem::path& scope) const;
+  // The path an open git sidebar menu's export covers (ReviewCommentMenuScope).
+  std::filesystem::path ReviewCommentMenuScope() const;
   bool ActiveTabIsMerge() const;
   void OpenBufferSearch(std::string query);
   // F3 / Shift+F3: step to the next/previous match of the current find term,

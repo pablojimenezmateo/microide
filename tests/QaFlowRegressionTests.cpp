@@ -27,6 +27,7 @@
 #include "WorkspaceShellEventHelpers.h"
 #include "app/DirtyRegionPolicy.h"
 #include "render/ScopedRenderClip.h"
+#include "support/FlowFixture.h"
 #include "support/GitSidebarWait.h"
 #include "support/MockDapAdapter.h"
 #include "support/ProjectSearchWait.h"
@@ -61,81 +62,6 @@ std::function<void()> PinCaretOf(WorkspaceShell& shell) {
   return [&shell]() { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
 }
 
-struct FlowFixture {
-  static constexpr int kWidth = 1280;
-  static constexpr int kHeight = 720;
-
-  explicit FlowFixture(std::string_view file_name, std::string_view content)
-      : FlowFixture(file_name, content, kWidth, kHeight) {}
-
-  // A window of another size, as a monkey cell had it.
-  FlowFixture(std::string_view file_name, std::string_view content, int window_width, int window_height)
-      : width(window_width), height(window_height), canvas{window_width, window_height} {
-    EnsureDummySdlVideoInitialized();
-    root = temp_dir.path() / "project";
-    file = root / std::string(file_name);
-    WriteFile(file, std::string(content));
-    Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the flow fixture should open its project");
-    // The initial index scan runs in the background, and a project search reads its
-    // candidates from the index: a flow that searches before it lands searched no
-    // files (QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount, on
-    // a loaded machine). Start every flow from an indexed project.
-    Expect(WaitForFileIndexSize(shell, 1, std::chrono::seconds(10)),
-           "the flow fixture's project should be indexed");
-    TestAccess::SetWindowSize(shell, width, height);
-    TestAccess::OpenSingleEditorTab(shell, file);
-    TestAccess::ShowTreeSidebar(shell);
-    TestAccess::SetFocusEditor(shell);
-    TestAccess::NoteLayoutInputsChanged(shell);
-    PinCaret();
-    shell.Render(canvas.renderer(), width, height);
-    (void)shell.ConsumePendingRenderInvalidation();
-  }
-
-  void PinCaret() { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); }
-
-  // The element the ui query names `name`, or nullopt.
-  std::optional<SDL_FRect> ElementRect(std::string_view name) {
-    const util::JsonValue ui = TestAccess::ControlUi(shell);
-    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
-      if (entry["name"].AsString() == name) {
-        const auto& r = entry["rect"].AsArray();
-        return SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
-                         static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
-      }
-    }
-    return std::nullopt;
-  }
-
-  workspace::RenderInvalidation Click(const SDL_FRect& rect) {
-    const float x = rect.x + rect.w / 2.0f;
-    const float y = rect.y + rect.h / 2.0f;
-    return DispatchEvents(shell, {MouseMotionEvent(x, y),
-                                  MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
-                                  MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
-  }
-
-  // Paints `redraw` as the app would and expects it to equal a full repaint.
-  void ExpectFresh(const workspace::RenderInvalidation& redraw, const std::string& what) {
-    if (const char* dump = std::getenv("MQA_TEST_DUMP"); dump != nullptr) {
-      for (const auto& r : redraw.rects) {
-        std::fprintf(stderr, "%s: rect %.0f,%.0f %.0fx%.0f\n", what.c_str(), r.x, r.y, r.w, r.h);
-      }
-    }
-    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, width, height, redraw,
-                                                  [this]() { PinCaret(); });
-    Expect(diff.identical(), what + " should paint what a full repaint paints; " +
-                                 DescribePixelDiff(diff));
-  }
-
-  int width = kWidth;
-  int height = kHeight;
-  TemporaryDirectory temp_dir;
-  std::filesystem::path root;
-  std::filesystem::path file;
-  WorkspaceShell shell;
-  SoftwareCanvas canvas;
-};
 
 // The monkey's tooling profile (clangd behind the editor, its first run): the
 // pointer left a Problems row for the menu bar and the row kept its hover

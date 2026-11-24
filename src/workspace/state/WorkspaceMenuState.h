@@ -24,6 +24,17 @@ struct TreeContextMenuState {
   int active_item_index = -1;
 };
 
+// The path a review-comment export from an open git sidebar menu covers (the
+// entry's file, or the directory under a GitReviewScope menu); empty -- the whole
+// review -- for any other menu. One rule for the item's label, its enablement and
+// what it runs.
+inline std::filesystem::path ReviewCommentMenuScope(const TreeContextMenuState& menu) {
+  return menu.open && (menu.target == TreeContextTargetKind::GitEntry ||
+                       menu.target == TreeContextTargetKind::GitReviewScope)
+             ? menu.path
+             : std::filesystem::path();
+}
+
 struct MenuSurfaceState {
   bool menu_bar_open = false;
   MenuId active_menu_id = MenuId::None;

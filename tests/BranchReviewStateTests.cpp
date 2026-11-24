@@ -1,5 +1,8 @@
 #include "TestSupport.h"
 
+#include <algorithm>
+#include <string>
+
 #include "compare/BranchReviewStateService.h"
 #include "compare/BranchReviewStateTypes.h"
 #include "compare/CompareModel.h"
@@ -157,9 +160,11 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                          query.selected_hunk_index = static_cast<int>(i);
                          Expect(batched[i].status == service.HunkStatus(query),
                                 std::string("batched hunk status must match HunkStatus: ") + what);
-                         Expect(batched[i].has_note ==
+                         // HasNote is the exact-identity question; the resolve also
+                         // keeps a note on a hunk whose content moved, flagged.
+                         Expect((batched[i].has_note && !batched[i].note_outdated) ==
                                     service.HasNote(query, BranchReviewNoteScope::Hunk),
-                                std::string("batched note flag must match HasNote: ") + what);
+                                std::string("an up-to-date batched note must match HasNote: ") + what);
                          saw_reviewed |= batched[i].status == BranchReviewMarkerStatus::Reviewed;
                          saw_changed |=
                              batched[i].status == BranchReviewMarkerStatus::ChangedSinceReviewed;
@@ -596,6 +601,148 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      const BranchReviewTargetIdentity other =
                          MakeBranchReviewTargetIdentity("/repo", "other", "HEAD", "other", 4);
                      Expect(service.NotesAsReferences(other).empty(), "another review's notes are not this one's");
+                   }});
+
+  // A scope narrows the hand-over to a file or a directory -- the git view's
+  // right-click on a row -- and a directory is matched by whole components.
+  tests.push_back({"BranchReviewState/NotesAsReferencesNarrowToAPath",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 4);
+                     BranchReviewStateService service;
+                     service.SetNote(target, BranchReviewNoteScope::File, "src/a.cpp", std::nullopt, "in src");
+                     service.SetNote(target, BranchReviewNoteScope::File, "srcx/b.cpp", std::nullopt, "beside src");
+                     service.SetNote(target, BranchReviewNoteScope::File, "top.txt", std::nullopt, "at the top");
+                     Expect(service.NoteCount(target) == 3 && service.NoteCount(target, "/repo") == 3,
+                            "no scope, or the repository itself, is the whole review");
+                     Expect(service.NotesAsReferences(target, "src") == "src/a.cpp: in src" &&
+                                service.NotesAsReferences(target, "/repo/src/") == "src/a.cpp: in src" &&
+                                service.NoteCount(target, "src") == 1,
+                            "a directory, relative or absolute: its files only, not srcx/");
+                     Expect(service.NotesAsReferences(target, "top.txt") == "top.txt: at the top",
+                            "a file: its own notes");
+                     Expect(service.NoteCount(target, "docs") == 0 && service.NotesAsReferences(target, "docs").empty(),
+                            "nothing under a path with no notes");
+                   }});
+
+  // With no review diff in front, "the review" is the repository's last touched.
+  tests.push_back({"BranchReviewState/MostRecentTargetIsTheLastTouched",
+                   [] {
+                     BranchReviewStateService service;
+                     Expect(service.MostRecentTarget("/repo") == nullptr, "no review yet");
+                     const BranchReviewTargetIdentity first =
+                         MakeBranchReviewTargetIdentity("/repo", "main", "WORKTREE", "main", 1);
+                     const BranchReviewTargetIdentity second =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 1);
+                     service.SetNote(first, BranchReviewNoteScope::File, "a.txt", std::nullopt, "one");
+                     service.FindOrCreateTarget(second)->last_accessed_unix_ms = 1;  // long ago
+                     Expect(service.MostRecentTarget("/repo") != nullptr &&
+                                service.MostRecentTarget("/repo")->target == first,
+                            "the review touched last");
+                     Expect(service.MostRecentTarget("/elsewhere") == nullptr, "another repository's are not");
+                   }});
+
+  // Marking a file reviewed marks its every hunk in one pass, and a file with
+  // more hunks than a review keeps entries for takes none of another file's
+  // marks with it: it marked hunk by hunk, each resolving the whole file again
+  // (0.2-0.9 s on 1100 hunks), and the cap then dropped the oldest entries --
+  // the other file's.
+  tests.push_back({"BranchReviewState/MarkingALargeFileKeepsOtherFilesMarks",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 1);
+                     const auto small = BuildCompareModel("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n",
+                                                          "A\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
+                     std::string left;
+                     std::string right;
+                     for (int line = 1; line <= 4400; ++line) {
+                       left += "line " + std::to_string(line) + "\n";
+                       right += (line % 4 == 0 ? "changed " : "line ") + std::to_string(line) + "\n";
+                     }
+                     const auto big = BuildCompareModel(left, right);
+                     Expect(big.hunks.size() > BranchReviewStateService::kMaxHunkEntriesPerTarget,
+                            "the fixture has more hunks than a review keeps entries for");
+                     BranchReviewStateService service;
+                     service.SetHunkReviewed(target, "small.txt", small, 0, true);
+                     service.SetFileReviewed(target, "big.txt", big, true);
+
+                     const auto reviewed_of = [&](const std::filesystem::path& path, const auto& model) {
+                       std::vector<microide::compare::BranchReviewHunkMarker> markers;
+                       service.ResolveHunkMarkers({.target = target, .path = path, .model = &model}, &markers);
+                       return static_cast<std::size_t>(std::count_if(markers.begin(), markers.end(), [](const auto& m) {
+                         return m.status == BranchReviewMarkerStatus::Reviewed;
+                       }));
+                     };
+                     Expect(reviewed_of("big.txt", big) == big.hunks.size(), "every hunk of the file reads reviewed");
+                     Expect(reviewed_of("small.txt", small) == 1, "the other file's mark is still there");
+                     Expect(service.FindTarget(target)->reviewed_hunks.size() <=
+                                BranchReviewStateService::kMaxHunkEntriesPerTarget,
+                            "the cap holds");
+                     service.SetFileReviewed(target, "big.txt", big, false);
+                     Expect(reviewed_of("big.txt", big) == 0 &&
+                                service.FileStatus({.target = target, .path = "big.txt"}) ==
+                                    BranchReviewMarkerStatus::Unreviewed,
+                            "Unmark File takes every hunk and the file back");
+                     Expect(reviewed_of("small.txt", small) == 1, "and still not the other file's");
+
+                     // Each hunk keeps its own entry: an edit shows on the hunk it touched.
+                     service.SetFileReviewed(target, "small.txt", small, true);
+                     const auto edited = BuildCompareModel("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n",
+                                                           "AA\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
+                     std::vector<microide::compare::BranchReviewHunkMarker> markers;
+                     service.ResolveHunkMarkers({.target = target, .path = "small.txt", .model = &edited}, &markers);
+                     Expect(markers.size() == 2 && markers[0].status == BranchReviewMarkerStatus::ChangedSinceReviewed &&
+                                markers[1].status == BranchReviewMarkerStatus::Reviewed,
+                            "the edited hunk reads changed, the other still reviewed");
+                   }});
+
+  // A hunk note is never out of sight: on its hunk while the hunk stands (flagged
+  // once the hunk's content changes), on the same change when an edit above moved
+  // its lines, and detached when the change is gone. It used to match on the full
+  // identity only, so any of those hid a note the export still handed over.
+  tests.push_back({"BranchReviewState/AHunkNoteFollowsItsChangeOrIsDetached",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 1);
+                     const std::string base = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n";
+                     const auto written_on = BuildCompareModel(base, "A\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
+                     const std::filesystem::path path("f.txt");
+                     BranchReviewStateService service;
+                     service.SetNote(target, BranchReviewNoteScope::Hunk, path,
+                                     ComputeBranchReviewHunkIdentity(written_on, 1, path), "why J?");
+
+                     std::vector<microide::compare::BranchReviewHunkMarker> markers;
+                     std::vector<microide::compare::BranchReviewNote> detached;
+                     const auto resolve = [&](const auto& model) {
+                       service.ResolveHunkMarkers({.target = target, .path = path, .model = &model}, &markers, &detached);
+                     };
+                     resolve(written_on);
+                     Expect(markers[1].has_note && !markers[1].note_outdated && markers[1].note_text == "why J?" &&
+                                !markers[0].has_note && detached.empty(),
+                            "on its hunk, as written");
+
+                     const auto edited = BuildCompareModel(base, "A\nb\nc\nd\ne\nf\ng\nh\ni\nJJ\n");
+                     resolve(edited);
+                     Expect(markers[1].has_note && markers[1].note_outdated && detached.empty(),
+                            "the hunk's content changed: still on it, flagged");
+
+                     const auto moved = BuildCompareModel(base, "new\nA\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
+                     resolve(moved);
+                     Expect(moved.hunks.size() == 2 && markers[1].has_note && !markers[1].note_outdated && detached.empty(),
+                            "a line added above moved the change: the note moved with it");
+                     const microide::compare::BranchReviewNote* shown = service.NoteOnHunk(
+                         {.target = target, .path = path, .model = &moved, .selected_hunk_index = 1});
+                     Expect(shown != nullptr && shown->text == "why J?" &&
+                                service.NoteOnHunk({.target = target, .path = path, .model = &moved,
+                                                    .selected_hunk_index = 0}) == nullptr,
+                            "NoteOnHunk names the note a hunk shows");
+
+                     const auto gone = BuildCompareModel(base, "A\nb\nc\nd\ne\nf\ng\nh\ni\nj\n");
+                     resolve(gone);
+                     Expect(gone.hunks.size() == 1 && !markers[0].has_note && detached.size() == 1 &&
+                                detached[0].text == "why J?",
+                            "the change is gone: the note is detached, not lost");
+                     Expect(service.NoteCount(target) == 1, "and the export counts what the diff shows");
                    }});
 }
 

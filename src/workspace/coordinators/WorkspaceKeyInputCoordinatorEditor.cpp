@@ -231,15 +231,8 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       return true;
     };
 
+    // Alt+[ / Alt+] are registry bindings (diff-previous-change / -next-change).
     if ((modifiers & SDL_KMOD_ALT) != 0) {
-      if (event.key == SDLK_LEFTBRACKET) {
-        operations_.jump_compare_hunk(-1);
-        return true;
-      }
-      if (event.key == SDLK_RIGHTBRACKET) {
-        operations_.jump_compare_hunk(1);
-        return true;
-      }
       const char input_character = operations_.keycode_to_ascii(event.key, modifiers & ~SDL_KMOD_ALT);
       if (input_character == 'o') {
         operations_.open_working_file_from_compare();

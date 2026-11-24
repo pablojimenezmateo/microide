@@ -10,6 +10,34 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Review a change where you read it.** On a review diff (a branch review, a
+  review since a checkpoint, `review-branch <ref>`) the change under the pointer
+  -- or holding the selection -- shows **Mark Reviewed** (**Unmark** once it is)
+  and **Comment** at the right of its first line, and keeps a **Reviewed** badge
+  there once marked. A comment shows as a row under its change with **Edit** and
+  **Delete**; Comment and Edit open a one-line prompt pinned to that change, so
+  an agent rewriting the file while you type cannot move the comment to
+  another. The header counts the review (`2 changes, 1 reviewed`) and offers
+  **Mark File Reviewed** / **Unmark File**. A change longer than the view keeps
+  its buttons on the view's top line; a narrow pane keeps Mark Reviewed and the
+  progress count ahead of the rest; a comment too long for its row shows whole
+  in a tooltip.
+- **A comment outlives its change.** When the change under a comment is edited
+  the comment stays under it, marked *change edited since*; when lines added
+  above move the change the comment moves with it; when the change is gone the
+  comment shows at the top of the diff (*change gone*) with Edit and Delete.
+  None of them used to show while the export still handed them over.
+- **Previous Change / Next Change** in every diff's header, and as
+  `diff-previous-change` / `diff-next-change` (Git menu, `Alt+[` / `Alt+]`):
+  stepping through a diff's changes no longer needs the shortcut to be known.
+- **Review comments go to the agent from anywhere.** Git ▸ **Copy Review
+  Comments (N)** and **Send Review Comments to Terminal** work with no diff in
+  front (the review touched last), and a right-click in the git view hands over
+  a file's, a folder's or (on the Outgoing header) the whole review's comments.
+  `copy-review-comments` and `term-insert-review-comments` take a path to do the same.
+- **The status bar counts a repository's worktrees** (`3 worktrees`) once it
+  has linked ones -- where parallel agents work -- and a click opens Git ▸
+  Switch Worktree…. A tree whose directory is gone (prunable) is not counted.
 - **A review follows you between machines.** The files and hunks marked
   reviewed and the notes taken in a remote project -- a branch review, a review
   since a checkpoint -- are left on its host when you leave the window, and are
@@ -26,9 +54,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
   its branch is ahead of and behind its upstream (`3 changed · 2↑ · 1↓`), asked
   of git when the pick opens -- on the host, for a remote project -- so the
   tree an agent left work in is the one you open.
-- **Copy Review Notes and Terminal: Insert Review Notes** (`copy-review-notes`,
-  `term-insert-review-notes`). The notes taken while reviewing
-  (`branch-review-note`, on a branch review or a review since a checkpoint) --
+- **Copy Review Notes and Terminal: Insert Review Notes** (`copy-review-comments`,
+  `term-insert-review-comments`). The notes taken while reviewing
+  (`branch-review-comment`, on a branch review or a review since a checkpoint) --
   every file's, not only the tab in front -- as one line each,
   `src/a.cpp:41-45: this loop leaks the handle`, by path and line: copied, or
   typed into the running terminal as one paste, so what a review found goes

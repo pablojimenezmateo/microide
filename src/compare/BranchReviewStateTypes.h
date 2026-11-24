@@ -53,6 +53,10 @@ enum class BranchReviewNoteScope {
 struct BranchReviewHunkMarker {
   BranchReviewMarkerStatus status = BranchReviewMarkerStatus::Unreviewed;
   bool has_note = false;
+  // The note's text when `has_note`: the diff shows it under its hunk.
+  std::string note_text;
+  // The hunk's content changed since the note was written on it.
+  bool note_outdated = false;
 };
 
 struct BranchReviewHunkIdentity {

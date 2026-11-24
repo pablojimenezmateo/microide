@@ -396,7 +396,7 @@ enum class ActionId {
   UnmarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
-  // `copy-review-notes` / `term-insert-review-notes`: every note of the active
+  // `copy-review-comments` / `term-insert-review-comments`: every note of the active
   // review as `path:line: note` lines -- copied, or typed into the running
   // terminal for the agent there to act on.
   CopyBranchReviewNotes,
@@ -411,6 +411,9 @@ enum class ActionId {
   CompareCopyPath,
   CompareNextReviewFile,
   ComparePreviousReviewFile,
+  // The diff's next / previous change (Alt+] / Alt+[, the header's buttons).
+  CompareNextChange,
+  ComparePreviousChange,
   // The merge editor's: the selected conflict's incoming / current side to the
   // clipboard (the side panes are read-only views with no selection of their own).
   MergeCopyIncoming,

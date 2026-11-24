@@ -10,6 +10,7 @@
 #include "workspace/render/DebugPanePaint.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/CompareRowUnits.h"
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/MenuPopupPaint.h"
@@ -1246,7 +1247,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           header.Add(surface_key.value())
               .Add(std::string_view(compare.review_header.summary_line))
               .Add(std::string_view(compare.left_label))
-              .Add(std::string_view(compare.right_label));
+              .Add(std::string_view(compare.right_label))
+              // Its buttons (CompareHeaderButtonRects): whether there are changes
+              // to step through, the file button's label, and which is hovered.
+              .Add(compare.model.hunks.empty())
+              .Add(CompareTabTakesReviewMarks(compare))
+              .Add(CompareFileFullyReviewed(compare))
+              .Add(compare.hover_state.has_value() && IsCompareHeaderControl(compare.hover_state->kind)
+                       ? static_cast<int>(compare.hover_state->kind)
+                       : -1);
           // The whole width: the header runs above the scrollbar's reserve too.
           units.push_back({SDL_FRect{area.x, area.y, area.w, std::max(0.0f, compare_surface.rows_y - 1.0f - area.y)},
                            header.value()});

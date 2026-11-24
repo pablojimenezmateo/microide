@@ -557,12 +557,12 @@ void TestReviewNotesAreHandedOverAsReferences() {
   TestAccess::FlushPendingFileReads(shell);
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2, "one tab per changed file");
   Expect(!TestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::CopyBranchReviewNotes) &&
-             !TestAccess::ExecuteCommandLine(shell, "copy-review-notes"),
+             !TestAccess::ExecuteCommandLine(shell, "copy-review-comments"),
          "with no notes there is nothing to copy, and the command says so");
 
   // A note on each file's change, whichever tab is in front first.
   const auto note_on_active_tab = [&](std::string_view text) {
-    Expect(TestAccess::ExecuteCommandLine(shell, "branch-review-note " + std::string(text)), "a note is taken");
+    Expect(TestAccess::ExecuteCommandLine(shell, "branch-review-comment " + std::string(text)), "a note is taken");
   };
   std::vector<std::size_t> review_tabs;
   for (std::size_t i = 0; i < TestAccess::OpenTabs(shell).size(); ++i) {
@@ -579,7 +579,7 @@ void TestReviewNotesAreHandedOverAsReferences() {
   note_on_active_tab("second note");
 
   Expect(TestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::CopyBranchReviewNotes) &&
-             TestAccess::ExecuteCommandLine(shell, "copy-review-notes"),
+             TestAccess::ExecuteCommandLine(shell, "copy-review-comments"),
          "Copy Review Notes");
   const bool one_first = copied.find("first note") < copied.find("second note");
   Expect(copied == (one_first ? "one.txt:2: first note\ntwo.txt:1: second note"
@@ -587,7 +587,7 @@ void TestReviewNotesAreHandedOverAsReferences() {
          "both files' notes, by path, each at its hunk's line:\n" + copied);
 
   Expect(!TestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::TerminalInsertBranchReviewNotes) &&
-             !TestAccess::ExecuteCommandLine(shell, "term-insert-review-notes"),
+             !TestAccess::ExecuteCommandLine(shell, "term-insert-review-comments"),
          "with no terminal there is nowhere to type them");
 }
 

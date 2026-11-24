@@ -35,25 +35,6 @@ bool IsSafeRelativeRefName(const std::string& ref) {
   return true;
 }
 
-// For a linked worktree, branch refs live in the COMMON git directory, named by
-// `<gitdir>/commondir`. Absent that file (an ordinary checkout), the gitdir IS the
-// common dir. Returns the resolved common directory. (TD-2026-07-16-63.)
-std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
-  const std::optional<std::string> line = internal::ReadFirstLineOfGitFile(git_dir / "commondir");
-  if (!line.has_value()) {
-    return git_dir;
-  }
-  const std::string trimmed = util::TrimAsciiWhitespace(*line);
-  if (trimmed.empty()) {
-    return git_dir;
-  }
-  std::filesystem::path resolved(trimmed);
-  if (resolved.is_relative()) {
-    resolved = git_dir / resolved;
-  }
-  return resolved.lexically_normal();
-}
-
 // If HEAD is symbolic (`ref: refs/heads/<branch>`), return the ref path relative to the
 // common gitdir (e.g. `refs/heads/main`). Returns nullopt for a detached HEAD (raw oid),
 // where the HEAD file tick itself already tracks movement.
@@ -141,7 +122,7 @@ std::vector<RepositoryChange> GitRepositoryMetadataTracker::SampleChanges() {
   // changing (packed branch refs). (TD-2026-07-16-63.)
   if (current->head_text != baseline_->head_text ||
       current->branch_ref_text != baseline_->branch_ref_text ||
-      current->packed_refs != baseline_->packed_refs) {
+      current->packed_refs != baseline_->packed_refs || current->worktrees != baseline_->worktrees) {
     changes.push_back(RepositoryChange{.kind = RepositoryChangeKind::HeadChanged});
   }
   if (current->index != baseline_->index) {
@@ -167,8 +148,11 @@ std::vector<std::filesystem::path> GitRepositoryMetadataTracker::WatchedDirector
     return directories;
   }
   add(git_dir->lexically_normal());
-  const std::filesystem::path common_dir = ResolveCommonDir(*git_dir);
+  const std::filesystem::path common_dir = internal::ResolveCommonDir(*git_dir);
   add(common_dir);
+  if (std::error_code error; std::filesystem::is_directory(common_dir / "worktrees", error) && !error) {
+    add(common_dir / "worktrees");
+  }
   if (const std::optional<std::string> ref =
           SymbolicRefFromHeadLine(internal::ReadFirstLineOfGitFile(*git_dir / "HEAD"));
       ref.has_value()) {
@@ -210,7 +194,7 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   // `.git/HEAD` text unchanged but advances `refs/heads/<branch>`) is detected. The
   // ref lives under the COMMON gitdir for linked worktrees, so resolve `commondir`.
   // By content too: it is a single object id, and that id is exactly the question.
-  const std::filesystem::path common_dir = ResolveCommonDir(git_dir);
+  const std::filesystem::path common_dir = internal::ResolveCommonDir(git_dir);
   if (const std::optional<std::string> ref = SymbolicRefFromHeadLine(head_line);
       ref.has_value()) {
     if (const std::optional<std::string> ref_line =
@@ -223,6 +207,9 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   if (const auto packed_tick = util::FileModificationTick(common_dir / "packed-refs");
       packed_tick.has_value()) {
     fingerprint.packed_refs = *packed_tick;
+  }
+  if (const auto worktrees_tick = util::FileModificationTick(common_dir / "worktrees"); worktrees_tick.has_value()) {
+    fingerprint.worktrees = *worktrees_tick;
   }
   return fingerprint;
 }

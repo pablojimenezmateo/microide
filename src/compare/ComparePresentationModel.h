@@ -3,8 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "compare/BranchReviewStateTypes.h"
 #include "compare/CompareModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
@@ -16,7 +18,21 @@ enum class ComparePresentationRowKind {
   Metadata,
   CollapsedContext,
   HunkHeader,
+  // A review note, under the hunk it is on (`hunk_index` >= 0) or at the top:
+  // the file's own note (`hunk_index` kCompareFileNoteHunk), then each detached
+  // one (CompareDetachedNoteHunk: a hunk note whose change is gone).
+  // `summary_text` is the note, for a detached one after its "line N: ".
+  ReviewNote,
 };
+
+// What a ReviewNote row's `hunk_index` (and a note control's hunk) says when the
+// note is not under a hunk.
+inline constexpr int kCompareFileNoteHunk = -1;
+constexpr int CompareDetachedNoteHunk(std::size_t detached_index) {
+  return -2 - static_cast<int>(detached_index);
+}
+constexpr bool IsCompareDetachedNoteHunk(int hunk) { return hunk <= -2; }
+constexpr std::size_t CompareDetachedNoteIndex(int hunk) { return static_cast<std::size_t>(-2 - hunk); }
 
 struct ComparePresentationRow {
   ComparePresentationRowKind kind = ComparePresentationRowKind::Model;
@@ -64,6 +80,12 @@ struct ComparePresentationOptions {
   bool show_whitespace = false;
   std::size_t context_lines = 3;
   std::size_t collapse_threshold = 8;
+  // Review notes shown in the diff: `(*hunk_markers)[h].has_note` puts a
+  // ReviewNote row after hunk h's last row; a non-empty `file_note` and every
+  // detached note put one at the top. Borrowed for the build only.
+  const std::vector<BranchReviewHunkMarker>* hunk_markers = nullptr;
+  std::string_view file_note;
+  const std::vector<BranchReviewNote>* detached_notes = nullptr;
 };
 
 struct ComparePresentationModel {

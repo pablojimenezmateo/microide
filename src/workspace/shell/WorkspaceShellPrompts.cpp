@@ -10,6 +10,7 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/services/PromptSurfaceService.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
@@ -273,6 +274,8 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
     case PromptSurfaceState::Action::CommandArguments:
     case PromptSurfaceState::Action::ConfirmCommand:
       return PromptCommandTitle(context_.prompts.surface.command_name);
+    case PromptSurfaceState::Action::ReviewComment:
+      return "Review Comment";
   }
   return "Prompt";
 }
@@ -335,6 +338,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::ConfirmRenameSave:
     case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
     case PromptSurfaceState::Action::ConfirmCommand:
+    case PromptSurfaceState::Action::ReviewComment:
       return context_.prompts.surface.detail;
     case PromptSurfaceState::Action::CommandArguments: {
       // The usage after the command's name: what to type.
@@ -409,6 +413,8 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Replace All", "Cancel"};
     case PromptSurfaceState::Action::CommandArguments:
       return {"Run", "Cancel"};
+    case PromptSurfaceState::Action::ReviewComment:
+      return {"Save", "Cancel"};
     case PromptSurfaceState::Action::ConfirmCommand: {
       // The command's verb: "End Host Process" -> "End".
       const std::string_view title = PromptCommandTitle(context_.prompts.surface.command_name);
@@ -479,6 +485,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       case Action::ConfirmProjectReplaceAll:
       case Action::CommandArguments:
       case Action::ConfirmCommand:
+      case Action::ReviewComment:
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmRenameSave:
@@ -617,6 +624,13 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
         !feedback.empty()) {
       Notify(ok ? NotificationService::Tone::Info : NotificationService::Tone::Error, feedback);
     }
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::ReviewComment) {
+    // Read before the dismiss: the prompt pins where the comment goes.
+    MakeCompareReviewService().CommitCommentPrompt();
+    MakePromptSurfaceService().DismissPromptSurface(true);
     return;
   }
   if (context_.prompts.surface_visible &&

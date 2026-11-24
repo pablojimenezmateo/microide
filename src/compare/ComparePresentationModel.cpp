@@ -162,10 +162,51 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
     }
   }
 
+  if (!options.file_note.empty()) {
+    ComparePresentationRow& note = ClaimRow(presentation, cursor);
+    note.kind = ComparePresentationRowKind::ReviewNote;
+    note.hunk_index = kCompareFileNoteHunk;
+    note.summary_text.assign(options.file_note);
+  }
+  if (options.detached_notes != nullptr) {
+    for (std::size_t i = 0; i < options.detached_notes->size(); ++i) {
+      const BranchReviewNote& detached = (*options.detached_notes)[i];
+      ComparePresentationRow& note = ClaimRow(presentation, cursor);
+      note.kind = ComparePresentationRowKind::ReviewNote;
+      note.hunk_index = CompareDetachedNoteHunk(i);
+      // Where it was written: the line its export names.
+      note.summary_text.assign("line ");
+      if (detached.hunk_identity.has_value()) {
+        const BranchReviewHunkIdentity& hunk = *detached.hunk_identity;
+        util::AppendUnsigned(note.summary_text,
+                             static_cast<std::size_t>(std::max(0, hunk.new_count == 0 ? hunk.old_start : hunk.new_start)));
+      }
+      note.summary_text += ": ";
+      note.summary_text += detached.text;
+    }
+  }
+
   if (semantic.file_kind == CompareSemanticFileKind::Binary) {
     FinishPresentationRows(presentation, cursor);
     return;
   }
+
+  // Every model row goes in through here, so a hunk's note follows its last row
+  // whichever loop below emits that row.
+  const auto claim_model_row = [&](std::size_t index) {
+    ClaimRow(presentation, cursor).model_row_index = index;
+    const int hunk = model.rows[index].hunk;
+    if (hunk < 0 || options.hunk_markers == nullptr || static_cast<std::size_t>(hunk) >= options.hunk_markers->size() ||
+        !(*options.hunk_markers)[static_cast<std::size_t>(hunk)].has_note ||
+        (index + 1 < model.rows.size() && model.rows[index + 1].hunk == hunk)) {
+      return;
+    }
+    ComparePresentationRow& note = ClaimRow(presentation, cursor);
+    note.kind = ComparePresentationRowKind::ReviewNote;
+    note.hunk_index = hunk;
+    note.model_row_index = index;
+    note.summary_text.assign((*options.hunk_markers)[static_cast<std::size_t>(hunk)].note_text);
+  };
 
   std::size_t row_index = 0;
   while (row_index < model.rows.size()) {
@@ -206,7 +247,7 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
               : 0;
 
       for (std::size_t i = 0; i < visible_prefix; ++i) {
-        ClaimRow(presentation, cursor).model_row_index = run_start + i;
+        claim_model_row(run_start + i);
       }
       if (collapsed_count >= options.collapse_threshold) {
         ComparePresentationRow& summary = ClaimRow(presentation, cursor);
@@ -224,7 +265,7 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
         }
       } else {
         for (std::size_t i = visible_prefix; i < run_length - visible_suffix; ++i) {
-          ClaimRow(presentation, cursor).model_row_index = run_start + i;
+          claim_model_row(run_start + i);
         }
         if (run_length >= options.collapse_threshold &&
             (expanded_above > 0 || expanded_below > 0)) {
@@ -232,12 +273,12 @@ void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
         }
       }
       for (std::size_t i = run_length - visible_suffix; i < run_length; ++i) {
-        ClaimRow(presentation, cursor).model_row_index = run_start + i;
+        claim_model_row(run_start + i);
       }
       continue;
     }
 
-    ClaimRow(presentation, cursor).model_row_index = row_index;
+    claim_model_row(row_index);
     ++row_index;
   }
 

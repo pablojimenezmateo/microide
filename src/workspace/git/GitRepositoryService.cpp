@@ -188,6 +188,7 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
   snapshot.upstream_label = repository_state.branch.upstream;
   snapshot.ahead = repository_state.branch.ahead;
   snapshot.behind = repository_state.branch.behind;
+  snapshot.worktree_count = repository_state.worktree_count;
   snapshot.snapshot_stale = repository_state.stale;
   snapshot.refresh_error = repository_state.refresh_error.detail;
   snapshot.base_ref = resolved_base.base_ref;

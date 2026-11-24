@@ -21,6 +21,7 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/services/PromptSurfaceService.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
@@ -694,9 +695,9 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .request_frame = [this]() { RequestPreparedFrame(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
-          .mark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(true); },
-          .unmark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(false); },
-          .mark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(true); },
+          .mark_branch_file_reviewed = [this]() { MakeCompareReviewService().SetActiveFileReviewed(true); },
+          .unmark_branch_file_reviewed = [this]() { MakeCompareReviewService().SetActiveFileReviewed(false); },
+          .mark_branch_hunk_reviewed = [this]() { MakeCompareReviewService().SetSelectedHunkReviewed(true); },
           .run_compare_command =
               [this](ActionId id, std::string* error) {
                 if (id == ActionId::MergeCopyIncoming || id == ActionId::MergeCopyCurrent ||
@@ -755,15 +756,21 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     }
                     compare.JumpCompareReviewFile(id == ActionId::CompareNextReviewFile ? 1 : -1);
                     return true;
+                  case ActionId::CompareNextChange:
+                  case ActionId::ComparePreviousChange:
+                    JumpCompareHunk(id == ActionId::CompareNextChange ? 1 : -1);
+                    return true;
                   default:
                     *error = "Not a diff command";
                     return false;
                 }
               },
-          .unmark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(false); },
-          .clear_branch_review_state = [this]() { ClearActiveBranchReviewState(); },
+          .unmark_branch_hunk_reviewed = [this]() { MakeCompareReviewService().SetSelectedHunkReviewed(false); },
+          .clear_branch_review_state = [this]() { MakeCompareReviewService().ClearReview(); },
+          .review_comments =
+              [this](const std::filesystem::path& scope) { return MakeCompareReviewService().CommentsAsReferences(scope); },
           .edit_branch_review_note =
-              [this](std::string note_text) { EditActiveBranchReviewNote(note_text); },
+              [this](std::string note_text) { MakeCompareReviewService().EditSelectedNote(note_text); },
           .apply_git_selected_ranges =
               [this](GitRangeVerb verb) {
                 const CompareTabState* compare_tab = ActiveCompareTab();

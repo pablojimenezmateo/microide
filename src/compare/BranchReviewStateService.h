@@ -64,6 +64,16 @@ class BranchReviewStateService {
                        int hunk_index,
                        bool reviewed);
 
+  // The review action on a whole file's diff: every hunk of `model` and the file
+  // itself marked (or unmarked) in one pass. Each hunk keeps an entry of its own,
+  // so a later edit shows as changed on the hunk it touched, not on the file's
+  // every hunk; past the per-review cap those entries are the first to go
+  // (PruneTarget), never another file's marks.
+  void SetFileReviewed(const BranchReviewTargetIdentity& target,
+                       const std::filesystem::path& path,
+                       const CompareModel& model,
+                       bool reviewed);
+
   void SetNote(const BranchReviewTargetIdentity& target,
                BranchReviewNoteScope scope,
                const std::filesystem::path& path,
@@ -91,8 +101,18 @@ class BranchReviewStateService {
   // it falls back to FileStatus, which walks that list against every model hunk
   // again. Here each list is walked once — O(hunks + entries + notes) — and no
   // per-hunk identity (and so no per-hunk path copy) is built at all.
+  //
+  // A hunk note shows on the hunk at its position -- `note_outdated` when that
+  // hunk's content changed since -- or, when an edit above moved the lines, on
+  // the hunk with the same content. The file's hunk notes that land on no hunk
+  // (the change is gone) come back in `detached`, so none is ever out of sight.
   void ResolveHunkMarkers(const BranchReviewStateQueryInput& input,
-                          std::vector<BranchReviewHunkMarker>* out) const;
+                          std::vector<BranchReviewHunkMarker>* out,
+                          std::vector<BranchReviewNote>* detached = nullptr) const;
+  // The note ResolveHunkMarkers shows on hunk `input.selected_hunk_index`, or
+  // null: what an edit or a delete of that hunk's note acts on (its stored
+  // identity may be older than the hunk's).
+  const BranchReviewNote* NoteOnHunk(const BranchReviewStateQueryInput& input) const;
 
   bool HasNote(const BranchReviewStateQueryInput& input, BranchReviewNoteScope scope) const;
   std::optional<std::string> NoteText(const BranchReviewStateQueryInput& input,
@@ -103,7 +123,19 @@ class BranchReviewStateService {
   // that only removes, `src/a.cpp: text` for a file's. One per note, by path and
   // then line, newline-separated with no trailing newline; empty when it has
   // none. Paths are as stored: relative to the repository.
-  std::string NotesAsReferences(const BranchReviewTargetIdentity& target) const;
+  //
+  // `scope` narrows it to one file or everything under one directory (a
+  // repository-relative path, as NormalizeReviewPath makes it); empty is the
+  // whole review. Counted by NoteCount on the same rule.
+  std::string NotesAsReferences(const BranchReviewTargetIdentity& target,
+                                const std::filesystem::path& scope = {}) const;
+  std::size_t NoteCount(const BranchReviewTargetIdentity& target,
+                        const std::filesystem::path& scope = {}) const;
+
+  // The review of `repository_root` touched last (its marks or notes changed, or
+  // it was opened), or null when the repository has none: what "the review" is
+  // when no review diff is in front.
+  const BranchReviewTargetState* MostRecentTarget(const std::filesystem::path& repository_root) const;
 
  private:
   static std::uint64_t NowUnixMs();

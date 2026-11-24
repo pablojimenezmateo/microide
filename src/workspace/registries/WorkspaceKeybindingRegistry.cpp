@@ -1479,6 +1479,28 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // A diff's previous / next change (its header's buttons). Disabled outside a
+      // diff, so the chord falls through to whatever else wants it there.
+      KeybindingSpec{
+          .id = "diff-previous-change",
+          .action = ActionId::ComparePreviousChange,
+          .key = SDLK_LEFTBRACKET,
+          .modifiers = SDL_KMOD_ALT,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "diff-next-change",
+          .action = ActionId::CompareNextChange,
+          .key = SDLK_RIGHTBRACKET,
+          .modifiers = SDL_KMOD_ALT,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "fold",
           .action = ActionId::Fold,

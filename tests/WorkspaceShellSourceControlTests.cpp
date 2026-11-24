@@ -176,7 +176,9 @@ void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
   const std::vector<std::string> expected = {"Open Changes",       "Open File",
                                              "Stage",              "Discard…",
                                              "Accept Local",     "Accept Remote",
-                                             "Copy Relative Path", "Copy Absolute Path"};
+                                             "Copy Relative Path", "Copy Absolute Path",
+                                             // Disabled with no review comments: no count.
+                                             "Copy Review Comments", "Send Review Comments to Terminal"};
   Expect(labels == expected,
          "the git entry context menu should expose the expected action labels");
 }

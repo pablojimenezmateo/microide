@@ -843,11 +843,12 @@ bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
   return tab != nullptr && CompareTabTakesReviewMarks(*tab);
 }
 
-std::string WorkspaceActionContext::ActiveBranchReviewNotes() const {
-  const CompareTabState* tab =
-      operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
-  return tab != nullptr && CompareTabTakesReviewMarks(*tab) ? state_.branch_review.NotesAsReferences(tab->branch_target)
-                                                             : std::string();
+std::string WorkspaceActionContext::ReviewComments(const std::filesystem::path& scope) const {
+  return operations_.review_comments != nullptr ? operations_.review_comments(scope) : std::string();
+}
+
+std::filesystem::path WorkspaceActionContext::ReviewCommentMenuScope() const {
+  return workspace::ReviewCommentMenuScope(services_.menus.tree_context_menu());
 }
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {

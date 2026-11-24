@@ -20,6 +20,7 @@
 #include "workspace/debug/DebugPaneService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/services/ProjectCatalogService.h"
 #include "workspace/services/PromptSurfaceService.h"

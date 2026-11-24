@@ -14,6 +14,7 @@ namespace microide::workspace {
 enum class StatusBarSegmentId : std::uint8_t {
   Project = 0,
   Branch,
+  Worktrees,  // "3 worktrees" when the repository has linked ones
   Language,
   Indent,
   Encoding,
@@ -32,6 +33,7 @@ constexpr std::string_view StatusBarSegmentName(StatusBarSegmentId id) {
   switch (id) {
     case StatusBarSegmentId::Project: return "project";
     case StatusBarSegmentId::Branch: return "branch";
+    case StatusBarSegmentId::Worktrees: return "worktrees";
     case StatusBarSegmentId::Language: return "language";
     case StatusBarSegmentId::Indent: return "indent";
     case StatusBarSegmentId::Encoding: return "encoding";

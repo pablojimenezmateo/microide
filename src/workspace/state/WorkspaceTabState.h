@@ -36,10 +36,22 @@
 
 namespace microide::workspace {
 
+// A clickable control on a compare surface (CompareControlAt resolves the one
+// under the pointer for the click, the hover highlight and the cursor alike).
 enum class CompareHoverKind {
   CollapsedContextPreviousAction,
   CollapsedContextAllAction,
   CollapsedContextNextAction,
+  // A hunk's review buttons, on its first row (CompareHunkReviewRects).
+  HunkToggleReviewed,
+  HunkComment,
+  // A review note row's buttons (CompareNoteActionRects).
+  NoteEdit,
+  NoteDelete,
+  // The header's buttons (CompareHeaderButtonRects).
+  HeaderPreviousChange,
+  HeaderNextChange,
+  HeaderToggleFileReviewed,
 };
 
 struct CompareHoverState {
@@ -47,6 +59,8 @@ struct CompareHoverState {
   std::size_t presentation_row = 0;
   std::size_t collapsed_run_start_model_row = 0;
   std::size_t collapsed_run_length = 0;
+  // The hunk a hunk or note control acts on (-1: the file's note, or none).
+  int hunk = -1;
   bool operator==(const CompareHoverState&) const = default;
 };
 
@@ -143,9 +157,18 @@ struct CompareTabState {
   compare::CompareSemanticFileMetadata semantic_file;
   compare::ComparePresentationModel presentation;
   CompareReviewHeaderState review_header;
-  // Scratch for the whole-file review-marker resolve, kept on the tab so its
-  // buffer survives across passes instead of being reallocated per refresh.
+  // What the last marker pass resolved (ApplyBranchReviewPresentationMarkers),
+  // kept on the tab so the buffers survive across passes: every hunk's review
+  // marker and note (indexed by hunk), the file's own note, the file's hunk notes
+  // whose change is gone, and how many hunks are marked reviewed. The diff's
+  // review controls read these (CompareHunkReviewStatus, CompareHunkHasNote) and
+  // the presentation's ReviewNote rows are built from them.
   std::vector<compare::BranchReviewHunkMarker> review_hunk_markers;
+  std::string review_file_note;
+  std::vector<compare::BranchReviewNote> review_detached_notes;
+  std::size_t review_reviewed_hunk_count = 0;
+  // Of everything the ReviewNote rows show; a pass that moves it rebuilds the rows.
+  std::uint64_t review_notes_fingerprint = 0;
   // What the rows' review markers were last composed from. The marker pass is
   // O(presentation rows) and runs from the derived-state refresh, which fires on
   // every mouse move; these let it skip the events that moved none of its inputs.
@@ -153,6 +176,11 @@ struct CompareTabState {
   std::uint64_t review_markers_built_presentation_revision = 0;
   std::uint64_t review_markers_built_review_revision = 0;
   bool review_markers_valid = false;
+  // The on-screen row under the pointer (-1: none, and always on a diff that
+  // takes no review marks). The hunk there (CompareHoveredHunk) shows its review
+  // buttons, as the one holding the selection does; kept as a row, not a hunk, so
+  // rows scrolled under a still pointer move the buttons with them.
+  int review_hover_visible_row = -1;
   std::uint64_t presentation_revision = 0;
   compare::CompareBuildOptions build_options;
   bool show_whitespace = false;

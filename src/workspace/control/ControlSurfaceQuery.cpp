@@ -30,9 +30,10 @@ constexpr std::array kPanelContents = {PanelContentKind::Terminal, PanelContentK
 constexpr std::array kContextTargets = {
     TreeContextTargetKind::File,       TreeContextTargetKind::Directory,      TreeContextTargetKind::Root,
     TreeContextTargetKind::Background, TreeContextTargetKind::BreakpointLine, TreeContextTargetKind::GitEntry,
-    TreeContextTargetKind::ResultRow,  TreeContextTargetKind::DebugValueRow};
-constexpr std::array<std::string_view, 8> kContextTargetNames = {
-    "file", "directory", "root", "background", "breakpoint-line", "git-entry", "result-row", "debug-value-row"};
+    TreeContextTargetKind::ResultRow,  TreeContextTargetKind::DebugValueRow,  TreeContextTargetKind::GitReviewScope};
+constexpr std::array<std::string_view, 9> kContextTargetNames = {
+    "file",       "directory",       "root", "background", "breakpoint-line", "git-entry", "result-row",
+    "debug-value-row", "git-review-scope"};
 
 util::JsonValue MenuItems(std::span<const MenuItemSpec> items) {
   util::JsonArray out;

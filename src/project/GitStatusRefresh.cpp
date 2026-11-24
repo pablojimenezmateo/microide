@@ -91,6 +91,7 @@ GitRepositoryState BuildGitRepositoryStateFromStatus(const GitRepository& repo,
   // stayed None forever and the merge resolver's rebase/cherry-pick label was
   // unreachable.
   state.operation_state = DetectGitOperationState(project_root, metadata);
+  state.worktree_count = CountGitWorktrees(project_root, metadata);
   if (state.operation_state == GitOperationStateKind::Merge) {
     state.pending_merge_head = internal::ReadPendingMergeHeadId(project_root, metadata).value_or("");
   }

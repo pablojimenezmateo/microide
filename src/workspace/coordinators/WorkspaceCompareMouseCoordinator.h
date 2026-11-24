@@ -4,6 +4,7 @@
 
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -34,6 +35,12 @@ class CompareMouseCoordinator {
     std::function<bool(CompareTabState&, std::size_t, CompareCollapsedContextAction)>
         expand_compare_collapsed_context;
     std::function<void()> clear_drag_state;
+    // The review or header control under a point (CompareControlAt), and running
+    // one (CompareReviewService::RunControl).
+    std::function<std::optional<CompareControlHit>(const SDL_FRect&, const WorkspaceShell::CompareSurfaceLayout&,
+                                                   const CompareTabState&, float, float)>
+        compare_control_at;
+    std::function<bool(CompareTabState&, const CompareControlHit&)> run_compare_control;
   };
 
   CompareMouseCoordinator(ProjectWorkspaceState& state,

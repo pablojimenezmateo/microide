@@ -27,6 +27,10 @@ struct GitSidebarEntryTextModel {
 std::vector<GitSidebarLine> BuildGitSidebarLines(
     const GitSidebarViewModel& view_model,
     const std::unordered_set<std::string>* collapsed_directory_keys = nullptr);
+// A directory line's path, relative to the repository (the line's key carries
+// it); empty for any other line.
+std::string_view GitSidebarDirectoryPath(const GitSidebarLine& line);
+
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
     const std::vector<GitSidebarLine>& lines,
     std::size_t selected_entry_index);

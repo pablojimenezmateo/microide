@@ -215,6 +215,10 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::GitSwitchBranch, "Switch Branch…"),
       MenuItem(ActionId::GitWorktrees, "Switch Worktree…"),
       MenuItem(ActionId::GitCommits, "Review Commit…"),
+      // The review's comments, for an agent: labelled with their count
+      // (WorkspaceShell::MenuItemLabel).
+      MenuItem(ActionId::CopyBranchReviewNotes, "Copy Review Comments"),
+      MenuItem(ActionId::TerminalInsertBranchReviewNotes, "Send Review Comments to Terminal"),
       MenuSeparator(),
       // Sync first: it is the everyday verb, and grouping pull/push under it keeps
       // the individual halves available without making them the default choice.
@@ -234,6 +238,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::CompareNextReviewFile, "Next File in Review"),
       MenuItem(ActionId::ComparePreviousReviewFile, "Previous File in Review"),
+      MenuItem(ActionId::CompareNextChange, "Next Change", "Alt+]"),
+      MenuItem(ActionId::ComparePreviousChange, "Previous Change", "Alt+["),
       MenuItem(ActionId::CompareToggleIgnoreWhitespace, "Diff: Ignore Whitespace"),
       MenuItem(ActionId::CompareToggleShowWhitespace, "Diff: Show Whitespace"),
       MenuItem(ActionId::CompareCopyHunkPatch, "Copy Change as Patch"),
@@ -479,6 +485,14 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
+      MenuSeparator(),
+      MenuItem(ActionId::CopyBranchReviewNotes, "Copy Review Comments"),
+      MenuItem(ActionId::TerminalInsertBranchReviewNotes, "Send Review Comments to Terminal"),
+  });
+  // A git sidebar directory (or the Outgoing header): its review comments.
+  static const auto kGitReviewScopeItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CopyBranchReviewNotes, "Copy Review Comments"),
+      MenuItem(ActionId::TerminalInsertBranchReviewNotes, "Send Review Comments to Terminal"),
   });
 
   // Search hits, problems and tests are all "a row that points at a file". The
@@ -520,6 +534,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       return kBreakpointItems;
     case TreeContextTargetKind::GitEntry:
       return kGitEntryItems;
+    case TreeContextTargetKind::GitReviewScope:
+      return kGitReviewScopeItems;
     case TreeContextTargetKind::None:
     default:
       return {};

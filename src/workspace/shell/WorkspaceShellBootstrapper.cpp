@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/ProjectRootPresence.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
@@ -312,6 +313,10 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
                                       })};
                 }
                 return (*cached)->second;
+              },
+          .review_comment_count =
+              [shell](const std::filesystem::path& scope) {
+                return shell->MakeCompareReviewService().CommentCount(scope);
               },
       });
 }

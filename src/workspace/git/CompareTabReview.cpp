@@ -1,9 +1,12 @@
 #include "workspace/git/CompareTabReview.h"
 
+#include "util/Fnv1a.h"
+
 #include <algorithm>
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "compare/BranchReviewStateTypes.h"
 #include "util/PerformanceTrace.h"
@@ -17,7 +20,26 @@ namespace {
 compare::ComparePresentationOptions PresentationOptionsFromTab(const CompareTabState& compare_tab) {
   return compare::ComparePresentationOptions{
       .show_whitespace = compare_tab.show_whitespace,
+      .hunk_markers = &compare_tab.review_hunk_markers,
+      .file_note = compare_tab.review_file_note,
+      .detached_notes = &compare_tab.review_detached_notes,
   };
+}
+
+// Rebuild the rows after the notes they show changed, keeping the selection on
+// the line it was on: a note row inserted above it would otherwise move it.
+void RebuildPresentationForNotes(CompareTabState& compare_tab) {
+  const bool on_model_row = [&] {
+    const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(compare_tab, compare_tab.selected_row);
+    return row != nullptr && row->kind == compare::ComparePresentationRowKind::Model;
+  }();
+  const std::size_t selected_model_row = CompareTabSelectedModelRow(compare_tab);
+  RefreshCompareTabPresentation(compare_tab);
+  if (on_model_row && !compare_tab.model.rows.empty()) {
+    compare_tab.selected_row =
+        compare::ComparePresentationRowForModelRow(compare_tab.presentation, selected_model_row);
+  }
+  RefreshCompareWrapLayoutForContent(compare_tab);
 }
 
 std::string CompareReviewHeaderModeLabel(compare::CompareReviewMode mode) {
@@ -155,6 +177,13 @@ void ApplyBranchReviewPresentationMarkers(
     const compare::BranchReviewStateService& review_service) {
   if (!CompareTabTakesReviewMarks(compare_tab)) {
     compare_tab.review_markers_valid = false;
+    compare_tab.review_reviewed_hunk_count = 0;
+    compare_tab.review_hunk_markers.clear();
+    compare_tab.review_file_note.clear();
+    compare_tab.review_detached_notes.clear();
+    if (std::exchange(compare_tab.review_notes_fingerprint, 0) != 0) {
+      RebuildPresentationForNotes(compare_tab);
+    }
     return;
   }
   // This runs from the compare tab's derived-state refresh, which fires from ~10
@@ -187,8 +216,41 @@ void ApplyBranchReviewPresentationMarkers(
       .path = compare_tab.path,
       .model = &compare_tab.model,
   };
-  review_service.ResolveHunkMarkers(query, &compare_tab.review_hunk_markers);
+  review_service.ResolveHunkMarkers(query, &compare_tab.review_hunk_markers, &compare_tab.review_detached_notes);
   const std::vector<compare::BranchReviewHunkMarker>& markers = compare_tab.review_hunk_markers;
+  compare_tab.review_file_note =
+      review_service.NoteText(query, compare::BranchReviewNoteScope::File).value_or(std::string());
+
+  // The count the header shows, and the notes the rows show. A note that moved
+  // (added, edited, deleted, outdated, or its hunk renumbered by an edit) rebuilds
+  // the rows, which carry the notes; the marker pass below then runs on the new
+  // rows. 0 is "no notes": what a tab that never had one starts at.
+  std::size_t reviewed = 0;
+  std::uint64_t fingerprint = 0;
+  const auto mix_note = [&fingerprint](std::uint64_t place, std::string_view text) {
+    fingerprint = util::Fnv1aBytes(util::Fnv1aValue(fingerprint == 0 ? util::kFnv1aOffsetBasis : fingerprint, place),
+                                   text) | 1u;
+  };
+  for (std::size_t hunk = 0; hunk < markers.size(); ++hunk) {
+    reviewed += markers[hunk].status == compare::BranchReviewMarkerStatus::Reviewed ? 1 : 0;
+    if (markers[hunk].has_note) {
+      mix_note((hunk << 1) | (markers[hunk].note_outdated ? 1u : 0u), markers[hunk].note_text);
+    }
+  }
+  compare_tab.review_reviewed_hunk_count = reviewed;
+  if (!compare_tab.review_file_note.empty()) {
+    mix_note(~std::uint64_t{0}, compare_tab.review_file_note);
+  }
+  for (const compare::BranchReviewNote& detached : compare_tab.review_detached_notes) {
+    mix_note(~std::uint64_t{1} - static_cast<std::uint64_t>(detached.hunk_identity.has_value()
+                                                                ? detached.hunk_identity->new_start
+                                                                : 0),
+             detached.text);
+  }
+  if (std::exchange(compare_tab.review_notes_fingerprint, fingerprint) != fingerprint) {
+    RebuildPresentationForNotes(compare_tab);
+    compare_tab.review_markers_built_presentation_revision = compare_tab.presentation_revision;
+  }
 
   for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
     row.review_marker_label.clear();
@@ -211,6 +273,7 @@ void ApplyBranchReviewPresentationMarkers(
     }
     compare::ComposeComparePresentationDisplaySummary(row);
   }
+  RefreshCompareReviewHeader(compare_tab);
 }
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
@@ -263,7 +326,14 @@ void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
   }
   summary += "  ·  ";
   AppendUnsigned(summary, compare_tab.model.hunks.size());
-  summary += compare_tab.model.hunks.size() == 1 ? " hunk" : " hunks";
+  // "changes", as the diff's buttons and menus call them.
+  summary += compare_tab.model.hunks.size() == 1 ? " change" : " changes";
+  // A review's progress: how many of those the reader has marked.
+  if (CompareTabTakesReviewMarks(compare_tab) && !compare_tab.model.hunks.empty()) {
+    summary += ", ";
+    AppendUnsigned(summary, compare_tab.review_reviewed_hunk_count);
+    summary += " reviewed";
+  }
   switch (compare_tab.semantic_file.file_kind) {
     case compare::CompareSemanticFileKind::Binary:
       summary += "  ·  binary";

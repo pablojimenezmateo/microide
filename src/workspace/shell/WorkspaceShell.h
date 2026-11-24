@@ -136,6 +136,7 @@ class DirtyPromptCoordinator;
 class CompareInteractionCoordinator;
 class DiffTabCoordinator;
 class CompareMergeService;
+class CompareReviewService;
 class TerminalPanelService;
 class SidebarCoordinator;
 class SidebarService;

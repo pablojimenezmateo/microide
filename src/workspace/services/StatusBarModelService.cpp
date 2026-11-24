@@ -21,6 +21,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
   // steady frame must not materialize a segment's text again just to hand it over.
   StatusBarService::StatusBarSegmentUpdate project_segment;
   StatusBarService::StatusBarSegmentUpdate branch_segment;
+  StatusBarService::StatusBarSegmentUpdate worktrees_segment;
   if (!project_state.root.empty()) {
     // See GitSnapshotDerivedCache: both of these are per-frame costs keyed on
     // state that moves on a project switch / git snapshot, not on a frame.
@@ -157,6 +158,20 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project_segment.command = "sidebar-show";
     project_segment.command_arg = "git";
     branch_segment = {};
+    // The repository's working trees, once there is more than the one: where
+    // parallel agents work. A click switches to one (Git > Switch Worktree...).
+    if (repo_available && !refresh_failed && git_state.worktree_count > 1) {
+      if (worktree_segment_cache_.count != git_state.worktree_count) {
+        worktree_segment_cache_.count = git_state.worktree_count;
+        worktree_segment_cache_.text.clear();
+        util::AppendUnsigned(worktree_segment_cache_.text, git_state.worktree_count);
+        worktree_segment_cache_.text.append(" worktrees");
+      }
+      worktrees_segment.text = worktree_segment_cache_.text;
+      worktrees_segment.tooltip = "Switch Worktree…";
+      worktrees_segment.command = "git-worktrees";
+      worktrees_segment.visible = true;
+    }
   }
   if (project_state.root.empty()) {
     project_segment_cache_ = {};
@@ -172,6 +187,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     branch_segment.command = {};  // startup-mode text is a readout, not a control
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Branch, branch_segment);
+  status_bar_service.SetSegment(StatusBarSegmentId::Worktrees, worktrees_segment);
 
   if (active_viewport != nullptr) {
     const editor::TextViewport* const viewport = active_viewport;

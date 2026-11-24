@@ -76,6 +76,7 @@ void RegisterReviewTabPlanTests(std::vector<TestCase>& tests);
 void RegisterRoamingSessionTests(std::vector<TestCase>& tests);
 void RegisterWorktreePickTests(std::vector<TestCase>& tests);
 void RegisterReviewSessionTests(std::vector<TestCase>& tests);
+void RegisterReviewControlsTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
 void RegisterPluginPureHelperTests(std::vector<TestCase>& tests);
 void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests);
@@ -337,6 +338,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterRoamingSessionTests(tests);
   RegisterWorktreePickTests(tests);
   RegisterReviewSessionTests(tests);
+  RegisterReviewControlsTests(tests);
   RegisterMergeConflictResolutionTests(tests);
   RegisterContributionRegistryTests(tests);
   RegisterPhase4Tests(tests);

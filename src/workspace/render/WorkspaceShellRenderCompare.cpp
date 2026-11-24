@@ -24,6 +24,7 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/DiffOverviewMarkers.h"
 #include "workspace/render/CompareRowUnits.h"
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/render/PreparedFrameState.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
@@ -239,24 +240,70 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   std::size_t blame_index = 0;
 
   DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f), theme_.border);
-  DrawFilledRect(renderer,
-                 MakeRect(surface.center_x, rect.y, 1.0f, content_height),
-                 theme_.border);
-  DrawFilledRect(renderer, MakeRect(surface.right_x - 1.0f, rect.y, 1.0f, content_height),
-                 theme_.border);
+  // The panes' dividers start under the summary line: that line runs the whole
+  // width (its text, the shortcut hint, the header's buttons), and a divider
+  // through it cut whatever sat at the middle in two.
+  const float divider_top = std::max(rect.y, surface.header_y - 1.0f);
+  const float divider_height = std::max(0.0f, content_height - (divider_top - rect.y));
+  DrawFilledRect(renderer, MakeRect(surface.center_x, divider_top, 1.0f, divider_height), theme_.border);
+  DrawFilledRect(renderer, MakeRect(surface.right_x - 1.0f, divider_top, 1.0f, divider_height), theme_.border);
 
-  if (!compare_tab->review_header.summary_line.empty()) {
+  // A filled, bordered box with its label centred: every button of the surface
+  // (collapsed-context, header, review) and a hunk's review badge.
+  const auto draw_label_box = [&](const SDL_FRect& box, std::string_view label, SDL_Color fill, SDL_Color border,
+                                  SDL_Color text) {
+    DrawFilledRect(renderer, box, fill);
+    DrawRect(renderer, box, border);
+    editor_text_renderer_.DrawStringOn(
+        renderer, box.x + std::max(0.0f, (box.w - editor_text_renderer_.MeasureWidth(label)) * 0.5f),
+        box.y + std::max(0.0f, (box.h - editor_text_renderer_.LineHeight()) * 0.5f), text, fill, label);
+  };
+  // A button, emphasised while hovered (or `emphasized`: its row is selected, or
+  // it names a state that is on).
+  const auto draw_button = [&](const SDL_FRect& button_rect, std::string_view label, bool hovered,
+                               bool emphasized = false) {
+    const bool strong = hovered || emphasized;
+    draw_label_box(button_rect, label,
+                   strong ? theme_.chrome_active
+                          : render::BlendColors(theme_.surface_raised, theme_.editor_background, 0.36f),
+                   strong ? theme_.text_secondary : theme_.border, strong ? theme_.text_primary : theme_.text_muted);
+  };
+  const CompareControlGeometry control_geometry = MakeCompareControlGeometry(rect, surface);
+  const auto hovered_control = [&compare_tab](CompareHoverKind kind, std::size_t presentation_row, int hunk) {
+    return compare_tab->hover_state.has_value() && compare_tab->hover_state->kind == kind &&
+           compare_tab->hover_state->presentation_row == presentation_row && compare_tab->hover_state->hunk == hunk;
+  };
+  {
+    // The header line: the summary, then (right-aligned) Mark File Reviewed on a
+    // review and Previous / Next Change; the shortcut hint between when it fits.
+    const CompareHeaderButtonRects header =
+        BuildCompareHeaderButtonRects(editor_text_renderer_, control_geometry, *compare_tab);
     constexpr std::string_view kShortcutHint = "Ctrl+E  keyboard-shortcuts";
+    const float summary_x = rect.x + 8.0f;
+    const float summary_full = editor_text_renderer_.MeasureWidth(compare_tab->review_header.summary_line);
     const float hint_width = editor_text_renderer_.MeasureWidth(kShortcutHint);
-    const float hint_x = rect.x + std::max(8.0f, content_width - hint_width - 10.0f);
-    const float summary_width =
-        std::max(0.0f, (hint_x - 14.0f) - (rect.x + 8.0f));
-    editor_text_renderer_.DrawString(renderer, rect.x + 8.0f, surface.review_summary_y,
-                              theme_.text_primary,
-                              TruncateLabelView(compare_tab->review_header.summary_line,
-                                                summary_width));
-    editor_text_renderer_.DrawString(renderer, hint_x, surface.review_summary_y,
-                              theme_.text_muted, kShortcutHint);
+    const float hint_x = header.text_right_edge - hint_width;
+    const bool show_hint = hint_x - 14.0f >= summary_x + summary_full;
+    const float summary_width = std::max(0.0f, (show_hint ? hint_x - 14.0f : header.text_right_edge) - summary_x);
+    if (!compare_tab->review_header.summary_line.empty()) {
+      editor_text_renderer_.DrawString(renderer, summary_x, surface.review_summary_y, theme_.text_primary,
+                                       TruncateLabelView(compare_tab->review_header.summary_line, summary_width));
+    }
+    if (show_hint) {
+      editor_text_renderer_.DrawString(renderer, hint_x, surface.review_summary_y, theme_.text_muted, kShortcutHint);
+    }
+    if (header.previous.has_value()) {
+      draw_button(*header.previous, kComparePreviousChangeLabel,
+                  hovered_control(CompareHoverKind::HeaderPreviousChange, 0, -1));
+    }
+    if (header.next.has_value()) {
+      draw_button(*header.next, kCompareNextChangeLabel, hovered_control(CompareHoverKind::HeaderNextChange, 0, -1));
+    }
+    if (header.file_reviewed.has_value()) {
+      const bool file_reviewed = CompareFileFullyReviewed(*compare_tab);
+      draw_button(*header.file_reviewed, CompareFileReviewedLabel(file_reviewed),
+                  hovered_control(CompareHoverKind::HeaderToggleFileReviewed, 0, -1), file_reviewed);
+    }
   }
   editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
@@ -403,28 +450,32 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const SDL_FRect row_rect =
           MakeRect(rect.x, y - 1.0f, content_width, surface.line_height);
       DrawFilledRect(renderer, row_rect, summary_background);
-      const auto draw_context_button = [&](const SDL_FRect& button_rect,
-                                           std::string_view label,
-                                           bool hovered) {
-        const bool emphasized = selected || hovered;
-        const SDL_Color fill = emphasized
-                                   ? theme_.chrome_active
-                                   : render::BlendColors(theme_.surface_raised,
-                                                         theme_.editor_background, 0.36f);
-        DrawFilledRect(renderer, button_rect, fill);
-        DrawRect(renderer, button_rect, emphasized ? theme_.text_secondary : theme_.border);
-        const float text_x =
-            button_rect.x +
-            std::max(0.0f, (button_rect.w - editor_text_renderer_.MeasureWidth(label)) * 0.5f);
-        const float text_y =
-            button_rect.y +
-            std::max(0.0f, (button_rect.h - editor_text_renderer_.LineHeight()) * 0.5f);
-        editor_text_renderer_.DrawStringOn(renderer, text_x, text_y,
-                                    emphasized ? theme_.text_primary : theme_.text_muted,
-                                    fill, label);
-      };
       const std::string& summary = presentation_row->display_summary_text;
       float summary_width = content_width - 16.0f;
+      if (presentation_row->kind == compare::ComparePresentationRowKind::ReviewNote) {
+        // A review comment: a block under its hunk with an accent edge, the
+        // comment itself, and its Edit / Delete buttons.
+        const CompareNoteActionRects note = BuildCompareNoteActionRects(editor_text_renderer_, control_geometry, row);
+        const SDL_Color block_fill = render::BlendColors(theme_.editor_background, theme_.accent, 0.16f);
+        DrawFilledRect(renderer, note.block, block_fill);
+        DrawRect(renderer, note.block, render::BlendColors(theme_.border, theme_.accent, 0.5f));
+        DrawFilledRect(renderer, MakeRect(note.block.x, note.block.y, 3.0f, note.block.h), theme_.accent);
+        const std::string_view caption = CompareNoteCaption(*compare_tab, presentation_row->hunk_index);
+        const float caption_x = note.text_x;
+        const float caption_width = editor_text_renderer_.MeasureWidth(caption);
+        const float text_limit = note.text_right_edge;
+        if (caption_x + caption_width < text_limit) {
+          editor_text_renderer_.DrawStringOn(renderer, caption_x, y, theme_.accent, block_fill, caption);
+          editor_text_renderer_.DrawStringOn(
+              renderer, caption_x + caption_width, y, theme_.text_primary, block_fill,
+              TruncateLabelView(presentation_row->summary_text, text_limit - caption_x - caption_width));
+        }
+        draw_button(note.edit, kCompareNoteEditLabel,
+                    hovered_control(CompareHoverKind::NoteEdit, presentation_index, presentation_row->hunk_index));
+        draw_button(note.remove, kCompareNoteDeleteLabel,
+                    hovered_control(CompareHoverKind::NoteDelete, presentation_index, presentation_row->hunk_index));
+        continue;
+      }
       if (presentation_row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
         const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
             rect, surface.rows_y, surface.line_height, surface.show_vertical, row);
@@ -449,14 +500,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         const float summary_x = block_rect.x + 8.0f;
         summary_width = std::max(0.0f, action_rects.text_right_edge - summary_x);
         if (action_rects.previous_rect.has_value()) {
-          draw_context_button(*action_rects.previous_rect, "Show previous 20",
-                              hovered_action(CompareHoverKind::CollapsedContextPreviousAction));
+          draw_button(*action_rects.previous_rect, "Show previous 20",
+                      hovered_action(CompareHoverKind::CollapsedContextPreviousAction), selected);
         }
-        draw_context_button(action_rects.all_rect, "Show all",
-                            hovered_action(CompareHoverKind::CollapsedContextAllAction));
+        draw_button(action_rects.all_rect, "Show all",
+                    hovered_action(CompareHoverKind::CollapsedContextAllAction), selected);
         if (action_rects.next_rect.has_value()) {
-          draw_context_button(*action_rects.next_rect, "Show next 20",
-                              hovered_action(CompareHoverKind::CollapsedContextNextAction));
+          draw_button(*action_rects.next_rect, "Show next 20",
+                      hovered_action(CompareHoverKind::CollapsedContextNextAction), selected);
         }
         editor_text_renderer_.DrawString(renderer, summary_x, y,
                                   selected ? theme_.text_primary : theme_.text_secondary,
@@ -890,19 +941,42 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     if (wrap_row.first) {
       draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
     }
-    // A branch review's hunk marker ("[reviewed]", "*" for a note), on the hunk's
-    // first row at the right edge of the working side. The builder composes it
-    // onto the hunk's model rows (CompareTabReview), and the summary text it lives
-    // in is drawn only for collapsed-context rows -- so marking a hunk reviewed or
-    // writing a note on it was persisted and never shown anywhere.
-    if (wrap_row.first && compare_row.hunk >= 0 && !presentation_row->review_marker_label.empty() &&
-        (model_index == 0 || compare_tab->model.rows[model_index - 1].hunk != compare_row.hunk)) {
-      const std::string_view tag = presentation_row->display_summary_text;
-      const std::string_view shown = tag.substr(0, tag.find(' '));
-      const float tag_width = editor_text_renderer_.MeasureWidth(shown);
-      const float tag_x = surface.right_x + surface.gutter_width + surface.right_width - tag_width - 8.0f;
-      if (tag_x > surface.right_x + surface.gutter_width) {
-        editor_text_renderer_.DrawString(renderer, tag_x, y, theme_.accent, shown);
+    // A review's hunk controls at the right edge of the working side, on the
+    // hunk's first row -- or the view's top row inside a longer hunk
+    // (CompareHunkControlsOnRow): its badge while marked ("Reviewed"), and Mark
+    // Reviewed / Unmark and Comment while it is hovered or holds the selection.
+    {
+      if (const int hunk = CompareHunkControlsOnRow(*compare_tab, wrap_row, row); hunk >= 0) {
+        const CompareHunkReviewRects controls =
+            BuildCompareHunkReviewRects(editor_text_renderer_, control_geometry, *compare_tab, hunk, row);
+        // The strip sits over the end of a long line: back it with the row's own
+        // fill so no text shows between or around its boxes.
+        for (const std::optional<SDL_FRect>& leftmost : {controls.badge, controls.toggle, controls.comment}) {
+          if (leftmost.has_value()) {
+            const float right_end = surface.right_x + surface.gutter_width + surface.right_width;
+            DrawFilledRect(renderer, MakeRect(leftmost->x - 4.0f, y - 1.0f, right_end - leftmost->x + 4.0f,
+                                              surface.line_height),
+                           right_row_background);
+            break;
+          }
+        }
+        if (controls.badge.has_value()) {
+          // A state, not a control: a borderless tinted pill, where every button
+          // of the surface is a bordered box.
+          const compare::BranchReviewMarkerStatus status = CompareHunkReviewStatus(*compare_tab, hunk);
+          const SDL_Color tone =
+              status == compare::BranchReviewMarkerStatus::Reviewed ? theme_.diff_added : theme_.diff_modified;
+          const SDL_Color fill = render::BlendColors(theme_.editor_background, tone, 0.22f);
+          draw_label_box(*controls.badge, CompareHunkBadgeLabel(status), fill, fill, theme_.text_secondary);
+        }
+        if (controls.toggle.has_value()) {
+          draw_button(*controls.toggle, CompareHunkToggleLabel(CompareHunkReviewStatus(*compare_tab, hunk)),
+                      hovered_control(CompareHoverKind::HunkToggleReviewed, presentation_index, hunk));
+        }
+        if (controls.comment.has_value()) {
+          draw_button(*controls.comment, kCompareHunkCommentLabel,
+                      hovered_control(CompareHoverKind::HunkComment, presentation_index, hunk));
+        }
       }
     }
   }

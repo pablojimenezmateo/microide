@@ -126,6 +126,11 @@ class StatusBarModelService {
   };
 
   ProjectSegmentCache project_segment_cache_;
+  // "N worktrees", composed when the count moves.
+  struct WorktreeSegmentCache {
+    std::size_t count = 0;
+    std::string text;
+  } worktree_segment_cache_;
   EditorSegmentsCache editor_segments_cache_;
 };
 

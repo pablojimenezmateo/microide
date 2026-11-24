@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <charconv>
 #include <system_error>
 
@@ -13,16 +14,30 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kCollapsedContextButtonGap = 6.0f;
-constexpr float kCollapsedContextButtonHeight = 16.0f;
-constexpr float kCollapsedContextButtonHorizontalPadding = 12.0f;
-
-float CollapsedContextButtonWidth(const render::TextRenderer& text_renderer,
-                                  std::string_view label) {
-  return std::max(48.0f, text_renderer.MeasureWidth(label) + kCollapsedContextButtonHorizontalPadding);
-}
+constexpr float kCompareButtonHeight = 16.0f;
+constexpr float kCompareButtonHorizontalPadding = 12.0f;
 
 }  // namespace
+
+float CompareButtonWidth(const render::TextRenderer& text_renderer, std::string_view label) {
+  return std::max(48.0f, text_renderer.MeasureWidth(label) + kCompareButtonHorizontalPadding);
+}
+
+SDL_FRect CompareButtonInRow(float x, const SDL_FRect& row_rect, float width) {
+  const float height = std::min(kCompareButtonHeight, std::max(0.0f, row_rect.h));
+  return MakeRect(x, row_rect.y + std::floor((row_rect.h - height) * 0.5f), width, height);
+}
+
+std::optional<SDL_FRect> CompareButtonRowPlacer::Place(std::string_view label) {
+  const float width = CompareButtonWidth(text_renderer, label);
+  if (right - width < left_limit) {
+    return std::nullopt;
+  }
+  right -= width;
+  const SDL_FRect rect = CompareButtonInRow(right, row_rect, width);
+  right -= kCompareButtonGap;
+  return rect;
+}
 
 std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
   const auto [end, ec] = std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
@@ -37,35 +52,20 @@ CollapsedContextActionRects BuildCollapsedContextActionRects(
     const SDL_FRect& row_rect,
     bool show_previous,
     bool show_next) {
-  // As tall as the bar allows: at a small editor font the bar (one line) is
-  // shorter than the button, which sat at its top and hung below it -- a frame
-  // repainting the bar's row left the overhang behind (soak 8cffab44c08e).
-  const float button_height = std::min(kCollapsedContextButtonHeight, std::max(0.0f, row_rect.h));
-  const float center_y = row_rect.y + std::floor((row_rect.h - button_height) * 0.5f);
-  const float all_width = CollapsedContextButtonWidth(text_renderer, "Show all");
-  const float next_width = show_next ? CollapsedContextButtonWidth(text_renderer, "Show next 20") : 0.0f;
-  const float previous_width =
-      show_previous ? CollapsedContextButtonWidth(text_renderer, "Show previous 20") : 0.0f;
-
-  float x = row_rect.x + row_rect.w - all_width;
-  if (show_next) {
-    x -= kCollapsedContextButtonGap + next_width;
-  }
-  if (show_previous) {
-    x -= kCollapsedContextButtonGap + previous_width;
-  }
-
+  // Right to left, unclipped (the bar has always kept all three).
+  CompareButtonRowPlacer placer{.text_renderer = text_renderer,
+                                .row_rect = row_rect,
+                                .right = row_rect.x + row_rect.w,
+                                .left_limit = -std::numeric_limits<float>::infinity()};
   CollapsedContextActionRects rects;
-  rects.text_right_edge = std::max(row_rect.x, x - 10.0f);
-  if (show_previous) {
-    rects.previous_rect = MakeRect(x, center_y, previous_width, button_height);
-    x += previous_width + kCollapsedContextButtonGap;
-  }
-  rects.all_rect = MakeRect(x, center_y, all_width, button_height);
-  x += all_width + kCollapsedContextButtonGap;
   if (show_next) {
-    rects.next_rect = MakeRect(x, center_y, next_width, button_height);
+    rects.next_rect = placer.Place("Show next 20");
   }
+  rects.all_rect = *placer.Place("Show all");
+  if (show_previous) {
+    rects.previous_rect = placer.Place("Show previous 20");
+  }
+  rects.text_right_edge = std::max(row_rect.x, placer.right + kCompareButtonGap - 10.0f);
   return rects;
 }
 

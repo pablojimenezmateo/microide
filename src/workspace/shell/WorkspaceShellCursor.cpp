@@ -1,3 +1,4 @@
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/render/GitSidebarPaint.h"
 #include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -823,8 +824,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (Contains(divider_rect, x, y)) {
       return CursorKind::EwResize;
     }
-    // Resolved through the same two helpers the click and the hover highlight use,
+    // Resolved through the same helpers the click and the hover highlight use,
     // so the hand cursor cannot appear over a button the click will ignore.
+    if (CompareControlAt(editor_text_renderer_, MakeCompareControlGeometry(view_surface, surface_layout), *compare_tab,
+                         x, y)
+            .has_value()) {
+      return CursorKind::Pointer;
+    }
     if (const auto hit = CompareCollapsedContextRowAt(
             *compare_tab, view_surface, surface_layout.rows_y,
             surface_layout.line_height, surface_layout.show_vertical, y);
@@ -1042,6 +1048,14 @@ void WorkspaceShell::ClearMouseHoverState() {
   // A toast held up by the pointer would otherwise stay up forever once the
   // pointer leaves the window without crossing the toast's edge.
   notification_service_.SetHovered(std::nullopt, std::nullopt, SDL_GetTicks());
+  // Likewise a diff's hovered control and hovered change (its review buttons):
+  // they are its rows' keys, so a frame repaints them without.
+  if (CompareTabState* compare = ActiveCompareTab();
+      compare != nullptr && (compare->hover_state.has_value() || compare->review_hover_visible_row >= 0)) {
+    compare->hover_state.reset();
+    compare->review_hover_visible_row = -1;
+    RequestPreparedFrame();
+  }
 
   if (cursor_kind_ == CursorKind::Default) {
     return;

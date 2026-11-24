@@ -602,6 +602,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::CompareCopyPath:
     case ActionId::CompareNextReviewFile:
     case ActionId::ComparePreviousReviewFile:
+    case ActionId::CompareNextChange:
+    case ActionId::ComparePreviousChange:
     case ActionId::MergeCopyIncoming:
     case ActionId::MergeCopyCurrent:
     case ActionId::MergeResetConflict: {
@@ -613,12 +615,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     }
     case ActionId::CopyBranchReviewNotes:
     case ActionId::TerminalInsertBranchReviewNotes: {
-      if (!context_.ActiveTabIsBranchReview()) {
-        return reject(std::string(kNotABranchReview));
-      }
-      std::string notes = context_.ActiveBranchReviewNotes();
+      // A path narrows it to a file or directory: typed, or the git view row the
+      // menu was opened on.
+      const std::filesystem::path scope =
+          args.empty() ? context_.ReviewCommentMenuScope() : std::filesystem::path(args.front());
+      std::string notes = context_.ReviewComments(scope);
       if (notes.empty()) {
-        return reject("This review has no notes (branch-review-note <text> adds one)");
+        return reject(scope.empty() ? "No review comments yet (Comment on a change in a review diff)"
+                                    : "No review comments under " + scope.filename().string());
       }
       if (id == ActionId::CopyBranchReviewNotes) {
         context_.WriteClipboardText(notes);

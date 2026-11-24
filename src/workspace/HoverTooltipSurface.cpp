@@ -26,6 +26,7 @@
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/render/CompareReviewControls.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/services/StatusBarService.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
@@ -329,6 +330,20 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
           }
           found = hit(std::string(segment.tooltip), rect);
         });
+  }
+
+  // 7) A review comment too long for its row in a diff: the whole comment.
+  if (!found && ActiveTabIsCompare()) {
+    const SDL_FRect view_surface = ActiveTabSurface(layout);
+    if (const CompareTabState* compare_tab = ActiveCompareTab();
+        compare_tab != nullptr && Contains(view_surface, x, y)) {
+      if (const std::optional<CompareClippedNote> note = CompareClippedNoteAt(
+              editor_text_renderer_,
+              MakeCompareControlGeometry(view_surface, ComputeCompareSurfaceLayout(view_surface, *compare_tab)),
+              *compare_tab, x, y)) {
+        found = hit(std::string(note->text), note->block);
+      }
+    }
   }
 
   if (!found) {

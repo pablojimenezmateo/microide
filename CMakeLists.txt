@@ -738,12 +738,14 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/git/CompareTabReview.cpp
   src/workspace/git/BranchReviewStateBridge.cpp
   src/workspace/services/CompareMergeService.cpp
+  src/workspace/services/CompareReviewService.cpp
   src/workspace/git/MergeResolverContext.cpp
   src/workspace/git/MergeResultValidation.cpp
   src/workspace/EditorPreferenceSettings.cpp
   src/workspace/FileUri.cpp
   src/workspace/HostPathTranslator.cpp
   src/workspace/render/CompareMergeRender.cpp
+  src/workspace/render/CompareReviewControls.cpp
   src/workspace/services/ProjectCatalogService.cpp
   src/workspace/git/GitOperationService.cpp
   src/workspace/git/GitSidebarHeaderLayout.cpp
@@ -1384,6 +1386,7 @@ add_executable(microide_tests
   tests/RoamingSessionTests.cpp
   tests/WorktreePickTests.cpp
   tests/ReviewSessionTests.cpp
+  tests/ReviewControlsTests.cpp
   tests/ExternalRepoChangeTests.cpp
   tests/ProjectChangeRedrawTests.cpp
   tests/ScopedRenderClipTests.cpp

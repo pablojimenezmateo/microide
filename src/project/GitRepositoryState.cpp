@@ -160,4 +160,25 @@ GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repos
   return GitOperationStateKind::None;
 }
 
+std::size_t CountGitWorktrees(const std::filesystem::path& repository_root, const GitMetadataSource& metadata) {
+  const std::optional<std::filesystem::path> git_dir = metadata.ReadableGitDirectory(repository_root);
+  if (!git_dir.has_value()) {
+    return 0;
+  }
+  const std::filesystem::path common = internal::ResolveCommonDir(*git_dir);
+  std::size_t count = 1;  // the main working tree
+  std::error_code error;
+  for (std::filesystem::directory_iterator it(common / "worktrees", error), end; !error && it != end;
+       it.increment(error)) {
+    // `gitdir` names the tree's `.git` file; a tree whose directory is gone is
+    // prunable, and `git worktree list` marks it so: not a tree to switch to.
+    const std::string gitdir = internal::ReadFirstLineOfGitFile(it->path() / "gitdir").value_or(std::string());
+    std::error_code exists_error;
+    if (!gitdir.empty() && std::filesystem::exists(gitdir, exists_error) && !exists_error) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 }  // namespace microide::project

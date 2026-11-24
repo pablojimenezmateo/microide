@@ -37,6 +37,9 @@ enum class TreeContextTargetKind {
   // Debug pane Variables / Watch row. Acts on the pane's selected row rather than
   // a path, so it carries no path of its own.
   DebugValueRow,
+  // Git sidebar: right-click on a directory row, or on the Outgoing section's
+  // header (the whole review): the review comments under it.
+  GitReviewScope,
 };
 
 struct MenuItemSpec {

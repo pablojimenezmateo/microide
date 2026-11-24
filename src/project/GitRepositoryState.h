@@ -146,6 +146,10 @@ struct GitRepositoryState {
   // background refresh so the merge resolver's "Incoming" caption need not read
   // the git directory on the shell thread. Empty otherwise.
   std::string pending_merge_head;
+  // How many working trees the repository has (the main one and every linked one
+  // whose directory still exists), read by the background refresh; 0 when the
+  // git directory cannot be read here (a remote project's).
+  std::size_t worktree_count = 0;
   std::uint64_t generation = 0;
   std::uint64_t refreshed_at_ms = 0;
   bool stale = false;
@@ -162,6 +166,12 @@ struct GitRepositoryState {
 // Reads the git directory through `metadata` (the host's, for a remote project).
 GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root,
                                               const GitMetadataSource& metadata);
+
+// The repository's working trees -- what `git worktree list` lists less the
+// prunable ones -- counted from the git directory with no process: 1 plus every
+// `<common dir>/worktrees/<name>` whose `gitdir` file names a directory that
+// exists. 0 when the git directory cannot be read through `metadata`.
+std::size_t CountGitWorktrees(const std::filesystem::path& repository_root, const GitMetadataSource& metadata);
 
 // `relative_path` is the generic text git already emits, so the common case is one
 // string move and a UTF-8 scan; only an unnormalized spelling pays a path round-trip.
