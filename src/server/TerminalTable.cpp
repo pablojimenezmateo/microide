@@ -7,6 +7,7 @@
 #include "platform/ProcessLauncher.h"
 #include "util/Log.h"
 #include "util/ThreadName.h"
+#include "util/ErrorOut.h"
 
 namespace microide::server {
 namespace {
@@ -46,9 +47,7 @@ TerminalTable::~TerminalTable() {
 std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::JsonValue& params,
                                                                    std::string* error) {
   const auto fail = [&](std::string message) -> std::optional<OpenRequest> {
-    if (error != nullptr) {
-      *error = std::move(message);
-    }
+    util::SetError(error, std::move(message));
     return std::nullopt;
   };
   if (!params.IsObject()) {

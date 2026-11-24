@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::contribution_interop {
 
@@ -27,9 +28,7 @@ bool DuplicateContributionId(const std::unordered_set<std::string>* id_index, co
   if (id_index->find(candidate.id) == id_index->end()) {
     return false;
   }
-  if (error_message != nullptr) {
-    *error_message = "duplicate " + std::string(kind) + " id '" + candidate.id + "'";
-  }
+  util::SetError(error_message, "duplicate " + std::string(kind) + " id '" + candidate.id + "'");
   return true;
 }
 

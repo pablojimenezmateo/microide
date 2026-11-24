@@ -11,6 +11,7 @@
 
 #include "plugin/PluginLuaInterop.h"
 #include "util/StringUtil.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::registration_parsers {
 namespace {
@@ -62,10 +63,7 @@ bool ParseLanguageServerRegistration(lua_State* state,
     return value.empty() || value.find_first_not_of(" \t\r\n") == std::string::npos;
   };
   if (std::any_of(language_ids.begin(), language_ids.end(), is_blank)) {
-    if (error_message != nullptr) {
-      *error_message = "language server language_ids must not contain empty entries";
-    }
-    return false;
+    return util::Fail(error_message, "language server language_ids must not contain empty entries");
   }
   if (!id_opt || language_ids.empty() || !command_opt || command_opt->empty()) return false;
   out->contributed = PluginHost::ContributedLanguageServer{
@@ -102,17 +100,11 @@ bool ParseLanguageQueryRegistration(lua_State* state,
   auto id_opt = ReadStringField(state, 1, "id");
   auto language_id_opt = ReadStringField(state, 1, "language_id");
   if (!id_opt || !language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "language provider requires id and language_id";
-    }
-    return false;
+    return util::Fail(error_message, "language provider requires id and language_id");
   }
   const int provide_ref = ReadFunctionRefField(state, 1, "provide");
   if (provide_ref == LUA_NOREF) {
-    if (error_message != nullptr) {
-      *error_message = "language provider requires a provide function";
-    }
-    return false;
+    return util::Fail(error_message, "language provider requires a provide function");
   }
   // Parameter hints open on these as they are typed, like a language server's
   // signatureHelpProvider.triggerCharacters; a call's `(` and `,` by default.
@@ -131,9 +123,7 @@ bool ParseLanguageQueryRegistration(lua_State* state,
       .state = state,
       .provide_ref = provide_ref,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -177,10 +167,7 @@ bool ParseLaunchConfigRegistration(lua_State* state,
   std::string arguments_json;
   if (auto json = ReadStringField(state, 1, "arguments"); json && !json->empty()) {
     if (!util::ParseJson(*json)) {
-      if (error_message != nullptr) {
-        *error_message = "launch config arguments must be valid JSON";
-      }
-      return false;
+      return util::Fail(error_message, "launch config arguments must be valid JSON");
     }
     arguments_json = std::move(*json);
   }
@@ -220,10 +207,7 @@ bool ParseToolRegistration(lua_State* state,
     return true;
   };
   if (!is_hex_sha256(*sha256_opt)) {
-    if (error_message != nullptr) {
-      *error_message = "tool sha256 must be a 64-character hex digest";
-    }
-    return false;
+    return util::Fail(error_message, "tool sha256 must be a 64-character hex digest");
   }
   // Normalize to lowercase: registration accepts either case, but the downloader
   // compares against `ComputeSha256Blocking`, which returns lowercase. An

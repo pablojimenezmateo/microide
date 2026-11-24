@@ -10,6 +10,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspacePathUtils.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -178,9 +179,7 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
 std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view specifier,
                                                                 std::string* error_message) const {
   if (specifier.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "usage: tabswitch <tab>";
-    }
+    util::SetError(error_message, "usage: tabswitch <tab>");
     return std::nullopt;
   }
 
@@ -195,15 +194,11 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     const bool forward = specifier.front() == '+';
     const std::optional<int> magnitude = util::ParseInt(specifier.substr(1));
     if (!magnitude.has_value() || *magnitude < 0) {
-      if (error_message != nullptr) {
-        *error_message = "Invalid tab offset";
-      }
+      util::SetError(error_message, "Invalid tab offset");
       return std::nullopt;
     }
     if (tab_count == 0) {
-      if (error_message != nullptr) {
-        *error_message = "No open tabs";
-      }
+      util::SetError(error_message, "No open tabs");
       return std::nullopt;
     }
     const auto count = static_cast<std::int64_t>(tab_count);
@@ -218,9 +213,7 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     if (*tab_number >= 1 && static_cast<std::size_t>(*tab_number) <= state_.focused_group().open_tabs.size()) {
       return static_cast<std::size_t>(*tab_number - 1);
     }
-    if (error_message != nullptr) {
-      *error_message = "Invalid tab index";
-    }
+    util::SetError(error_message, "Invalid tab index");
     return std::nullopt;
   }
 
@@ -251,23 +244,17 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     return exact_matches.front();
   }
   if (exact_matches.size() > 1) {
-    if (error_message != nullptr) {
-      *error_message = "Multiple tabs match: " + std::string(specifier);
-    }
+    util::SetError(error_message, "Multiple tabs match: " + std::string(specifier));
     return std::nullopt;
   }
   if (partial_matches.size() == 1) {
     return partial_matches.front();
   }
   if (partial_matches.size() > 1) {
-    if (error_message != nullptr) {
-      *error_message = "Multiple tabs match: " + std::string(specifier);
-    }
+    util::SetError(error_message, "Multiple tabs match: " + std::string(specifier));
     return std::nullopt;
   }
-  if (error_message != nullptr) {
-    *error_message = "Unknown tab: " + std::string(specifier);
-  }
+  util::SetError(error_message, "Unknown tab: " + std::string(specifier));
   return std::nullopt;
 }
 

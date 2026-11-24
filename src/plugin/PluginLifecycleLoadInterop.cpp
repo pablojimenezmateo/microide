@@ -1,6 +1,7 @@
 #include "plugin/PluginLifecycleLoadInterop.h"
 
 #include <string_view>
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::lifecycle_load_interop {
 
@@ -68,9 +69,7 @@ bool ParseCapabilities(lua_State* state,
     return true;
   }
   if (!lua_istable(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin capabilities must be a table";
-    }
+    util::SetError(error_message, "plugin capabilities must be a table");
     lua_pop(state, 1);
     return false;
   }
@@ -171,10 +170,8 @@ int ExtractFunctionRef(lua_State* state,
     return LUA_NOREF;
   }
   if (!lua_isfunction(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = std::string("expected ") + field_name + " to be a function in " +
-                       plugin_root.string();
-    }
+    util::SetError(error_message, std::string("expected ") + field_name + " to be a function in " +
+        plugin_root.string());
     lua_pop(state, 1);
     return LUA_NOREF;
   }
@@ -187,10 +184,7 @@ bool InitializeState(runtime_types::PluginInstance* plugin,
                      lua_CFunction open_microide,
                      std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin state initialization requires a plugin instance";
-    }
-    return false;
+    return util::Fail(error_message, "plugin state initialization requires a plugin instance");
   }
   plugin->runtime = LuaRuntime::Create(error_message);
   if (!plugin->runtime) {
@@ -203,30 +197,20 @@ bool InitializeState(runtime_types::PluginInstance* plugin,
 
 bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* error_message) {
   if (plugin == nullptr || plugin->state == nullptr || !plugin->runtime) {
-    if (error_message != nullptr) {
-      *error_message = "plugin descriptor load requires an initialized plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "plugin descriptor load requires an initialized plugin state");
   }
   const std::filesystem::path entry_path = plugin->root / "init.lua";
   if (luaL_loadfile(plugin->state, entry_path.string().c_str()) != LUA_OK) {
-    if (error_message != nullptr) {
-      *error_message = "failed to load " + entry_path.string() + ": " + LuaErrorString(plugin->state);
-    }
+    util::SetError(error_message, "failed to load " + entry_path.string() + ": " + LuaErrorString(plugin->state));
     lua_pop(plugin->state, 1);
     return false;
   }
   std::string call_error;
   if (!plugin->runtime->PCall(0, 1, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "failed to evaluate " + entry_path.string() + ": " + call_error;
-    }
-    return false;
+    return util::Fail(error_message, "failed to evaluate " + entry_path.string() + ": " + call_error);
   }
   if (!lua_istable(plugin->state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin entry point must return a table: " + entry_path.string();
-    }
+    util::SetError(error_message, "plugin entry point must return a table: " + entry_path.string());
     lua_pop(plugin->state, 1);
     return false;
   }
@@ -234,9 +218,7 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
   const int table_index = lua_absindex(plugin->state, -1);
   lua_interop::GetFieldProtected(plugin->state, table_index, "id");
   if (!lua_isstring(plugin->state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin id must be a string: " + entry_path.string();
-    }
+    util::SetError(error_message, "plugin id must be a string: " + entry_path.string());
     lua_pop(plugin->state, 2);
     return false;
   }
@@ -249,9 +231,7 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
   }
   lua_pop(plugin->state, 1);
   if (!IsValidIdentifier(plugin->id)) {
-    if (error_message != nullptr) {
-      *error_message = "invalid plugin id: " + plugin->id;
-    }
+    util::SetError(error_message, "invalid plugin id: " + plugin->id);
     lua_pop(plugin->state, 1);
     return false;
   }

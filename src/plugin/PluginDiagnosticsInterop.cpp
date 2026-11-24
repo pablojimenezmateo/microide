@@ -11,6 +11,7 @@
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "util/StringUtil.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::diagnostics_interop {
 namespace {
@@ -36,10 +37,7 @@ bool ReadDiagnosticTable(lua_State* state,
                          editor::Diagnostic* diagnostic,
                          std::string* error_message) {
   if (diagnostic == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic output pointer is required";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostic output pointer is required");
   }
 
   const int absolute_index = lua_absindex(state, table_index);
@@ -47,10 +45,7 @@ bool ReadDiagnosticTable(lua_State* state,
   std::optional<std::string> message =
       lua_interop::ReadOptionalStringField(state, absolute_index, "message");
   if (!message.has_value()) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic message must be a string";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostic message must be a string");
   }
   // Render cap (TD-2026-07-17-018): a diagnostic message is shown in the Problems list,
   // inline, and in the hover popup, all of which measure/lay out the full string. Cap it
@@ -64,10 +59,7 @@ bool ReadDiagnosticTable(lua_State* state,
   const std::optional<lua_Integer> line_field =
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "line");
   if (!line_field.has_value() || *line_field <= 0 || *line_field > kMaxDiagnosticCoordinate) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic line must be a positive integer within the document range";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostic line must be a positive integer within the document range");
   }
   const lua_Integer line = *line_field;
 
@@ -75,10 +67,7 @@ bool ReadDiagnosticTable(lua_State* state,
       lua_interop::ReadOptionalIntegerField(state, absolute_index, "column");
   if (!column_field.has_value() || *column_field <= 0 ||
       *column_field > kMaxDiagnosticCoordinate) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic column must be a positive integer within the document range";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostic column must be a positive integer within the document range");
   }
   const lua_Integer column = *column_field;
 
@@ -99,10 +88,7 @@ bool ReadDiagnosticTable(lua_State* state,
     return false;
   }
   if (end_line < line || (end_line == line && end_column < column)) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic end position must not precede the start position";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostic end position must not precede the start position");
   }
 
   diagnostic->range =
@@ -124,9 +110,7 @@ bool ReadDiagnosticTable(lua_State* state,
   }
   if (!lua_isstring(state, -1) ||
       !ParseDiagnosticSeverity(lua_tostring(state, -1), &diagnostic->severity)) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic severity must be one of: error, warning, info, hint";
-    }
+    util::SetError(error_message, "diagnostic severity must be one of: error, warning, info, hint");
     lua_pop(state, 1);
     return false;
   }
@@ -144,19 +128,13 @@ bool PublishDiagnostics(lua_State* state,
                         const PluginHost::Callbacks& callbacks,
                         std::string* error_message) {
   if (!callbacks.publish_diagnostics) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostics API unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostics API unavailable");
   }
 
   const std::filesystem::path path =
       ResolveRuntimePath(current_project_root, std::filesystem::path(raw_path));
   if (path.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "diagnostic path must not be empty";
-    }
-    return false;
+    return util::Fail(error_message, "diagnostic path must not be empty");
   }
 
   const int absolute_index = lua_absindex(state, diagnostics_index);
@@ -171,9 +149,7 @@ bool PublishDiagnostics(lua_State* state,
   for (lua_Integer i = 1; i <= count; ++i) {
     lua_rawgeti(state, absolute_index, i);
     if (!lua_istable(state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "diagnostic entries must be tables";
-      }
+      util::SetError(error_message, "diagnostic entries must be tables");
       lua_pop(state, 1);
       return false;
     }
@@ -187,9 +163,7 @@ bool PublishDiagnostics(lua_State* state,
   }
 
   callbacks.publish_diagnostics(std::string(plugin_id), path, std::move(diagnostics));
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -199,24 +173,16 @@ bool ClearDiagnostics(std::string_view plugin_id,
                       std::string* error_message) {
   if (path.has_value()) {
     if (!callbacks.clear_file_diagnostics) {
-      if (error_message != nullptr) {
-        *error_message = "diagnostics API unavailable";
-      }
-      return false;
+      return util::Fail(error_message, "diagnostics API unavailable");
     }
     callbacks.clear_file_diagnostics(std::string(plugin_id), path->lexically_normal());
   } else {
     if (!callbacks.clear_owner_diagnostics) {
-      if (error_message != nullptr) {
-        *error_message = "diagnostics API unavailable";
-      }
-      return false;
+      return util::Fail(error_message, "diagnostics API unavailable");
     }
     callbacks.clear_owner_diagnostics(std::string(plugin_id));
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 

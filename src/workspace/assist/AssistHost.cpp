@@ -6,6 +6,7 @@
 
 #include "util/StringUtil.h"
 #include "workspace/SettingFlags.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -50,9 +51,7 @@ bool AssistHost::SnippetsEnabled() const {
 editor::TextViewport* AssistHost::RequireActiveEditableViewport(std::string* error_message) const {
   editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
-    if (error_message != nullptr) {
-      *error_message = "No active file";
-    }
+    util::SetError(error_message, "No active file");
     return nullptr;
   }
   return viewport;
@@ -68,9 +67,7 @@ LspClient* AssistHost::PrepareLspRequest(editor::TextViewport& viewport,
       failure = "No language server available";
     }
     output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    if (error_message != nullptr) {
-      *error_message = std::move(failure);
-    }
+    util::SetError(error_message, std::move(failure));
     return nullptr;
   }
   operations_.ensure_lsp_document_open(viewport, *client, language_id);

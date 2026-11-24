@@ -27,6 +27,7 @@
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -242,9 +243,7 @@ bool WorkspaceShell::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
 void WorkspaceShell::ReportSaveFormatterFailure(
     const SaveFormatterService::Completion& completion, std::string* error_message) {
   const std::string what = completion.timed_out ? "timed out" : "failed";
-  if (error_message != nullptr) {
-    *error_message = "formatter '" + completion.formatter_id + "' " + what;
-  }
+  util::SetError(error_message, "formatter '" + completion.formatter_id + "' " + what);
 
   // Everything the formatter said, in a channel the user can scroll. The warning
   // below used to be the whole of it — no exit status, no parse error, no line
@@ -641,9 +640,7 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
                                                              editor::TextViewport& viewport,
                                                              std::string* error_message,
                                                              SaveMode mode) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (path.empty()) {
     return SavePreparation::Ready();
   }

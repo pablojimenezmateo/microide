@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include "util/ErrorOut.h"
 
 namespace microide::persistence {
 namespace {
@@ -122,24 +123,16 @@ bool DumpPersistedRecordFile(const std::filesystem::path& path,
                              std::string* output,
                              std::string* error) {
   if (output == nullptr) {
-    if (error != nullptr) {
-      *error = "invalid_output_buffer";
-    }
-    return false;
+    return util::Fail(error, "invalid_output_buffer");
   }
   output->clear();
-  if (error != nullptr) {
-    error->clear();
-  }
+  util::ClearError(error);
 
   PersistedRecordReaderError read_error = PersistedRecordReaderError::None;
   const std::optional<PersistedRecordReadResult> result =
       PersistedRecordReader::ReadFile(path, &read_error);
   if (!result.has_value()) {
-    if (error != nullptr) {
-      *error = ReaderErrorToString(read_error);
-    }
-    return false;
+    return util::Fail(error, ReaderErrorToString(read_error));
   }
 
   std::ostringstream stream;
@@ -155,10 +148,7 @@ bool DumpPersistedRecordFile(const std::filesystem::path& path,
   while (offset < result->body.size()) {
     TaggedRecordView record;
     if (!ReadTaggedRecord(result->body, &offset, &record)) {
-      if (error != nullptr) {
-        *error = "malformed_record_stream";
-      }
-      return false;
+      return util::Fail(error, "malformed_record_stream");
     }
     stream << "record[" << index << "].tag: " << record.tag << '\n';
     stream << "record[" << index << "].length: " << record.payload.size() << '\n';

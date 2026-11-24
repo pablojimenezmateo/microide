@@ -8,6 +8,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 namespace {
@@ -75,9 +76,7 @@ ProjectOpenPickerResult LaunchNativePicker(WorkspaceShell& shell, NativePickerSt
                                            const char* already_open_message,
                                            std::string* error_message, Show&& show) {
   const auto fail = [&](std::string message, ProjectOpenPickerResult result) {
-    if (error_message != nullptr) {
-      *error_message = std::move(message);
-    }
+    util::SetError(error_message, std::move(message));
     return result;
   };
   if (state.active) {

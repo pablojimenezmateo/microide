@@ -15,6 +15,7 @@
 #include "render/ColorMath.h"
 #include "render/ThemeFile.h"
 #include "util/StringUtil.h"
+#include "util/ErrorOut.h"
 
 namespace microide::render {
 
@@ -498,9 +499,7 @@ bool LoadThemeByName(std::string_view name,
     if (resolved_name != nullptr) {
       *resolved_name = "default";
     }
-    if (error != nullptr) {
-      error->clear();
-    }
+    util::ClearError(error);
     return true;
   }
   if (util::ToLowerAscii(requested_name) == "light") {
@@ -508,28 +507,20 @@ bool LoadThemeByName(std::string_view name,
     if (resolved_name != nullptr) {
       *resolved_name = "light";
     }
-    if (error != nullptr) {
-      error->clear();
-    }
+    util::ClearError(error);
     return true;
   }
 
   const std::filesystem::path resolved_directory = ResolveThemeDirectory(theme_directory);
   if (resolved_directory.empty()) {
-    if (error != nullptr) {
-      *error = "No bundled colorscheme assets found";
-    }
-    return false;
+    return util::Fail(error, "No bundled colorscheme assets found");
   }
 
   ThemeStyleMap styles;
   std::vector<std::string> include_stack;
   std::string load_error;
   if (!LoadThemeStyles(resolved_directory, requested_name, styles, include_stack, load_error)) {
-    if (error != nullptr) {
-      *error = load_error;
-    }
-    return false;
+    return util::Fail(error, load_error);
   }
 
   const std::filesystem::path theme_file = FindThemeFile(resolved_directory, requested_name);
@@ -537,9 +528,7 @@ bool LoadThemeByName(std::string_view name,
   if (resolved_name != nullptr) {
     *resolved_name = theme_file.empty() ? requested_name : theme_file.stem().string();
   }
-  if (error != nullptr) {
-    error->clear();
-  }
+  util::ClearError(error);
   return true;
 }
 

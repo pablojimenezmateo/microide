@@ -12,6 +12,7 @@
 
 #include "util/Parse.h"
 #include "util/ThreadName.h"
+#include "util/ErrorOut.h"
 
 namespace microide::project::remote {
 namespace {
@@ -624,10 +625,7 @@ bool RemoteServerClient::SubscribeGitStatus(std::function<void(const std::string
   }
   std::string why;
   if (!Call("git/subscribe", util::JsonValue(util::JsonObject{}), &why).has_value()) {
-    if (error != nullptr) {
-      *error = why;
-    }
-    return false;
+    return util::Fail(error, why);
   }
   return true;
 }
@@ -648,9 +646,7 @@ std::optional<RemoteServerClient::HostPorts> RemoteServerClient::SubscribePorts(
   std::string why;
   const std::optional<util::JsonValue> reply = Call(method::kPortsSubscribe, util::JsonValue(util::JsonObject{}), &why);
   if (!reply.has_value()) {
-    if (error != nullptr) {
-      *error = why;
-    }
+    util::SetError(error, why);
     return std::nullopt;
   }
   return PortsFromJson(*reply);
@@ -704,9 +700,7 @@ std::optional<util::JsonValue> RemoteServerClient::RunSearch(
   };
   if (id == 0) {
     unregister();
-    if (error != nullptr) {
-      *error = "not connected to the host";
-    }
+    util::SetError(error, "not connected to the host");
     return std::nullopt;
   }
   bool cancel_sent = false;
@@ -763,9 +757,7 @@ std::optional<ServerStatus> RemoteServerClient::SubscribeActivity(ActivityHandle
   if (!reply.has_value()) {
     std::lock_guard lock(mutex_);
     activity_handler_.reset();
-    if (error != nullptr) {
-      *error = why;
-    }
+    util::SetError(error, why);
     return std::nullopt;
   }
   return ServerStatusFromJson(*reply);

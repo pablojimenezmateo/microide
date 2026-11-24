@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include "util/ErrorOut.h"
 
 namespace microide::render {
 
@@ -24,10 +25,7 @@ bool RectIsFinite(const SDL_FRect& rect) {
 
 bool ValidateDisplayList(const PluginDisplayList& list, std::string* error) {
   const auto fail = [&](const char* message) {
-    if (error != nullptr) {
-      *error = message;
-    }
-    return false;
+    return util::Fail(error, message);
   };
 
   if (list.ops.size() > kMaxDisplayOps) {

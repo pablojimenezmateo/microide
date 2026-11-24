@@ -7,6 +7,7 @@
 
 #include "plugin/PluginContributionLimits.h"
 #include "plugin/PluginLuaInterop.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::registry_interop {
 namespace {
@@ -69,37 +70,22 @@ bool RegisterCommand(lua_State* state,
                      std::unordered_map<std::string, runtime_types::PluginCommand>* commands,
                      std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin command registration requires an active plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "plugin command registration requires an active plugin state");
   }
   if (commands == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin command registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "plugin command registry is unavailable");
   }
   if (ContributionLimitReached(commands, error_message)) {
     return false;
   }
   if (!IsValidIdentifier(command_name)) {
-    if (error_message != nullptr) {
-      *error_message = "invalid command name: " + std::string(command_name);
-    }
-    return false;
+    return util::Fail(error_message, "invalid command name: " + std::string(command_name));
   }
   if (callbacks.is_command_name_available && !callbacks.is_command_name_available(command_name)) {
-    if (error_message != nullptr) {
-      *error_message = "command name already used by the host: " + std::string(command_name);
-    }
-    return false;
+    return util::Fail(error_message, "command name already used by the host: " + std::string(command_name));
   }
   if (commands->contains(std::string(command_name))) {
-    if (error_message != nullptr) {
-      *error_message = "duplicate plugin command: " + std::string(command_name);
-    }
-    return false;
+    return util::Fail(error_message, "duplicate plugin command: " + std::string(command_name));
   }
   lua_pushvalue(state, function_index);
   const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
@@ -118,25 +104,17 @@ bool RegisterSidebar(lua_State* state,
                      std::unordered_map<std::string, runtime_types::SidebarProvider>* sidebars,
                      std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin sidebar registration requires an active plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "plugin sidebar registration requires an active plugin state");
   }
   if (sidebars == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin sidebar registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "plugin sidebar registry is unavailable");
   }
   if (ContributionLimitReached(sidebars, error_message)) {
     return false;
   }
   lua_interop::GetFieldProtected(state, table_index, "id");
   if (!lua_isstring(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "sidebar id must be a string";
-    }
+    util::SetError(error_message, "sidebar id must be a string");
     lua_pop(state, 1);
     return false;
   }
@@ -145,23 +123,15 @@ bool RegisterSidebar(lua_State* state,
   const std::string id = lua_interop::ToHostString(state, -1).value_or(std::string{});
   lua_pop(state, 1);
   if (!IsValidIdentifier(id)) {
-    if (error_message != nullptr) {
-      *error_message = "invalid sidebar id: " + id;
-    }
-    return false;
+    return util::Fail(error_message, "invalid sidebar id: " + id);
   }
   if (sidebars->contains(id)) {
-    if (error_message != nullptr) {
-      *error_message = "duplicate plugin sidebar: " + id;
-    }
-    return false;
+    return util::Fail(error_message, "duplicate plugin sidebar: " + id);
   }
 
   lua_interop::GetFieldProtected(state, table_index, "label");
   if (!lua_isstring(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "sidebar label must be a string";
-    }
+    util::SetError(error_message, "sidebar label must be a string");
     lua_pop(state, 1);
     return false;
   }
@@ -170,9 +140,7 @@ bool RegisterSidebar(lua_State* state,
 
   lua_interop::GetFieldProtected(state, table_index, "snapshot");
   if (!lua_isfunction(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "sidebar snapshot must be a function";
-    }
+    util::SetError(error_message, "sidebar snapshot must be a function");
     lua_pop(state, 1);
     return false;
   }
@@ -185,9 +153,7 @@ bool RegisterSidebar(lua_State* state,
   } else if (lua_isfunction(state, -1)) {
     confirm_ref = luaL_ref(state, LUA_REGISTRYINDEX);
   } else {
-    if (error_message != nullptr) {
-      *error_message = "sidebar on_confirm must be a function";
-    }
+    util::SetError(error_message, "sidebar on_confirm must be a function");
     lua_pop(state, 1);
     luaL_unref(state, LUA_REGISTRYINDEX, snapshot_ref);
     return false;
@@ -200,9 +166,7 @@ bool RegisterSidebar(lua_State* state,
   } else if (lua_isfunction(state, -1)) {
     toggle_ref = luaL_ref(state, LUA_REGISTRYINDEX);
   } else {
-    if (error_message != nullptr) {
-      *error_message = "sidebar on_toggle must be a function";
-    }
+    util::SetError(error_message, "sidebar on_toggle must be a function");
     lua_pop(state, 1);
     luaL_unref(state, LUA_REGISTRYINDEX, snapshot_ref);
     if (confirm_ref != LUA_NOREF) {
@@ -233,16 +197,10 @@ bool RegisterHoverProvider(lua_State* state,
                            std::vector<std::string>* hover_provider_order,
                            std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "hover provider registration requires an active plugin";
-    }
-    return false;
+    return util::Fail(error_message, "hover provider registration requires an active plugin");
   }
   if (hovers == nullptr || hover_provider_order == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "hover provider registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "hover provider registry is unavailable");
   }
   if (ContributionLimitReached(hovers, error_message)) {
     return false;
@@ -250,9 +208,7 @@ bool RegisterHoverProvider(lua_State* state,
   const int absolute_index = lua_absindex(state, table_index);
   lua_interop::GetFieldProtected(state, absolute_index, "id");
   if (!lua_isstring(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "hover provider id must be a string";
-    }
+    util::SetError(error_message, "hover provider id must be a string");
     lua_pop(state, 1);
     return false;
   }
@@ -260,23 +216,15 @@ bool RegisterHoverProvider(lua_State* state,
   const std::string id = lua_interop::ToHostString(state, -1).value_or(std::string{});
   lua_pop(state, 1);
   if (!IsValidIdentifier(id)) {
-    if (error_message != nullptr) {
-      *error_message = "invalid hover provider id: " + id;
-    }
-    return false;
+    return util::Fail(error_message, "invalid hover provider id: " + id);
   }
   if (hovers->contains(id)) {
-    if (error_message != nullptr) {
-      *error_message = "duplicate hover provider: " + id;
-    }
-    return false;
+    return util::Fail(error_message, "duplicate hover provider: " + id);
   }
 
   lua_interop::GetFieldProtected(state, absolute_index, "provide");
   if (!lua_isfunction(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "hover provider provide must be a function";
-    }
+    util::SetError(error_message, "hover provider provide must be a function");
     lua_pop(state, 1);
     return false;
   }
@@ -297,32 +245,20 @@ bool RegisterMenuEntry(const runtime_types::PluginInstance* plugin,
                        std::vector<PluginHost::ContributedMenuEntry>* menu_entries,
                        std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "menu contribution requires an active plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "menu contribution requires an active plugin state");
   }
   if (menu_entries == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "menu registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "menu registry is unavailable");
   }
   if (ContributionLimitReached(menu_entries, error_message)) {
     return false;
   }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
-    if (error_message != nullptr) {
-      *error_message = "invalid menu entry id: " + contributed.id;
-    }
-    return false;
+    return util::Fail(error_message, "invalid menu entry id: " + contributed.id);
   }
   for (const auto& existing : *menu_entries) {
     if (existing.id == contributed.id) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate menu entry: " + contributed.id;
-      }
-      return false;
+      return util::Fail(error_message, "duplicate menu entry: " + contributed.id);
     }
   }
   menu_entries->push_back(std::move(contributed));
@@ -334,32 +270,20 @@ bool RegisterKeybinding(const runtime_types::PluginInstance* plugin,
                         std::vector<PluginHost::ContributedKeybinding>* keybindings,
                         std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "keybinding registration requires an active plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "keybinding registration requires an active plugin state");
   }
   if (keybindings == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "keybinding registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "keybinding registry is unavailable");
   }
   if (ContributionLimitReached(keybindings, error_message)) {
     return false;
   }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
-    if (error_message != nullptr) {
-      *error_message = "invalid keybinding id: " + contributed.id;
-    }
-    return false;
+    return util::Fail(error_message, "invalid keybinding id: " + contributed.id);
   }
   for (const auto& existing : *keybindings) {
     if (existing.id == contributed.id) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate keybinding: " + contributed.id;
-      }
-      return false;
+      return util::Fail(error_message, "duplicate keybinding: " + contributed.id);
     }
   }
   keybindings->push_back(std::move(contributed));
@@ -371,16 +295,10 @@ bool RegisterSetting(const runtime_types::PluginInstance* plugin,
                      std::vector<PluginHost::ContributedSettingSpec>* settings,
                      std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "setting declaration requires an active plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "setting declaration requires an active plugin state");
   }
   if (settings == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "setting registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "setting registry is unavailable");
   }
   if (ContributionLimitReached(settings, error_message)) {
     return false;
@@ -394,23 +312,14 @@ bool RegisterSetting(const runtime_types::PluginInstance* plugin,
     }
   }
   if (!type_valid) {
-    if (error_message != nullptr) {
-      *error_message = "setting type must be one of: bool, int, float, string, enum";
-    }
-    return false;
+    return util::Fail(error_message, "setting type must be one of: bool, int, float, string, enum");
   }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
-    if (error_message != nullptr) {
-      *error_message = "invalid setting id: " + contributed.id;
-    }
-    return false;
+    return util::Fail(error_message, "invalid setting id: " + contributed.id);
   }
   for (const auto& existing : *settings) {
     if (existing.id == contributed.id) {
-      if (error_message != nullptr) {
-        *error_message = "duplicate setting: " + contributed.id;
-      }
-      return false;
+      return util::Fail(error_message, "duplicate setting: " + contributed.id);
     }
   }
   settings->push_back(std::move(contributed));
@@ -424,16 +333,10 @@ bool RegisterStatusItem(
     std::vector<PluginHost::ContributedStatusItem>* status_item_order,
     std::string* error_message) {
   if (plugin == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "status item registration requires an active plugin state";
-    }
-    return false;
+    return util::Fail(error_message, "status item registration requires an active plugin state");
   }
   if (status_items == nullptr || status_item_order == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "status item registry is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "status item registry is unavailable");
   }
   // Status items use the tighter refresh-budget-derived cap: the whole vector
   // is re-resolved + sorted on the main thread per ctx.status.update
@@ -442,16 +345,10 @@ bool RegisterStatusItem(
     return false;
   }
   if (!IsValidIdentifier(contributed.id.substr(plugin->id.size() + 1))) {
-    if (error_message != nullptr) {
-      *error_message = "invalid status item id: " + contributed.id;
-    }
-    return false;
+    return util::Fail(error_message, "invalid status item id: " + contributed.id);
   }
   if (status_items->contains(contributed.id)) {
-    if (error_message != nullptr) {
-      *error_message = "duplicate status item: " + contributed.id;
-    }
-    return false;
+    return util::Fail(error_message, "duplicate status item: " + contributed.id);
   }
   status_item_order->push_back(contributed);
   status_items->emplace(contributed.id, std::move(contributed));

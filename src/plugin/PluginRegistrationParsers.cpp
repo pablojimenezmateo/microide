@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "plugin/PluginLuaInterop.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::registration_parsers {
 namespace {
@@ -25,19 +26,13 @@ bool ParseCompletionRegistration(lua_State* state,
                                  CompletionRegistration* out,
                                  std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "completion registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "completion registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   if (!id_opt || !language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "completion requires id and language_id";
-    }
-    return false;
+    return util::Fail(error_message, "completion requires id and language_id");
   }
   std::string trigger_characters =
       lua_interop::ReadTriggerCharactersField(state, table_index, "trigger_characters", "");
@@ -59,9 +54,7 @@ bool ParseCompletionRegistration(lua_State* state,
         .provide_ref = provide_ref,
     };
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -70,19 +63,13 @@ bool ParseCodeActionRegistration(lua_State* state,
                                  CodeActionRegistration* out,
                                  std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "code action registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "code action registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   if (!id_opt || !language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "code action requires id and language_id";
-    }
-    return false;
+    return util::Fail(error_message, "code action requires id and language_id");
   }
   const int provide_ref = ReadFunctionRefField(state, table_index, "provide");
   out->contributed = PluginHost::ContributedCodeAction{
@@ -100,9 +87,7 @@ bool ParseCodeActionRegistration(lua_State* state,
         .provide_ref = provide_ref,
     };
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -111,19 +96,13 @@ bool ParseTestProviderRegistration(lua_State* state,
                                    TestProviderRegistration* out,
                                    std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "test provider registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "test provider registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   if (!id_opt || !language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "test provider requires id and language_id";
-    }
-    return false;
+    return util::Fail(error_message, "test provider requires id and language_id");
   }
   const int discover_ref = ReadFunctionRefField(state, table_index, "discover");
   const int run_ref = ReadFunctionRefField(state, table_index, "run");
@@ -143,9 +122,7 @@ bool ParseTestProviderRegistration(lua_State* state,
         .run_ref = run_ref,
     };
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -154,32 +131,20 @@ bool ParseTaskRegistration(lua_State* state,
                            TaskRegistration* out,
                            std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "task registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "task registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto label_opt = ReadStringField(state, table_index, "label");
   if (!id_opt || !label_opt) {
-    if (error_message != nullptr) {
-      *error_message = "task requires id and label";
-    }
-    return false;
+    return util::Fail(error_message, "task requires id and label");
   }
   auto command_opt = ReadStringArrayField(state, table_index, "command");
   if (!command_opt) {
-    if (error_message != nullptr) {
-      *error_message = "task command must be a string array";
-    }
-    return false;
+    return util::Fail(error_message, "task command must be a string array");
   }
   if (command_opt->empty()) {
-    if (error_message != nullptr) {
-      *error_message = "task command cannot be empty";
-    }
-    return false;
+    return util::Fail(error_message, "task command cannot be empty");
   }
 
   std::string group;
@@ -206,9 +171,7 @@ bool ParseTaskRegistration(lua_State* state,
       .run_in_shell = run_in_shell,
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -217,10 +180,7 @@ bool ParseMenuEntryRegistration(lua_State* state,
                                 MenuEntryRegistration* out,
                                 std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "menu entry registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "menu entry registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
@@ -228,10 +188,7 @@ bool ParseMenuEntryRegistration(lua_State* state,
   auto action_opt = ReadStringField(state, table_index, "action");
   auto label_opt = ReadStringField(state, table_index, "label");
   if (!id_opt || !menu_opt || !action_opt || !label_opt) {
-    if (error_message != nullptr) {
-      *error_message = "menu entry requires id, menu, action, and label";
-    }
-    return false;
+    return util::Fail(error_message, "menu entry requires id, menu, action, and label");
   }
   // The menus on the bar, named as it shows them (any case). Anything else used to
   // register and then appear nowhere -- "Tools", the guide's own example, among
@@ -244,11 +201,8 @@ bool ParseMenuEntryRegistration(lua_State* state,
   std::transform(menu_name.begin(), menu_name.end(), menu_name.begin(),
                  [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c); });
   if (std::find(kMenus.begin(), kMenus.end(), menu_name) == kMenus.end()) {
-    if (error_message != nullptr) {
-      *error_message = "menu entry names a menu that does not exist: \"" + *menu_opt +
-                       "\" (File, Edit, View, Go, Git, Remote, Terminal, Debug or Help)";
-    }
-    return false;
+    return util::Fail(error_message, "menu entry names a menu that does not exist: \"" + *menu_opt +
+        "\" (File, Edit, View, Go, Git, Remote, Terminal, Debug or Help)");
   }
   menu_opt = std::move(menu_name);
   std::string accelerator;
@@ -270,9 +224,7 @@ bool ParseMenuEntryRegistration(lua_State* state,
       .separator_before = separator_before,
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -281,20 +233,14 @@ bool ParseKeybindingRegistration(lua_State* state,
                                  KeybindingRegistration* out,
                                  std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "keybinding registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "keybinding registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto action_opt = ReadStringField(state, table_index, "action");
   auto key_opt = ReadStringField(state, table_index, "key");
   if (!id_opt || !action_opt || !key_opt) {
-    if (error_message != nullptr) {
-      *error_message = "keybinding requires id, action, and key";
-    }
-    return false;
+    return util::Fail(error_message, "keybinding requires id, action, and key");
   }
   std::string context;
   if (auto context_opt = ReadStringField(state, table_index, "context")) {
@@ -308,9 +254,7 @@ bool ParseKeybindingRegistration(lua_State* state,
       .plugin_id = plugin_id,
       .skips_terminal = lua_interop::ReadBoolField(state, table_index, "skips_terminal"),
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -319,19 +263,13 @@ bool ParseSettingRegistration(lua_State* state,
                               SettingRegistration* out,
                               std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "setting registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "setting registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto type_opt = ReadStringField(state, table_index, "type");
   if (!id_opt || !type_opt) {
-    if (error_message != nullptr) {
-      *error_message = "setting requires id and type";
-    }
-    return false;
+    return util::Fail(error_message, "setting requires id and type");
   }
   std::string label;
   if (auto label_opt = ReadStringField(state, table_index, "label")) {
@@ -387,9 +325,7 @@ bool ParseSettingRegistration(lua_State* state,
       .enum_values = std::move(enum_values),
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -398,18 +334,12 @@ bool ParseStatusItemRegistration(lua_State* state,
                                  StatusItemRegistration* out,
                                  std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "status item registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "status item registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   if (!id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "status item requires id";
-    }
-    return false;
+    return util::Fail(error_message, "status item requires id");
   }
   std::string text;
   if (auto text_opt = ReadStringField(state, table_index, "text")) {
@@ -464,9 +394,7 @@ bool ParseStatusItemRegistration(lua_State* state,
       .progress = progress,
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -475,33 +403,21 @@ bool ParseFormatterRegistration(lua_State* state,
                                 FormatterRegistration* out,
                                 std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "formatter registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "formatter registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   auto label_opt = ReadStringField(state, table_index, "label");
   if (!id_opt || !language_id_opt || !label_opt) {
-    if (error_message != nullptr) {
-      *error_message = "formatter requires id, language_id, and label";
-    }
-    return false;
+    return util::Fail(error_message, "formatter requires id, language_id, and label");
   }
   auto command_opt = ReadStringArrayField(state, table_index, "command");
   if (!command_opt) {
-    if (error_message != nullptr) {
-      *error_message = "formatter command must be a string array";
-    }
-    return false;
+    return util::Fail(error_message, "formatter command must be a string array");
   }
   if (command_opt->empty()) {
-    if (error_message != nullptr) {
-      *error_message = "formatter command cannot be empty";
-    }
-    return false;
+    return util::Fail(error_message, "formatter command cannot be empty");
   }
   out->contributed = PluginHost::ContributedFormatter{
       .id = plugin_id + "." + *id_opt,
@@ -510,9 +426,7 @@ bool ParseFormatterRegistration(lua_State* state,
       .command = std::move(*command_opt),
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -521,26 +435,17 @@ bool ParseVirtualDocumentRegistration(lua_State* state,
                                       VirtualDocumentRegistration* out,
                                       std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "virtual document registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "virtual document registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
   if (!id_opt || id_opt->empty()) {
-    if (error_message != nullptr) {
-      *error_message = "virtual document registration requires a non-empty id";
-    }
-    return false;
+    return util::Fail(error_message, "virtual document registration requires a non-empty id");
   }
   // NUL-reject the id, as every other contribution does (TD-2026-07-17A-080): a
   // truncated id collides with another document's URI at the C-string boundary.
   if (id_opt->find('\0') != std::string::npos) {
-    if (error_message != nullptr) {
-      *error_message = "virtual document id must not contain a NUL byte";
-    }
-    return false;
+    return util::Fail(error_message, "virtual document id must not contain a NUL byte");
   }
   // The URI is DERIVED, never taken from the plugin: `virtual://<plugin>/<id>`.
   // A plugin-supplied URI could name another plugin's document (or a non-virtual
@@ -552,9 +457,7 @@ bool ParseVirtualDocumentRegistration(lua_State* state,
       .editable = lua_interop::ReadBoolField(state, table_index, "editable"),
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -563,34 +466,22 @@ bool ParseSaveParticipantRegistration(lua_State* state,
                                       SaveParticipantRegistration* out,
                                       std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "save participant registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "save participant registration output is required");
   }
   // Validate without raising: luaL_checkstring/luaL_checktype would longjmp over
   // the caller's live std::string error_message. Report via error_message so the
   // wrapper raises only after that local has destructed.
   if (!lua_isstring(state, 1)) {
-    if (error_message != nullptr) {
-      *error_message = "save participant registration requires a string id";
-    }
-    return false;
+    return util::Fail(error_message, "save participant registration requires a string id");
   }
   if (lua_type(state, 2) != LUA_TFUNCTION) {
-    if (error_message != nullptr) {
-      *error_message = "save participant registration requires a function handler";
-    }
-    return false;
+    return util::Fail(error_message, "save participant registration requires a function handler");
   }
   // NUL-reject the id (TD-2026-07-17A-080): a truncated id collides with another save
   // participant of the same plugin.
   std::optional<std::string> id = lua_interop::ToHostString(state, 1);
   if (!id) {
-    if (error_message != nullptr) {
-      *error_message = "save participant registration requires a NUL-free string id";
-    }
-    return false;
+    return util::Fail(error_message, "save participant registration requires a NUL-free string id");
   }
   lua_pushvalue(state, 2);
   const int function_ref = luaL_ref(state, LUA_REGISTRYINDEX);
@@ -604,9 +495,7 @@ bool ParseSaveParticipantRegistration(lua_State* state,
       .state = state,
       .function_ref = function_ref,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -664,18 +553,12 @@ bool ParseBracketSetRegistration(lua_State* state,
                                  BracketSetRegistration* out,
                                  std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "bracket set registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "bracket set registration output is required");
   }
   const int table_index = 1;
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   if (!language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "bracket set requires language_id";
-    }
-    return false;
+    return util::Fail(error_message, "bracket set requires language_id");
   }
   PluginHost::ContributedBracketSet contributed;
   contributed.language_id = std::move(*language_id_opt);
@@ -683,15 +566,10 @@ bool ParseBracketSetRegistration(lua_State* state,
   if (!ReadPairArrayField(state, table_index, "pairs", &contributed.bracket_pairs) ||
       !ReadPairArrayField(state, table_index, "auto_close", &contributed.auto_close_pairs) ||
       !ReadPairArrayField(state, table_index, "surround", &contributed.surround_pairs)) {
-    if (error_message != nullptr) {
-      *error_message = "bracket set fields must be arrays of {open, close} pairs";
-    }
-    return false;
+    return util::Fail(error_message, "bracket set fields must be arrays of {open, close} pairs");
   }
   out->contributed = std::move(contributed);
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -700,18 +578,12 @@ bool ParseCommentMarkersRegistration(lua_State* state,
                                      CommentMarkersRegistration* out,
                                      std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "comment markers registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "comment markers registration output is required");
   }
   const int table_index = 1;
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   if (!language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "comment markers require language_id";
-    }
-    return false;
+    return util::Fail(error_message, "comment markers require language_id");
   }
   PluginHost::ContributedCommentMarkers contributed;
   contributed.language_id = std::move(*language_id_opt);
@@ -726,9 +598,7 @@ bool ParseCommentMarkersRegistration(lua_State* state,
     contributed.block_comment_close = std::move(*close_opt);
   }
   out->contributed = std::move(contributed);
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -737,18 +607,12 @@ bool ParseIndentRulesRegistration(lua_State* state,
                                   IndentRulesRegistration* out,
                                   std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "indent rules registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "indent rules registration output is required");
   }
   const int table_index = 1;
   auto language_id_opt = ReadStringField(state, table_index, "language_id");
   if (!language_id_opt) {
-    if (error_message != nullptr) {
-      *error_message = "indent rules require language_id";
-    }
-    return false;
+    return util::Fail(error_message, "indent rules require language_id");
   }
   PluginHost::ContributedIndentRules contributed;
   contributed.language_id = std::move(*language_id_opt);
@@ -760,9 +624,7 @@ bool ParseIndentRulesRegistration(lua_State* state,
     contributed.dedent_on_close_chars = std::move(*closes);
   }
   out->contributed = std::move(contributed);
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -771,10 +633,7 @@ bool ParseSnippetRegistration(lua_State* state,
                               SnippetRegistration* out,
                               std::string* error_message) {
   if (out == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "snippet registration output is required";
-    }
-    return false;
+    return util::Fail(error_message, "snippet registration output is required");
   }
   const int table_index = 1;
   auto id_opt = ReadStringField(state, table_index, "id");
@@ -782,10 +641,7 @@ bool ParseSnippetRegistration(lua_State* state,
   auto prefix_opt = ReadStringField(state, table_index, "prefix");
   auto body_opt = ReadStringField(state, table_index, "body");
   if (!id_opt || !language_id_opt || !prefix_opt || !body_opt) {
-    if (error_message != nullptr) {
-      *error_message = "snippet requires id, language_id, prefix, and body";
-    }
-    return false;
+    return util::Fail(error_message, "snippet requires id, language_id, prefix, and body");
   }
   std::string label;
   if (auto label_opt = ReadStringField(state, table_index, "label")) {
@@ -799,9 +655,7 @@ bool ParseSnippetRegistration(lua_State* state,
       .body = std::move(*body_opt),
       .plugin_id = plugin_id,
   };
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 

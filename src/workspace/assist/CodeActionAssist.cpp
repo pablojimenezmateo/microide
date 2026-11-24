@@ -9,6 +9,7 @@
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/lsp/LspWorkspaceEditOps.h"
 #include "workspace/services/WorkspaceEditService.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -24,9 +25,7 @@ std::string JsonValueToArgumentString(const util::JsonValue& value) {
 
 bool CodeActionAssist::ShowOverlay(std::string* error_message,
                                    const editor::SelectionRange* explicit_range) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   const AssistHost::Operations& ops = host_.ops();
   editor::TextViewport* viewport = ops.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {

@@ -8,6 +8,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 #include "util/Hex.h"
 #include "util/StringUtil.h"
+#include "util/ErrorOut.h"
 #endif
 
 namespace microide::plugin::lua_interop {
@@ -200,10 +201,7 @@ bool ReadOptionalColorField(lua_State* state, int table_index, const char* field
   const auto color = is_str ? ParseHexColor(lua_tostring(state, -1)) : std::nullopt;
   lua_pop(state, 1);
   if (!color) {
-    if (error_message != nullptr) {
-      *error_message = std::string(field) + " must be #rrggbb or #rrggbbaa";
-    }
-    return false;
+    return util::Fail(error_message, std::string(field) + " must be #rrggbb or #rrggbbaa");
   }
   *out = *color;
   return true;

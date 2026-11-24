@@ -15,6 +15,7 @@
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 #include "util/ByteCodec.h"
+#include "util/ErrorOut.h"
 
 namespace microide::project::remote {
 namespace {
@@ -151,19 +152,14 @@ std::optional<RemoteWorkspace::Manifest> RemoteWorkspace::FetchManifestSync(
         });
       },
       connection_, timeout, Outcome(std::nullopt, "timed out waiting for the manifest"));
-  if (error != nullptr) {
-    *error = std::move(outcome.second);
-  }
+  util::SetError(error, std::move(outcome.second));
   return std::move(outcome.first);
 }
 
 bool RemoteWorkspace::SubscribeGitStatus(std::function<void()> changed, std::string* error) {
   const std::shared_ptr<RemoteServerClient> client = Client();
   if (!client) {
-    if (error != nullptr) {
-      *error = kNotConnected;
-    }
-    return false;
+    return util::Fail(error, kNotConnected);
   }
   return client->SubscribeGitStatus(
       [changed = std::move(changed)](const std::string&) {
@@ -178,10 +174,7 @@ bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_de
                                      std::string* error) {
   const std::shared_ptr<RemoteServerClient> client = Client();
   if (!client) {
-    if (error != nullptr) {
-      *error = kNotConnected;
-    }
-    return false;
+    return util::Fail(error, kNotConnected);
   }
   RemoteServerClient* raw = client.get();  // its own handler: it outlives the calls
   // The same sink, in the same order: a HEAD move is a delta with nothing in it.
@@ -202,10 +195,7 @@ bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_de
   const std::optional<util::JsonValue> result =
       client->Call(method::kWatchSubscribe, util::JsonValue(util::JsonObject{}), &why);
   if (!result.has_value()) {
-    if (error != nullptr) {
-      *error = why;
-    }
-    return false;
+    return util::Fail(error, why);
   }
   if (native != nullptr) {
     *native = (*result)["native"].AsBool(false);
@@ -460,9 +450,7 @@ std::optional<std::vector<RemoteWorkspace::FetchedObject>> RemoteWorkspace::Fetc
                             });
       },
       connection_, timeout, Outcome(std::nullopt, "timed out waiting for object/fetch"));
-  if (error != nullptr) {
-    *error = std::move(outcome.second);
-  }
+  util::SetError(error, std::move(outcome.second));
   return std::move(outcome.first);
 }
 

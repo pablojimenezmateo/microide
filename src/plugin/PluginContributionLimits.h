@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include "util/ErrorOut.h"
 
 namespace microide::plugin {
 
@@ -52,9 +53,7 @@ bool ContributionLimitReachedAt(const Container* container,
                                 std::size_t cap,
                                 std::string* error_message) {
   if (container != nullptr && container->size() >= cap) {
-    if (error_message != nullptr) {
-      *error_message = "plugin contribution limit reached";
-    }
+    util::SetError(error_message, "plugin contribution limit reached");
     return true;
   }
   return false;

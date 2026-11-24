@@ -33,6 +33,7 @@
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/git/CommitPick.h"
 #include "workspace/git/WorktreePick.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -857,14 +858,12 @@ bool WorkspaceActionContext::ActiveTabIsMerge() const {
 bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_message) {
   editor::TextViewport* viewport = operations_.active_navigable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
-    if (error_message != nullptr) *error_message = "No active file";
-    return false;
+    return util::Fail(error_message, "No active file");
   }
   const std::vector<editor::PublishedDiagnostic>* diagnostics =
       state_.diagnostics_store.FindByPath(viewport->path());
   if (diagnostics == nullptr || diagnostics->empty()) {
-    if (error_message != nullptr) *error_message = "No problems in this file";
-    return false;
+    return util::Fail(error_message, "No problems in this file");
   }
   const editor::TextPosition caret{viewport->cursor_line(), viewport->cursor_column()};
   const auto before = [](const editor::TextPosition& a, const editor::TextPosition& b) {
@@ -1051,9 +1050,7 @@ void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& pat
 std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
     ActionSource source, bool* from_file, std::string* error) const {
   const auto fail = [&](std::string message) -> std::optional<CompareInput> {
-    if (error != nullptr) {
-      *error = std::move(message);
-    }
+    util::SetError(error, std::move(message));
     return std::nullopt;
   };
   const auto read_file = [&](const std::filesystem::path& path) -> std::optional<CompareInput> {
@@ -1400,10 +1397,7 @@ bool WorkspaceActionContext::RevertActiveFile() {
 bool WorkspaceActionContext::SaveTabAs(std::size_t index, const std::filesystem::path& path,
                                        std::string* error) {
   if (!operations_.save_tab_as) {
-    if (error != nullptr) {
-      *error = "Save As is unavailable";
-    }
-    return false;
+    return util::Fail(error, "Save As is unavailable");
   }
   return operations_.save_tab_as(index, path, error);
 }
@@ -1430,10 +1424,7 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
                         : state_.editor_split.full() ? "No room for another editor group"
                                                      : nullptr;
   if (refusal != nullptr) {
-    if (error_message != nullptr) {
-      *error_message = refusal;
-    }
-    return false;
+    return util::Fail(error_message, refusal);
   }
   const bool open_path = !path.empty();
   // A split always carves a NEW group holding a clone of the source tab, so
@@ -1443,22 +1434,13 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
   // view of THAT buffer, not a second copy read from disk.
   editor::TextViewport opened_view;
   if (open_path && !operations_.open_editor_view_for_path(path, opened_view)) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to open file: " + path.string();
-    }
-    return false;
+    return util::Fail(error_message, "Failed to open file: " + path.string());
   }
   if (!services_.editor_tabs.SplitEditorGroup(orientation)) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to split the active editor";
-    }
-    return false;
+    return util::Fail(error_message, "Failed to split the active editor");
   }
   if (open_path && !operations_.replace_active_editor_view(opened_view)) {
-    if (error_message != nullptr) {
-      *error_message = "Failed to open in the split: " + path.string();
-    }
-    return false;
+    return util::Fail(error_message, "Failed to open in the split: " + path.string());
   }
   return true;
 }
@@ -1541,10 +1523,7 @@ bool WorkspaceActionContext::RevealPathAtLine(const std::filesystem::path& path,
     return true;
   }
   if (!ExecuteLineNavigation(request, /*relative=*/false)) {
-    if (error_message != nullptr) {
-      *error_message = "Cannot place the caret in " + path.string();
-    }
-    return false;
+    return util::Fail(error_message, "Cannot place the caret in " + path.string());
   }
   if (editor::TextViewport* viewport = operations_.active_navigable_viewport();
       viewport != nullptr) {

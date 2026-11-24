@@ -301,9 +301,7 @@ bool PluginHost::ExecuteCommand(std::string_view name,
     feedback->clear();
   }
   if (!impl_->enabled()) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return false;
   }
 
@@ -319,9 +317,7 @@ bool PluginHost::ExecuteCommand(std::string_view name,
 #else
   (void)name;
   (void)args;
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return false;
 #endif
 }
@@ -405,10 +401,7 @@ bool PluginHost::DispatchSidebarQuery(std::string_view id,
                                       [[maybe_unused]] WorkerOp worker_op) {
   // Fast-reject unknown ids against the published view (no round-trip, race-free).
   if (FindSidebarProvider(id) == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "unknown plugin sidebar: " + std::string(id);
-    }
-    return false;
+    return util::Fail(error_message, "unknown plugin sidebar: " + std::string(id));
   }
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
@@ -416,9 +409,7 @@ bool PluginHost::DispatchSidebarQuery(std::string_view id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     const auto it = impl_->sidebars.find(std::string(id));
     if (it == impl_->sidebars.end()) {
-      if (error_message != nullptr) {
-        *error_message = "unknown plugin sidebar: " + std::string(id);
-      }
+      util::SetError(error_message, "unknown plugin sidebar: " + std::string(id));
       ok = false;
       return;
     }
@@ -475,18 +466,13 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
                             HoverResult* result,
                             std::string* error_message) const {
   if (result == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "hover result output pointer is required";
-    }
-    return false;
+    return util::Fail(error_message, "hover result output pointer is required");
   }
   result->title.clear();
   result->content.clear();
 
   if (!impl_->enabled() || path.empty() || line == 0 || column == 0) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return false;
   }
 
@@ -502,9 +488,7 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
   (void)resolved_path;
 #endif
 
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return false;
 }
 
@@ -544,14 +528,9 @@ std::uint64_t PluginHost::StatusItemsRevision() const {
 bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
                                      std::string* text,
                                      std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (text == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "save participants require mutable text";
-    }
-    return false;
+    return util::Fail(error_message, "save participants require mutable text");
   }
   if (!impl_->enabled()) {
     return false;
@@ -572,10 +551,7 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
     return true;
   }
   if (!result.ok) {
-    if (error_message != nullptr) {
-      *error_message = std::move(result.error);
-    }
-    return false;
+    return util::Fail(error_message, std::move(result.error));
   }
   *text = std::move(result.text);
   return true;
@@ -610,9 +586,7 @@ std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
     std::size_t column,
     std::string_view trigger_character,
     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
 
   std::vector<CompletionCandidate> results;
   if (!impl_->enabled()) {
@@ -969,9 +943,7 @@ std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     std::size_t end_line,
     std::size_t end_column,
     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
 
   std::vector<CodeActionCandidate> results;
   if (!impl_->enabled()) {
@@ -1004,9 +976,7 @@ std::vector<PluginHost::LocationResult> PluginHost::QueryDefinition(
     std::size_t line,
     std::size_t column,
     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   std::vector<LocationResult> results;
   if (!impl_->enabled()) {
     return results;
@@ -1032,9 +1002,7 @@ std::vector<PluginHost::LocationResult> PluginHost::QueryReferences(
     std::size_t column,
     bool include_declaration,
     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   std::vector<LocationResult> results;
   if (!impl_->enabled()) {
     return results;
@@ -1061,9 +1029,7 @@ bool PluginHost::QuerySignatureHelp(std::string_view language_id,
                                     std::size_t column,
                                     SignatureHelpResult* result,
                                     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (result == nullptr || !impl_->enabled()) {
     return false;
   }
@@ -1086,9 +1052,7 @@ std::vector<PluginHost::DocumentSymbolNode> PluginHost::QueryDocumentSymbols(
     std::string_view language_id,
     const std::filesystem::path& path,
     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   std::vector<DocumentSymbolNode> results;
   if (!impl_->enabled()) {
     return results;
@@ -1108,14 +1072,9 @@ bool PluginHost::DiscoverTests(std::string_view provider_id,
                                const std::filesystem::path& path,
                                std::vector<TestCase>* tests,
                                std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (tests == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "test discovery requires an output vector";
-    }
-    return false;
+    return util::Fail(error_message, "test discovery requires an output vector");
   }
   tests->clear();
   if (!impl_->enabled()) {
@@ -1146,14 +1105,9 @@ bool PluginHost::RunTests(std::string_view provider_id,
                           const std::vector<std::string>& test_ids,
                           std::vector<TestRunResult>* results,
                           std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (results == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "test execution requires an output vector";
-    }
-    return false;
+    return util::Fail(error_message, "test execution requires an output vector");
   }
   results->clear();
   if (!impl_->enabled()) {
@@ -1179,14 +1133,9 @@ bool PluginHost::RunTests(std::string_view provider_id,
 bool PluginHost::SnapshotScm(std::string_view provider_id,
                              ScmSnapshot* snapshot,
                              std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (snapshot == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "scm snapshot requires an output value";
-    }
-    return false;
+    return util::Fail(error_message, "scm snapshot requires an output value");
   }
   *snapshot = ScmSnapshot{};
   if (!impl_->enabled()) {
@@ -1218,9 +1167,7 @@ std::vector<PluginHost::AnnotationLine> PluginHost::QueryAnnotations(
     std::size_t visible_start_line,
     std::size_t visible_end_line,
     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
 
   std::vector<AnnotationLine> lines;
   if (!impl_->enabled()) {
@@ -1250,14 +1197,9 @@ bool PluginHost::LoginAuthProvider(std::string_view provider_id,
                                    const std::vector<std::string>& scopes,
                                    AuthSessionData* session,
                                    std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (session == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "auth login requires an output session";
-    }
-    return false;
+    return util::Fail(error_message, "auth login requires an output session");
   }
   *session = AuthSessionData{};
   if (!impl_->enabled()) {
@@ -1284,14 +1226,9 @@ bool PluginHost::RefreshAuthSession(std::string_view provider_id,
                                     std::string_view session_id,
                                     AuthSessionData* session,
                                     std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (session == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "auth refresh requires an output session";
-    }
-    return false;
+    return util::Fail(error_message, "auth refresh requires an output session");
   }
   *session = AuthSessionData{};
   if (!impl_->enabled()) {
@@ -1317,9 +1254,7 @@ bool PluginHost::RefreshAuthSession(std::string_view provider_id,
 bool PluginHost::LogoutAuthSession(std::string_view provider_id,
                                    std::string_view session_id,
                                    std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (!impl_->enabled()) {
     return false;
   }

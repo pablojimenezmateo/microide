@@ -12,6 +12,7 @@
 #include "editor/PluginDecorationStore.h"
 #include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginPathInterop.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::decoration_interop {
 namespace {
@@ -36,9 +37,7 @@ bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::
       static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max()) + 1;
   if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0 ||
       lua_tointeger(state, -1) > kMaxOneBased) {
-    if (error_message != nullptr) {
-      *error_message = std::string(key) + " must be a positive integer";
-    }
+    util::SetError(error_message, std::string(key) + " must be a positive integer");
     lua_pop(state, 1);
     return false;
   }
@@ -59,9 +58,7 @@ bool BeginArrayField(lua_State* state, int table_index, const char* key, int* ar
     return false;
   }
   if (!lua_istable(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = std::string(key) + " must be an array";
-    }
+    util::SetError(error_message, std::string(key) + " must be an array");
     lua_pop(state, 1);
     *count = -1;  // signal error to caller
     return false;
@@ -69,9 +66,7 @@ bool BeginArrayField(lua_State* state, int table_index, const char* key, int* ar
   *array_index = lua_absindex(state, -1);
   *count = static_cast<lua_Integer>(lua_rawlen(state, *array_index));
   if (*count > kMaxEntriesPerKind) {
-    if (error_message != nullptr) {
-      *error_message = std::string(key) + " exceeds the maximum decoration count";
-    }
+    util::SetError(error_message, std::string(key) + " exceeds the maximum decoration count");
     lua_pop(state, 1);
     *count = -1;
     return false;
@@ -91,7 +86,7 @@ bool ReadTextStyles(lua_State* state, int table_index, editor::PluginDecorationD
   for (lua_Integer i = 1; i <= count && ok; ++i) {
     lua_rawgeti(state, array_index, i);
     if (!lua_istable(state, -1)) {
-      if (error_message != nullptr) *error_message = "text_styles entries must be tables";
+      util::SetError(error_message, "text_styles entries must be tables");
       ok = false;
     } else {
       const int entry = lua_absindex(state, -1);
@@ -110,9 +105,7 @@ bool ReadTextStyles(lua_State* state, int table_index, editor::PluginDecorationD
         // Reject an inverted column range at parse time: downstream render/merge
         // assumes start <= end, and a negative-width span would style nothing or
         // corrupt layout assumptions.
-        if (error_message != nullptr) {
-          *error_message = "text_styles entry start_col must not exceed end_col";
-        }
+        util::SetError(error_message, "text_styles entry start_col must not exceed end_col");
         ok = false;
       } else if (!ReadOptionalColorField(state, entry, "fg", &ts.foreground, error_message) ||
                  !ReadOptionalColorField(state, entry, "bg", &ts.background, error_message) ||
@@ -145,7 +138,7 @@ bool ReadGutterMarks(lua_State* state, int table_index, editor::PluginDecoration
   for (lua_Integer i = 1; i <= count && ok; ++i) {
     lua_rawgeti(state, array_index, i);
     if (!lua_istable(state, -1)) {
-      if (error_message != nullptr) *error_message = "gutter_marks entries must be tables";
+      util::SetError(error_message, "gutter_marks entries must be tables");
       ok = false;
     } else {
       const int entry = lua_absindex(state, -1);
@@ -154,10 +147,10 @@ bool ReadGutterMarks(lua_State* state, int table_index, editor::PluginDecoration
       if (!ReadOneBasedField(state, entry, "line", &mark.line, error_message)) {
         ok = false;
       } else if (!ReadStringField(state, entry, "icon", &icon) || icon.empty()) {
-        if (error_message != nullptr) *error_message = "gutter_marks icon must be a string";
+        util::SetError(error_message, "gutter_marks icon must be a string");
         ok = false;
       } else if (const auto shape = editor::GutterIconRegistry::ResolveShape(icon); !shape) {
-        if (error_message != nullptr) *error_message = "unknown gutter icon: " + icon;
+        util::SetError(error_message, "unknown gutter icon: " + icon);
         ok = false;
       } else {
         mark.shape = *shape;
@@ -193,7 +186,7 @@ bool ReadInlineText(lua_State* state, int table_index, editor::PluginDecorationD
   for (lua_Integer i = 1; i <= count && ok; ++i) {
     lua_rawgeti(state, array_index, i);
     if (!lua_istable(state, -1)) {
-      if (error_message != nullptr) *error_message = "inline_text entries must be tables";
+      util::SetError(error_message, "inline_text entries must be tables");
       ok = false;
     } else {
       const int entry = lua_absindex(state, -1);
@@ -201,7 +194,7 @@ bool ReadInlineText(lua_State* state, int table_index, editor::PluginDecorationD
       if (!ReadOneBasedField(state, entry, "line", &inl.line, error_message)) {
         ok = false;
       } else if (!ReadStringField(state, entry, "text", &inl.text) || inl.text.empty()) {
-        if (error_message != nullptr) *error_message = "inline_text text must be a non-empty string";
+        util::SetError(error_message, "inline_text text must be a non-empty string");
         ok = false;
       } else if (!ReadOptionalColorField(state, entry, "color", &inl.color, error_message) ||
                  !ReadOptionalColorField(state, entry, "bg", &inl.background, error_message)) {
@@ -239,7 +232,7 @@ bool ReadCodeLenses(lua_State* state, int table_index, editor::PluginDecorationD
   for (lua_Integer i = 1; i <= count && ok; ++i) {
     lua_rawgeti(state, array_index, i);
     if (!lua_istable(state, -1)) {
-      if (error_message != nullptr) *error_message = "code_lenses entries must be tables";
+      util::SetError(error_message, "code_lenses entries must be tables");
       ok = false;
     } else {
       const int entry = lua_absindex(state, -1);
@@ -247,7 +240,7 @@ bool ReadCodeLenses(lua_State* state, int table_index, editor::PluginDecorationD
       if (!ReadOneBasedField(state, entry, "line", &lens.line, error_message)) {
         ok = false;
       } else if (!ReadStringField(state, entry, "text", &lens.text) || lens.text.empty()) {
-        if (error_message != nullptr) *error_message = "code_lenses text must be a non-empty string";
+        util::SetError(error_message, "code_lenses text must be a non-empty string");
         ok = false;
       } else {
         ReadStringField(state, entry, "command", &lens.command);
@@ -270,19 +263,13 @@ bool PublishDecorations(lua_State* state,
                         const PluginHost::Callbacks& callbacks,
                         std::string* error_message) {
   if (!callbacks.publish_decorations) {
-    if (error_message != nullptr) {
-      *error_message = "decorations API unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "decorations API unavailable");
   }
 
   const std::filesystem::path path =
       ResolveRuntimePath(current_project_root, std::filesystem::path(raw_path));
   if (path.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "decoration path must not be empty";
-    }
-    return false;
+    return util::Fail(error_message, "decoration path must not be empty");
   }
 
   const int absolute_index = lua_absindex(state, table_index);
@@ -295,9 +282,7 @@ bool PublishDecorations(lua_State* state,
   }
 
   callbacks.publish_decorations(std::string(plugin_id), path, std::move(data));
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -307,24 +292,16 @@ bool ClearDecorations(std::string_view plugin_id,
                       std::string* error_message) {
   if (path.has_value()) {
     if (!callbacks.clear_file_decorations) {
-      if (error_message != nullptr) {
-        *error_message = "decorations API unavailable";
-      }
-      return false;
+      return util::Fail(error_message, "decorations API unavailable");
     }
     callbacks.clear_file_decorations(std::string(plugin_id), path->lexically_normal());
   } else {
     if (!callbacks.clear_owner_decorations) {
-      if (error_message != nullptr) {
-        *error_message = "decorations API unavailable";
-      }
-      return false;
+      return util::Fail(error_message, "decorations API unavailable");
     }
     callbacks.clear_owner_decorations(std::string(plugin_id));
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 

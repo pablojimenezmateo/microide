@@ -5,6 +5,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -14,10 +15,7 @@ namespace microide::workspace {
 bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
                                     const std::filesystem::path& path, std::string* error) {
   const auto fail = [&](std::string message) {
-    if (error != nullptr) {
-      *error = std::move(message);
-    }
-    return false;
+    return util::Fail(error, std::move(message));
   };
   if (group_index >= state_.editor_groups.size() ||
       index >= state_.editor_groups[group_index].open_tabs.size()) {

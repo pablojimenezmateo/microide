@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <utility>
+#include "util/ErrorOut.h"
 
 namespace microide::project::remote {
 namespace {
@@ -60,9 +61,7 @@ util::JsonValue SearchRunParams(const std::string& query, const ProjectSearchOpt
 std::optional<std::pair<std::string, ProjectSearchOptions>> ParseSearchRunParams(
     const util::JsonValue& params, std::string* error) {
   const auto fail = [&](std::string message) -> std::optional<std::pair<std::string, ProjectSearchOptions>> {
-    if (error != nullptr) {
-      *error = std::move(message);
-    }
+    util::SetError(error, std::move(message));
     return std::nullopt;
   };
   if (!params.IsObject()) {

@@ -9,6 +9,7 @@
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/lsp/LspWorkspaceEditOps.h"
 #include "workspace/services/WorkspaceEditService.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -33,9 +34,7 @@ std::string RefactorAssist::SymbolAtCursor() const {
 }
 
 bool RefactorAssist::RenameSymbol(const std::string& new_name, std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (new_name.empty()) {
     return false;
   }
@@ -158,9 +157,7 @@ void RefactorAssist::PrepareRenameForCursor(std::function<void(bool, std::string
 }
 
 bool RefactorAssist::FormatActiveDocument(std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
     return false;

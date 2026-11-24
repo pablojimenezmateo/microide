@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#include "util/ErrorOut.h"
 
 namespace microide::project::remote {
 namespace {
@@ -352,9 +353,7 @@ std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTermin
         return map.ToLocal(host_path).value_or(host_path);
       });
   if (channel == nullptr) {
-    if (error != nullptr) {
-      *error = "not connected to the host";
-    }
+    util::SetError(error, "not connected to the host");
     return nullptr;
   }
   connection_->Track(channel);

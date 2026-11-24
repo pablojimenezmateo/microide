@@ -7,6 +7,7 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/lsp/LspViewportPositions.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -79,9 +80,7 @@ std::optional<LoweredSignature> LowerLspSignature(const LspClient::SignatureHelp
 }  // namespace
 
 bool SignatureHelpAssist::Show(std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
     return false;

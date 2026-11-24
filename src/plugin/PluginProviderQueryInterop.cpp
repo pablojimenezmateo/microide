@@ -7,6 +7,7 @@
 
 #include "plugin/PluginLuaInterop.h"
 #include "util/TextFileIO.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::provider_query_interop {
 namespace {
@@ -235,10 +236,7 @@ bool DiscoverTests(
       std::find_if(test_provider_runtimes.begin(), test_provider_runtimes.end(),
                    [provider_id](const auto& provider) { return provider.id == provider_id; });
   if (it == test_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown test provider: " + std::string(provider_id);
-    }
-    return false;
+    return util::Fail(error_message, "unknown test provider: " + std::string(provider_id));
   }
   if (it->discover_ref == LUA_NOREF || it->discover_ref == LUA_REFNIL) {
     return true;
@@ -307,16 +305,10 @@ bool RunTests(
       std::find_if(test_provider_runtimes.begin(), test_provider_runtimes.end(),
                    [provider_id](const auto& provider) { return provider.id == provider_id; });
   if (it == test_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown test provider: " + std::string(provider_id);
-    }
-    return false;
+    return util::Fail(error_message, "unknown test provider: " + std::string(provider_id));
   }
   if (it->run_ref == LUA_NOREF || it->run_ref == LUA_REFNIL) {
-    if (error_message != nullptr) {
-      *error_message = "test provider '" + std::string(provider_id) + "' does not support run";
-    }
-    return false;
+    return util::Fail(error_message, "test provider '" + std::string(provider_id) + "' does not support run");
   }
 
   lua_State* state = it->state;
@@ -379,10 +371,7 @@ bool SnapshotScm(
       std::find_if(scm_provider_runtimes.begin(), scm_provider_runtimes.end(),
                    [provider_id](const auto& runtime) { return runtime.id == provider_id; });
   if (it == scm_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown scm provider: " + std::string(provider_id);
-    }
-    return false;
+    return util::Fail(error_message, "unknown scm provider: " + std::string(provider_id));
   }
 
   lua_State* state = it->state;
@@ -476,9 +465,7 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(3, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "annotation provider '" + provider.id + "' failed: " + call_error;
-      }
+      util::SetError(error_message, "annotation provider '" + provider.id + "' failed: " + call_error);
       return {};
     }
     if (lua_istable(state, -1)) {
@@ -564,16 +551,12 @@ const runtime_types::AuthProviderRuntime* FindAuthHook(
       std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
                    [provider_id](const auto& runtime) { return runtime.id == provider_id; });
   if (it == auth_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown auth provider: " + std::string(provider_id);
-    }
+    util::SetError(error_message, "unknown auth provider: " + std::string(provider_id));
     return nullptr;
   }
   if ((*it).*hook == LUA_NOREF || (*it).*hook == LUA_REFNIL) {
-    if (error_message != nullptr) {
-      *error_message = "auth provider '" + std::string(provider_id) + "' does not support " +
-                       std::string(verb);
-    }
+    util::SetError(error_message, "auth provider '" + std::string(provider_id) + "' does not support " +
+        std::string(verb));
     return nullptr;
   }
   return &*it;
@@ -587,11 +570,8 @@ bool PCallAuthHook(std::string_view provider_id, const runtime_types::PluginInst
                    int nresults, std::string_view verb, std::string* error_message) {
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, nresults, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "auth provider '" + std::string(provider_id) + "' " + std::string(verb) +
-                       " failed: " + call_error;
-    }
-    return false;
+    return util::Fail(error_message, "auth provider '" + std::string(provider_id) + "' " + std::string(verb) +
+        " failed: " + call_error);
   }
   return true;
 }
@@ -691,9 +671,7 @@ bool ExecuteCommand(
   }
   const auto it = commands.find(std::string(name));
   if (it == commands.end()) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return false;
   }
 
@@ -710,10 +688,7 @@ bool ExecuteCommand(
 
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 1, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin command '" + std::string(name) + "' failed: " + call_error;
-    }
-    return false;
+    return util::Fail(error_message, "plugin command '" + std::string(name) + "' failed: " + call_error);
   }
   // A command may return a string (or {message = "..."}) to surface as host feedback.
   if (feedback != nullptr) {
@@ -723,9 +698,7 @@ bool ExecuteCommand(
       *feedback = lua_interop::ReadStringField(state, -1, "message");
     }
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -745,10 +718,7 @@ bool RunSaveParticipants(
     push_buffer_context_with_text(state, path, *text);
     std::string call_error;
     if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
-      if (error_message != nullptr) {
-        *error_message = "save participant '" + participant.id + "' failed: " + call_error;
-      }
-      return false;
+      return util::Fail(error_message, "save participant '" + participant.id + "' failed: " + call_error);
     }
     // Cap the participant's replacement text at the same ceiling the editor uses to
     // read/write files (kMaxTextFileBytes). Without it, a participant could hand back

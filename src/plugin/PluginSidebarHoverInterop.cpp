@@ -4,6 +4,7 @@
 
 #include "plugin/PluginLuaInterop.h"
 #include "util/StringUtil.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::sidebar_hover_interop {
 namespace {
@@ -14,10 +15,7 @@ bool ReadHoverResultTable(lua_State* state,
                           std::string_view provider_id,
                           std::string* error_message) {
   if (result == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "hover result output pointer is required";
-    }
-    return false;
+    return util::Fail(error_message, "hover result output pointer is required");
   }
 
   const int absolute_index = lua_absindex(state, table_index);
@@ -38,10 +36,8 @@ bool ReadHoverResultTable(lua_State* state,
       result->title = std::move(*title);
     }
   } else if (!lua_isnil(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin hover '" + std::string(provider_id) +
-                       "' title must be a string when present";
-    }
+    util::SetError(error_message, "plugin hover '" + std::string(provider_id) +
+        "' title must be a string when present");
     lua_pop(state, 1);
     return false;
   }
@@ -54,26 +50,19 @@ bool ReadHoverResultTable(lua_State* state,
       result->content = std::move(*content);
     }
   } else if (!lua_isnil(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin hover '" + std::string(provider_id) +
-                       "' content must be a string when present";
-    }
+    util::SetError(error_message, "plugin hover '" + std::string(provider_id) +
+        "' content must be a string when present");
     lua_pop(state, 1);
     return false;
   }
   lua_pop(state, 1);
 
   if (result->title.empty() && result->content.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "plugin hover '" + std::string(provider_id) +
-                       "' must return a title or content";
-    }
-    return false;
+    return util::Fail(error_message, "plugin hover '" + std::string(provider_id) +
+        "' must return a title or content");
   }
 
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -130,10 +119,7 @@ bool SnapshotSidebarProvider(
     std::vector<PluginHost::SidebarItem>* items,
     std::string* error_message) {
   if (provider.state == nullptr || provider.snapshot_ref == LUA_NOREF || items == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin sidebar is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "plugin sidebar is unavailable");
   }
 
   items->clear();
@@ -150,10 +136,8 @@ bool SnapshotSidebarProvider(
     return false;
   }
   if (!lua_istable(provider.state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin sidebar '" + provider.info.id +
-                       "' snapshot must return an array table";
-    }
+    util::SetError(error_message, "plugin sidebar '" + provider.info.id +
+        "' snapshot must return an array table");
     lua_pop(provider.state, 1);
     return false;
   }
@@ -168,20 +152,16 @@ bool SnapshotSidebarProvider(
   for (lua_Integer i = 1; i <= count; ++i) {
     lua_rawgeti(provider.state, -1, i);
     if (!lua_istable(provider.state, -1)) {
-      if (error_message != nullptr) {
-        *error_message = "plugin sidebar '" + provider.info.id +
-                         "' snapshot items must be tables";
-      }
+      util::SetError(error_message, "plugin sidebar '" + provider.info.id +
+          "' snapshot items must be tables");
       lua_pop(provider.state, 2);
       items->clear();
       return false;
     }
     PluginHost::SidebarItem item = lua_interop::ReadSidebarItem(provider.state, -1);
     if (item.label.empty()) {
-      if (error_message != nullptr) {
-        *error_message = "plugin sidebar '" + provider.info.id +
-                         "' items require a label";
-      }
+      util::SetError(error_message, "plugin sidebar '" + provider.info.id +
+          "' items require a label");
       lua_pop(provider.state, 2);
       items->clear();
       return false;
@@ -194,9 +174,7 @@ bool SnapshotSidebarProvider(
   }
 
   lua_pop(provider.state, 1);
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -216,15 +194,10 @@ bool ConfirmSidebarProviderItem(
           .line = item.line,
           .column = item.column,
       });
-      if (error_message != nullptr) {
-        error_message->clear();
-      }
+      util::ClearError(error_message);
       return opened;
     }
-    if (error_message != nullptr) {
-      *error_message = "plugin sidebar '" + provider.info.id + "' has no confirm action";
-    }
-    return false;
+    return util::Fail(error_message, "plugin sidebar '" + provider.info.id + "' has no confirm action");
   }
 
   const lua_interop::StackResetGuard stack_guard(provider.state);
@@ -240,9 +213,7 @@ bool ConfirmSidebarProviderItem(
     }
     return false;
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -257,9 +228,7 @@ bool ToggleSidebarProviderItem(
   if (provider.toggle_ref == LUA_NOREF || provider.state == nullptr) {
     // No toggle callback declared: the caller treats this as a no-op so flat
     // sidebars are unaffected.
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return false;
   }
 
@@ -276,9 +245,7 @@ bool ToggleSidebarProviderItem(
     }
     return false;
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   return true;
 }
 
@@ -292,10 +259,7 @@ bool QueryHoverProvider(
     PluginHost::HoverResult* result,
     std::string* error_message) {
   if (provider.state == nullptr || provider.provide_ref == LUA_NOREF || result == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin hover provider is unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "plugin hover provider is unavailable");
   }
 
   const lua_interop::StackResetGuard stack_guard(provider.state);
@@ -306,26 +270,19 @@ bool QueryHoverProvider(
   std::string call_error;
   if (plugin == nullptr || !plugin->runtime ||
       !plugin->runtime->PCall(2, 1, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin hover '" + provider.id + "' failed: " + call_error;
-    }
-    return false;
+    return util::Fail(error_message, "plugin hover '" + provider.id + "' failed: " + call_error);
   }
 
   if (lua_isnil(provider.state, -1)) {
     lua_pop(provider.state, 1);
     result->title.clear();
     result->content.clear();
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return true;
   }
 
   if (!lua_istable(provider.state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = "plugin hover '" + provider.id + "' must return a table or nil";
-    }
+    util::SetError(error_message, "plugin hover '" + provider.id + "' must return a table or nil");
     lua_pop(provider.state, 1);
     return false;
   }

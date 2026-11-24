@@ -35,6 +35,7 @@
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 #include "workspace/registries/WorkspaceSettingsRegistry.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -390,14 +391,10 @@ bool WorkspaceShell::ExecuteCommandName(std::string_view command_name,
                                         ActionSource source,
                                         std::string* error_message) {
   if (const ActionSpec* action = FindActionByCommand(command_name); action != nullptr) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return ActionCoordinator(MakeActionContext()).Execute(action->id, args, source);
   }
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   // "Handled" is resolved synchronously from the registry; the handler itself runs
   // on the plugin worker and its outcome surfaces as a toast on the drain.
   std::string command(command_name);

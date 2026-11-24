@@ -10,6 +10,7 @@
 #include "plugin/LuaError.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/ErrorOut.h"
 #endif
 
 namespace microide::plugin {
@@ -53,9 +54,7 @@ std::unique_ptr<LuaRuntime> LuaRuntime::Create(std::string* error_message) {
   runtime->memory_budget_.limit = kLuaMemoryLimitBytes;
   runtime->state_ = lua_newstate(&LuaRuntime::BoundedAlloc, &runtime->memory_budget_);
   if (runtime->state_ == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "failed to create Lua state";
-    }
+    util::SetError(error_message, "failed to create Lua state");
     return nullptr;
   }
   // Replace the C build's abort()-on-panic with a throwing handler so an
@@ -164,9 +163,7 @@ namespace {
 // value off the stack into it and counts the error.
 bool ReportPCallStatus(lua_State* state, int status, std::string* error_message) {
   if (status == LUA_OK) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
+    util::ClearError(error_message);
     return true;
   }
   util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackErrors);
@@ -182,10 +179,7 @@ bool ReportPCallStatus(lua_State* state, int status, std::string* error_message)
 
 bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) const {
   if (state_ == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "Lua runtime unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "Lua runtime unavailable");
   }
 
   // The two PCall entry points are the only way plugin Lua ever runs, so this is
@@ -206,10 +200,7 @@ bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) cons
 
 bool LuaRuntime::PCallNested(int nargs, int nresults, std::string* error_message) const {
   if (state_ == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "Lua runtime unavailable";
-    }
-    return false;
+    return util::Fail(error_message, "Lua runtime unavailable");
   }
 
   // Save the enclosing call's watchdog so the remainder of the outer call stays

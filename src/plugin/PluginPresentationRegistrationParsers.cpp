@@ -9,6 +9,7 @@
 #include "plugin/PluginLuaInterop.h"
 #include "render/ThemeFile.h"
 #include "util/StringUtil.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::presentation_interop {
 namespace {
@@ -27,9 +28,7 @@ std::optional<std::string> ReadHostNamespacedId(lua_State* state,
                                                 std::string_view kind) {
   auto id_opt = ReadOptionalStringField(state, 1, "id");
   if (!id_opt || id_opt->empty()) {
-    if (error_message != nullptr) {
-      *error_message = std::string(kind) + " requires id";
-    }
+    util::SetError(error_message, std::string(kind) + " requires id");
     return std::nullopt;
   }
   return std::string(plugin_id) + "." + *id_opt;
@@ -76,10 +75,7 @@ bool RegisterTheme(lua_State* state,
   // std::string error_message (RegisterTableContribution), violating the
   // "no longjmp over live C++ locals" invariant.
   if (lua_type(state, 1) != LUA_TTABLE) {
-    if (error_message != nullptr) {
-      *error_message = "theme registration expects a table argument";
-    }
-    return false;
+    return util::Fail(error_message, "theme registration expects a table argument");
   }
   auto full_id = ReadHostNamespacedId(state, plugin_id, error_message, "theme");
   if (!full_id) {
@@ -129,10 +125,7 @@ bool RegisterTheme(lua_State* state,
   lua_pop(state, 1);  // pop colors/styles table (or the non-table value)
 
   if (theme.styles.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "theme '" + theme.id + "' declares no colours";
-    }
-    return false;
+    return util::Fail(error_message, "theme '" + theme.id + "' declares no colours");
   }
   const auto existing = std::find_if(
       themes->begin(), themes->end(),
@@ -154,10 +147,7 @@ bool RegisterFileIconTheme(lua_State* state,
   }
   // Non-raising type check: see RegisterTheme for the longjmp-over-locals rationale.
   if (lua_type(state, 1) != LUA_TTABLE) {
-    if (error_message != nullptr) {
-      *error_message = "file icon theme registration expects a table argument";
-    }
-    return false;
+    return util::Fail(error_message, "file icon theme registration expects a table argument");
   }
   auto full_id = ReadHostNamespacedId(state, plugin_id, error_message, "file icon theme");
   if (!full_id) {
@@ -213,10 +203,7 @@ bool RegisterFileIconTheme(lua_State* state,
   lua_pop(state, 1);  // pop rules/icons table (or the non-table value)
 
   if (theme.rules.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "file icon theme '" + theme.id + "' declares no rules";
-    }
-    return false;
+    return util::Fail(error_message, "file icon theme '" + theme.id + "' declares no rules");
   }
   const auto existing = std::find_if(
       themes->begin(), themes->end(),

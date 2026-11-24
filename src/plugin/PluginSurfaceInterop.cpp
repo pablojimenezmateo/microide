@@ -15,6 +15,7 @@
 #include "plugin/PluginPathInterop.h"
 #include "render/PluginDisplayList.h"
 #include "render/SurfaceTextureCache.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::surface_interop {
 namespace {
@@ -51,8 +52,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
                    std::string* error) {
   std::string kind;
   if (!ReadStringField(state, entry, "op", &kind)) {
-    if (error != nullptr) *error = "display_list op requires an 'op' string";
-    return false;
+    return util::Fail(error, "display_list op requires an 'op' string");
   }
   render::DisplayOp op;
   if (kind == "rect") {
@@ -73,8 +73,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
     std::string text;
     ReadStringField(state, entry, "text", &text);
     if (list->text_arena.size() + text.size() > render::kMaxDisplayTextBytes) {
-      if (error != nullptr) *error = "display_list text exceeds the maximum size";
-      return false;
+      return util::Fail(error, "display_list text exceeds the maximum size");
     }
     op.data_offset = static_cast<std::uint32_t>(list->text_arena.size());
     op.data_count = static_cast<std::uint32_t>(text.size());
@@ -85,8 +84,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
     lua_interop::GetFieldProtected(state, entry, "points");
     if (!lua_istable(state, -1)) {
       lua_pop(state, 1);
-      if (error != nullptr) *error = "polyline requires a 'points' array";
-      return false;
+      return util::Fail(error, "polyline requires a 'points' array");
     }
     const int points_index = lua_absindex(state, -1);
     const lua_Integer point_count = static_cast<lua_Integer>(lua_rawlen(state, points_index));
@@ -94,8 +92,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
         list->point_arena.size() + static_cast<std::size_t>(point_count) >
             render::kMaxDisplayPoints) {
       lua_pop(state, 1);
-      if (error != nullptr) *error = "polyline point count is out of range";
-      return false;
+      return util::Fail(error, "polyline point count is out of range");
     }
     op.data_offset = static_cast<std::uint32_t>(list->point_arena.size());
     op.data_count = static_cast<std::uint32_t>(point_count);
@@ -113,8 +110,7 @@ bool ReadDisplayOp(lua_State* state, int entry, render::PluginDisplayList* list,
   } else if (kind == "clip_pop") {
     op.op = render::DrawOp::ClipPop;
   } else {
-    if (error != nullptr) *error = "unknown display_list op: " + kind;
-    return false;
+    return util::Fail(error, "unknown display_list op: " + kind);
   }
   list->ops.push_back(op);
   return true;
@@ -127,22 +123,20 @@ bool ReadDisplayList(lua_State* state, int dl_index, render::PluginDisplayList* 
   lua_interop::GetFieldProtected(state, dl_index, "ops");
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "display_list requires an 'ops' array";
-    return false;
+    return util::Fail(error, "display_list requires an 'ops' array");
   }
   const int ops_index = lua_absindex(state, -1);
   const lua_Integer op_count = static_cast<lua_Integer>(lua_rawlen(state, ops_index));
   if (op_count < 0 || static_cast<std::size_t>(op_count) > render::kMaxDisplayOps) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "display_list exceeds the maximum op count";
-    return false;
+    return util::Fail(error, "display_list exceeds the maximum op count");
   }
   list->ops.reserve(static_cast<std::size_t>(op_count));
   bool ok = true;
   for (lua_Integer i = 1; i <= op_count && ok; ++i) {
     lua_rawgeti(state, ops_index, i);
     if (!lua_istable(state, -1)) {
-      if (error != nullptr) *error = "display_list ops must be tables";
+      util::SetError(error, "display_list ops must be tables");
       ok = false;
     } else {
       ok = ReadDisplayOp(state, lua_absindex(state, -1), list, error);
@@ -175,21 +169,18 @@ bool ReadRaster(lua_State* state, int raster_index, editor::SurfaceContent* cont
   const bool is_png = format == "png" || format == "jpeg" || format == "jpg" || format.empty();
   const bool is_rgba = format == "rgba8";
   if (!is_png && !is_rgba) {
-    if (error != nullptr) *error = "raster format must be 'png' or 'rgba8'";
-    return false;
+    return util::Fail(error, "raster format must be 'png' or 'rgba8'");
   }
   lua_interop::GetFieldProtected(state, raster_index, "bytes");
   if (!lua_isstring(state, -1)) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "raster requires a 'bytes' string";
-    return false;
+    return util::Fail(error, "raster requires a 'bytes' string");
   }
   std::size_t len = 0;
   const char* data = lua_tolstring(state, -1, &len);
   if (len == 0 || len > render::SurfaceTextureCache::kMaxEncodedBytes) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "raster bytes are empty or too large";
-    return false;
+    return util::Fail(error, "raster bytes are empty or too large");
   }
   std::string bytes(data, len);
   lua_pop(state, 1);
@@ -237,22 +228,20 @@ bool ReadHitRegions(lua_State* state, int spec_index, editor::SurfaceContent* co
   }
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "hit_regions must be an array";
-    return false;
+    return util::Fail(error, "hit_regions must be an array");
   }
   const int array_index = lua_absindex(state, -1);
   const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
   if (count > kMaxHitRegions) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "hit_regions exceeds the maximum count";
-    return false;
+    return util::Fail(error, "hit_regions exceeds the maximum count");
   }
   content->hit_regions.reserve(static_cast<std::size_t>(count));
   bool ok = true;
   for (lua_Integer i = 1; i <= count && ok; ++i) {
     lua_rawgeti(state, array_index, i);
     if (!lua_istable(state, -1)) {
-      if (error != nullptr) *error = "hit_regions entries must be tables";
+      util::SetError(error, "hit_regions entries must be tables");
       ok = false;
     } else {
       const int entry = lua_absindex(state, -1);
@@ -289,8 +278,7 @@ bool ReadAnchor(lua_State* state, int spec_index,
   }
   if (!lua_istable(state, -1)) {
     lua_pop(state, 1);
-    if (error != nullptr) *error = "anchor must be a table {path, line}";
-    return false;
+    return util::Fail(error, "anchor must be a table {path, line}");
   }
   const int anchor_index = lua_absindex(state, -1);
   std::string raw_path;
@@ -306,8 +294,7 @@ bool ReadAnchor(lua_State* state, int spec_index,
   constexpr lua_Integer kMaxOneBased =
       static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max()) + 1;
   if (raw_path.empty() || line <= 0 || line > kMaxOneBased) {
-    if (error != nullptr) *error = "anchor requires a non-empty path and a 1-based line";
-    return false;
+    return util::Fail(error, "anchor requires a non-empty path and a 1-based line");
   }
   editor::SurfaceAnchor anchor;
   anchor.path = ResolveRuntimePath(current_project_root, std::filesystem::path(raw_path));
@@ -345,12 +332,10 @@ bool PublishSurface(lua_State* state, std::string_view plugin_id,
                     std::string_view surface_id, int spec_index,
                     const PluginHost::Callbacks& callbacks, std::string* error_message) {
   if (!callbacks.publish_surface) {
-    if (error_message != nullptr) *error_message = "surface API unavailable";
-    return false;
+    return util::Fail(error_message, "surface API unavailable");
   }
   if (surface_id.empty()) {
-    if (error_message != nullptr) *error_message = "surface id must not be empty";
-    return false;
+    return util::Fail(error_message, "surface id must not be empty");
   }
 
   const int spec = lua_absindex(state, spec_index);
@@ -365,16 +350,10 @@ bool PublishSurface(lua_State* state, std::string_view plugin_id,
   lua_pop(state, 1);
 
   if (has_dl && has_raster) {
-    if (error_message != nullptr) {
-      *error_message = "surface spec must have only one of display_list / raster";
-    }
-    return false;
+    return util::Fail(error_message, "surface spec must have only one of display_list / raster");
   }
   if (!has_dl && !has_raster) {
-    if (error_message != nullptr) {
-      *error_message = "surface spec requires a display_list or raster body";
-    }
-    return false;
+    return util::Fail(error_message, "surface spec requires a display_list or raster body");
   }
 
   if (has_dl) {
@@ -407,8 +386,7 @@ bool PublishSurface(lua_State* state, std::string_view plugin_id,
 bool ClearSurface(std::string_view plugin_id, std::string_view surface_id,
                   const PluginHost::Callbacks& callbacks, std::string* error_message) {
   if (!callbacks.clear_surface) {
-    if (error_message != nullptr) *error_message = "surface API unavailable";
-    return false;
+    return util::Fail(error_message, "surface API unavailable");
   }
   callbacks.clear_surface(std::string(plugin_id), std::string(surface_id));
   if (error_message != nullptr) error_message->clear();

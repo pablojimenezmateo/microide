@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include "util/ErrorOut.h"
 
 namespace microide::plugin::lifecycle_callback_interop {
 
@@ -13,10 +14,7 @@ bool CallSetup(runtime_types::PluginInstance* plugin,
                    format_plugin_prefix,
                std::string* error_message) {
   if (plugin == nullptr || active_plugin_slot == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin setup requires an initialized plugin runtime";
-    }
-    return false;
+    return util::Fail(error_message, "plugin setup requires an initialized plugin runtime");
   }
   if (plugin->setup_ref == LUA_NOREF) {
     return true;
@@ -27,9 +25,7 @@ bool CallSetup(runtime_types::PluginInstance* plugin,
   push_plugin_context(plugin->state);
   std::string call_error;
   if (!plugin->runtime->PCall(1, 0, &call_error)) {
-    if (error_message != nullptr) {
-      *error_message = format_plugin_prefix(plugin) + " setup failed: " + call_error;
-    }
+    util::SetError(error_message, format_plugin_prefix(plugin) + " setup failed: " + call_error);
     *active_plugin_slot = nullptr;
     return false;
   }
@@ -174,10 +170,7 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                     const std::function<void(const runtime_types::PluginInstance&)>& record_disabled,
                     std::string* error_message) {
   if (plugins == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "plugin root load requires plugin storage";
-    }
-    return false;
+    return util::Fail(error_message, "plugin root load requires plugin storage");
   }
   runtime_types::PluginInstance plugin{
       .id = {},
@@ -222,10 +215,8 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                                         return loaded.id == plugin.id;
                                       });
   if (duplicate != plugins->end()) {
-    if (error_message != nullptr) {
-      *error_message = "duplicate plugin id '" + plugin.id + "' in " + plugin.root.string() +
-                       " and " + duplicate->root.string();
-    }
+    util::SetError(error_message, "duplicate plugin id '" + plugin.id + "' in " + plugin.root.string() +
+        " and " + duplicate->root.string());
     destroy_plugin_state(&plugin);
     return false;
   }

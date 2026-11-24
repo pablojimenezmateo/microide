@@ -18,6 +18,7 @@
 #include "util/CoverageProfile.h"
 #include "util/CrashPoint.h"
 #include "util/Parse.h"
+#include "util/ErrorOut.h"
 
 namespace microide::util {
 
@@ -110,10 +111,7 @@ class CrashPointControl {
     State& state = Shared();
     const std::lock_guard lock(state.mutex);
     if (!state.installed) {
-      if (error != nullptr) {
-        *error = "crash points are not installed (MICROIDE_QA_CRASH_POINTS is unset)";
-      }
-      return false;
+      return util::Fail(error, "crash points are not installed (MICROIDE_QA_CRASH_POINTS is unset)");
     }
     state.rule = std::move(parsed);
     state.armed = true;
@@ -179,10 +177,7 @@ class CrashPointControl {
   }
 
   static bool Fail(std::string* error, std::string message) {
-    if (error != nullptr) {
-      *error = std::move(message);
-    }
-    return false;
+    return util::Fail(error, std::move(message));
   }
 
   static bool Parse(std::string_view text, Rule* rule, std::string* error) {

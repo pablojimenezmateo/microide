@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "util/ErrorOut.h"
 
 namespace microide::project::remote {
 namespace {
@@ -231,9 +232,7 @@ std::vector<std::string> SshConfigHosts(const std::filesystem::path& config_file
 
 std::optional<RemoteHostTarget> ParseRemoteHostTarget(std::string_view text, std::string* error) {
   const auto fail = [&](std::string message) -> std::optional<RemoteHostTarget> {
-    if (error != nullptr) {
-      *error = std::move(message);
-    }
+    util::SetError(error, std::move(message));
     return std::nullopt;
   };
   while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) {

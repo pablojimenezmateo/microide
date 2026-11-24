@@ -11,6 +11,7 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/lsp/LspViewportPositions.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -94,9 +95,7 @@ CompletionSessionState& CompletionAssist::ResetSession(const editor::TextViewpor
 }
 
 bool CompletionAssist::ShowCompletionOverlay(std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.ops().active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
     return false;
@@ -505,14 +504,9 @@ bool CompletionAssist::ApplySelectedCompletion() {
 }
 
 bool CompletionAssist::ShowInsertSnippetOverlay(std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   if (!host_.SnippetsEnabled()) {
-    if (error_message != nullptr) {
-      *error_message = "Snippets are disabled";
-    }
-    return false;
+    return util::Fail(error_message, "Snippets are disabled");
   }
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
@@ -520,10 +514,7 @@ bool CompletionAssist::ShowInsertSnippetOverlay(std::string* error_message) {
   }
   const LanguageContract* contract = host_.languages().Find(viewport->language_id());
   if (contract == nullptr || contract->snippets.empty()) {
-    if (error_message != nullptr) {
-      *error_message = "No snippets for this language";
-    }
-    return false;
+    return util::Fail(error_message, "No snippets for this language");
   }
   CompletionSessionState& session = ResetSession(*viewport, /*automatic=*/false, "snippet");
   session.items.reserve(contract->snippets.size());

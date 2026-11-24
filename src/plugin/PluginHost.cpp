@@ -1,4 +1,5 @@
 #include "plugin/PluginHostInternal.h"
+#include "util/ErrorOut.h"
 
 namespace microide::plugin {
 

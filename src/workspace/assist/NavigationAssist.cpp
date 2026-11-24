@@ -10,6 +10,7 @@
 #include "workspace/FileUri.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/lsp/LspViewportPositions.h"
+#include "util/ErrorOut.h"
 
 namespace microide::workspace {
 
@@ -48,9 +49,7 @@ bool NavigationAssist::FindReferences(std::string* error_message) {
 }
 
 bool NavigationAssist::QueryLocations(LocationQuery query, std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
     return false;
@@ -194,9 +193,7 @@ void NavigationAssist::OpenThen(const std::filesystem::path& path, std::function
 }
 
 bool NavigationAssist::GoToLspNavigation(LspNavigationKind kind, std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
     return false;
@@ -331,9 +328,7 @@ void NavigationAssist::PublishReferences(const std::shared_ptr<Merge>& merge,
 }
 
 bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
     return false;
@@ -461,9 +456,7 @@ bool NavigationAssist::ShowCallHierarchy(bool incoming, std::string* error_messa
 
 bool NavigationAssist::QueryWorkspaceSymbols(const std::string& query, WorkspaceSymbolsReady deliver,
                                           std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
+  util::ClearError(error_message);
   editor::TextViewport* viewport = host_.RequireActiveEditableViewport(error_message);
   if (viewport == nullptr) {
     return false;
