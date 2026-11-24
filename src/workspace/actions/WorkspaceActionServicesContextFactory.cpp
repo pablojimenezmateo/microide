@@ -909,9 +909,9 @@ bool WorkspaceShell::ActionContextRunCompareCommand(ActionId id, std::string* er
       return false;
     }
     if (id == ActionId::MergeResetConflict) {
-      MakeCompareMergeService().ResetMergeHunk();
+      MakeCompareMergeService().interactions().ResetMergeHunk();
     } else {
-      MakeCompareMergeService().CopyMergeSideSnippet(id == ActionId::MergeCopyIncoming);
+      MakeCompareMergeService().interactions().CopyMergeSideSnippet(id == ActionId::MergeCopyIncoming);
     }
     return true;
   }
@@ -920,7 +920,7 @@ bool WorkspaceShell::ActionContextRunCompareCommand(ActionId id, std::string* er
     *error = "Not a diff: open one from the git view, a commit or Compare";
     return false;
   }
-  CompareMergeService& compare = MakeCompareMergeService();
+  CompareInteractionCoordinator& compare = MakeCompareMergeService().interactions();
   switch (id) {
     case ActionId::CompareToggleIgnoreWhitespace:
       compare.ToggleCompareIgnoreWhitespace();

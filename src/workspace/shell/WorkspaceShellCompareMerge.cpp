@@ -403,31 +403,31 @@ std::optional<std::size_t> WorkspaceShell::FindOpenCompareTabIndex(
     const std::filesystem::path& path,
     std::string_view left_ref,
     std::string_view right_ref) const {
-  return const_cast<WorkspaceShell*>(this)->MakeCompareMergeService().FindOpenCompareTabIndex(
+  return const_cast<WorkspaceShell*>(this)->MakeCompareMergeService().diff_tabs().FindOpenCompareTabIndex(
       path, left_ref, right_ref);
 }
 
 std::optional<std::size_t> WorkspaceShell::FindOpenMergeTabIndex(
     const std::filesystem::path& path) const {
-  return const_cast<WorkspaceShell*>(this)->MakeCompareMergeService().FindOpenMergeTabIndex(path);
+  return const_cast<WorkspaceShell*>(this)->MakeCompareMergeService().diff_tabs().FindOpenMergeTabIndex(path);
 }
 
 void WorkspaceShell::OpenComparison(const project::GitCommitEntry& commit) {
-  MakeCompareMergeService().OpenComparison(commit);
+  MakeCompareMergeService().diff_tabs().OpenComparison(commit);
 }
 
 bool WorkspaceShell::OpenMergeEditor(const std::filesystem::path& base_path,
                                      const std::filesystem::path& incoming_path,
                                      const std::filesystem::path& current_path,
                                      const std::filesystem::path& output_path) {
-  return MakeCompareMergeService().OpenMergeEditor(base_path, incoming_path, current_path,
+  return MakeCompareMergeService().diff_tabs().OpenMergeEditor(base_path, incoming_path, current_path,
                                                    output_path);
 }
 
 bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path,
                                                const std::string& left_ref,
                                                const std::string& left_label) {
-  return MakeCompareMergeService().OpenWorkingTreeComparison(path, left_ref, left_label);
+  return MakeCompareMergeService().diff_tabs().OpenWorkingTreeComparison(path, left_ref, left_label);
 }
 
 bool WorkspaceShell::OpenBranchHeadComparison(
@@ -438,21 +438,21 @@ bool WorkspaceShell::OpenBranchHeadComparison(
     const std::string& right_label,
     const project::GitRevisionBlobCache* prefetched,
     const std::vector<std::filesystem::path>* review_files) {
-  return MakeCompareMergeService().OpenBranchHeadComparison(path, left_ref, left_label, right_ref,
+  return MakeCompareMergeService().diff_tabs().OpenBranchHeadComparison(path, left_ref, left_label, right_ref,
                                                             right_label, prefetched, review_files);
 }
 
 bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
-  return MakeCompareMergeService().OpenGitConflictMerge(path);
+  return MakeCompareMergeService().diff_tabs().OpenGitConflictMerge(path);
 }
 
 bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
                                               std::string_view commit_spec) {
-  return MakeCompareMergeService().OpenPickerForPath(path, commit_spec);
+  return MakeCompareMergeService().interactions().OpenPickerForPath(path, commit_spec);
 }
 
 void WorkspaceShell::OpenOutgoingBaseRefPicker() {
-  MakeCompareMergeService().OpenOutgoingBasePicker();
+  MakeCompareMergeService().interactions().OpenOutgoingBasePicker();
 }
 
 void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path& path) {
@@ -544,7 +544,7 @@ void WorkspaceShell::ApplyComparePickerFileHistory(
   if (!ComparePickerRequestCurrent(generation)) {
     return;  // Overlay closed, project switched, or a newer picker superseded this.
   }
-  MakeCompareMergeService().ApplyFileHistoryResult(history);
+  MakeCompareMergeService().interactions().ApplyFileHistoryResult(history);
 }
 
 void WorkspaceShell::ApplyComparePickerRefs(
@@ -553,35 +553,35 @@ void WorkspaceShell::ApplyComparePickerRefs(
   if (!ComparePickerRequestCurrent(generation)) {
     return;  // Overlay closed, project switched, or a newer picker superseded this.
   }
-  MakeCompareMergeService().ApplyRefsResult(branches, commits);
+  MakeCompareMergeService().interactions().ApplyRefsResult(branches, commits);
 }
 
 void WorkspaceShell::RefreshComparePicker() {
-  MakeCompareMergeService().RefreshPicker();
+  MakeCompareMergeService().interactions().RefreshPicker();
 }
 
 void WorkspaceShell::MoveComparePickerSelection(int delta) {
-  MakeCompareMergeService().MovePickerSelection(delta);
+  MakeCompareMergeService().interactions().MovePickerSelection(delta);
 }
 
 void WorkspaceShell::OpenSelectedCompareCommit() {
-  MakeCompareMergeService().OpenSelectedCommit();
+  MakeCompareMergeService().interactions().OpenSelectedCommit();
 }
 
 void WorkspaceShell::OpenWorkingFileFromCompare() {
-  MakeCompareMergeService().OpenWorkingFileFromCompare();
+  MakeCompareMergeService().interactions().OpenWorkingFileFromCompare();
 }
 
 void WorkspaceShell::OpenMergeResultFile() {
-  MakeCompareMergeService().OpenMergeResultFile();
+  MakeCompareMergeService().interactions().OpenMergeResultFile();
 }
 
 void WorkspaceShell::MoveCompareSelection(int delta) {
-  MakeCompareMergeService().MoveCompareSelection(delta);
+  MakeCompareMergeService().interactions().MoveCompareSelection(delta);
 }
 
 void WorkspaceShell::JumpCompareHunk(int delta) {
-  MakeCompareMergeService().JumpCompareHunk(delta);
+  MakeCompareMergeService().interactions().JumpCompareHunk(delta);
 }
 
 void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& path) {
@@ -631,39 +631,39 @@ void WorkspaceShell::OpenDiscardCompareSelectedLinesPrompt() {
 }
 
 void WorkspaceShell::ScrollCompareRows(int delta) {
-  MakeCompareMergeService().ScrollCompareRows(delta);
+  MakeCompareMergeService().interactions().ScrollCompareRows(delta);
 }
 
 void WorkspaceShell::ScrollCompareColumns(int delta) {
-  MakeCompareMergeService().ScrollCompareColumns(delta);
+  MakeCompareMergeService().interactions().ScrollCompareColumns(delta);
 }
 
 void WorkspaceShell::MoveMergeSelection(int delta) {
-  MakeCompareMergeService().MoveMergeSelection(delta);
+  MakeCompareMergeService().interactions().MoveMergeSelection(delta);
 }
 
 void WorkspaceShell::ScrollMergeColumns(int delta) {
-  MakeCompareMergeService().ScrollMergeColumns(delta);
+  MakeCompareMergeService().interactions().ScrollMergeColumns(delta);
 }
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
-  MakeCompareMergeService().ApplyMergeChoice(choice);
+  MakeCompareMergeService().interactions().ApplyMergeChoice(choice);
 }
 
 void WorkspaceShell::ResetMergeHunk() {
-  MakeCompareMergeService().ResetMergeHunk();
+  MakeCompareMergeService().interactions().ResetMergeHunk();
 }
 
 void WorkspaceShell::JumpNextUnresolvedMergeConflict() {
-  MakeCompareMergeService().JumpNextUnresolvedMergeConflict();
+  MakeCompareMergeService().interactions().JumpNextUnresolvedMergeConflict();
 }
 
 void WorkspaceShell::ToggleMergeBasePane() {
-  MakeCompareMergeService().ToggleMergeBasePane();
+  MakeCompareMergeService().interactions().ToggleMergeBasePane();
 }
 
 void WorkspaceShell::MarkMergeResolved() {
-  MakeCompareMergeService().MarkMergeResolved();
+  MakeCompareMergeService().interactions().MarkMergeResolved();
 }
 
 }  // namespace microide::workspace

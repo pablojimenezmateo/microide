@@ -744,7 +744,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/git/CompareTabLoad.cpp
   src/workspace/git/CompareTabReview.cpp
   src/workspace/git/BranchReviewStateBridge.cpp
-  src/workspace/services/CompareMergeService.cpp
   src/workspace/services/CompareReviewService.cpp
   src/workspace/git/MergeResolverContext.cpp
   src/workspace/git/MergeResultValidation.cpp

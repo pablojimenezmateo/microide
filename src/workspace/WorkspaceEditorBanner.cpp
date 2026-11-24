@@ -126,7 +126,7 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
             .path = {},
             .editable = false,
         };
-        (void)MakeCompareMergeService().OpenPlainComparison(std::move(*on_disk), std::move(unsaved));
+        (void)MakeCompareMergeService().diff_tabs().OpenPlainComparison(std::move(*on_disk), std::move(unsaved));
       }
       RequestEditorSurfaceRedraw();
       return;

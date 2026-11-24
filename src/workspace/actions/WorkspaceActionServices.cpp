@@ -1033,12 +1033,12 @@ std::filesystem::path WorkspaceActionContext::ResolveComparePath(
 
 void WorkspaceActionContext::OpenComparePickerForPath(const std::filesystem::path& path,
                                                       const std::string& commit_spec) {
-  services_.compare_merge.OpenPickerForPath(path, commit_spec);
+  services_.compare_merge.interactions().OpenPickerForPath(path, commit_spec);
 }
 
 void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& path) {
   state_.overlay.workflow.compare_picker.path = path.lexically_normal();
-  services_.compare_merge.OpenComparison(project::GitCommitEntry{
+  services_.compare_merge.diff_tabs().OpenComparison(project::GitCommitEntry{
       .hash = "HEAD",
       .short_hash = "HEAD",
       .subject = "HEAD",
@@ -1112,7 +1112,7 @@ std::string WorkspaceActionContext::CompareFiles(const std::filesystem::path& le
   if (!right.has_value()) {
     return "Cannot read right file: " + right_path.string();
   }
-  if (!services_.compare_merge.OpenPlainComparison(std::move(*left), std::move(*right))) {
+  if (!services_.compare_merge.diff_tabs().OpenPlainComparison(std::move(*left), std::move(*right))) {
     return "Failed to open comparison";
   }
   return {};
@@ -1153,7 +1153,7 @@ std::string WorkspaceActionContext::CompareWithSelected(ActionSource source) {
   if (!current.has_value()) {
     return error;
   }
-  if (!services_.compare_merge.OpenPlainComparison(std::move(stashed), std::move(*current))) {
+  if (!services_.compare_merge.diff_tabs().OpenPlainComparison(std::move(stashed), std::move(*current))) {
     return "Failed to open comparison";
   }
   return {};
@@ -1177,7 +1177,7 @@ std::string WorkspaceActionContext::CompareWithClipboard(ActionSource source) {
       .path = {},
       .editable = false,
   };
-  if (!services_.compare_merge.OpenPlainComparison(std::move(clipboard_input), std::move(*current))) {
+  if (!services_.compare_merge.diff_tabs().OpenPlainComparison(std::move(clipboard_input), std::move(*current))) {
     return "Failed to open comparison";
   }
   return {};
@@ -1236,7 +1236,7 @@ void WorkspaceActionContext::OpenMergeEditor(const std::filesystem::path& base_p
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,
                                              const std::filesystem::path& output_path) {
-  services_.compare_merge.OpenMergeEditor(base_path, incoming_path, current_path, output_path);
+  services_.compare_merge.diff_tabs().OpenMergeEditor(base_path, incoming_path, current_path, output_path);
 }
 
 namespace {

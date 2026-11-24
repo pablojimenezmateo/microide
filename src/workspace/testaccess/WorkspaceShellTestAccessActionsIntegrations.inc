@@ -174,7 +174,7 @@
         .Execute(id, std::move(args), source);
   }
   static bool OpenPlainComparison(WorkspaceShell& shell, CompareInput left, CompareInput right) {
-    return shell.MakeCompareMergeService().OpenPlainComparison(std::move(left), std::move(right));
+    return shell.MakeCompareMergeService().diff_tabs().OpenPlainComparison(std::move(left), std::move(right));
   }
   // What SelectForCompare stashed. ResolveCurrentCompareInput decides this: a
   // context-menu invocation takes the tree target, otherwise the ACTIVE BUFFER

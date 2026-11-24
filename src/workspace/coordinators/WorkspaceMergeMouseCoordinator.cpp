@@ -537,7 +537,7 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .open_merge_result_file =
-              [this]() { MakeCompareMergeService().OpenMergeResultFile(); },
+              [this]() { MakeCompareMergeService().interactions().OpenMergeResultFile(); },
           .build_merge_source_action_button_rect =
               [this](const MergeSurfaceLayout& surface, const MergeInteractionLayout& interaction,
                      const MergeTrackedConflict& conflict, bool incoming) {
@@ -550,7 +550,7 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               },
           .apply_merge_choice =
               [this](compare::MergeChoice choice) {
-                MakeCompareMergeService().ApplyMergeChoice(choice);
+                MakeCompareMergeService().interactions().ApplyMergeChoice(choice);
               },
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .update_merge_tracking_after_viewport_edit =
@@ -577,7 +577,7 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .move_merge_selection =
-              [this](int delta) { MakeCompareMergeService().MoveMergeSelection(delta); },
+              [this](int delta) { MakeCompareMergeService().interactions().MoveMergeSelection(delta); },
           .mark_merge_resolved = [this]() { MarkMergeResolved(); },
           .toggle_merge_base_pane = [this]() { ToggleMergeBasePane(); },
           .jump_next_unresolved_merge_conflict =

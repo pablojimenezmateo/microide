@@ -179,7 +179,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
             left_input->label = std::move(left_label);
             right_input->label = std::move(right_label);
-            return MakeCompareMergeService().OpenPlainComparison(std::move(*left_input),
+            return MakeCompareMergeService().diff_tabs().OpenPlainComparison(std::move(*left_input),
                                                                  std::move(*right_input))
                        ? std::string()
                        : std::string("the comparison did not open");
@@ -371,7 +371,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .open_merge =
           [this](const std::filesystem::path& base, const std::filesystem::path& incoming,
                  const std::filesystem::path& current, const std::filesystem::path& output) {
-            if (!MakeCompareMergeService().OpenMergeEditor(base, incoming, current, output)) {
+            if (!MakeCompareMergeService().diff_tabs().OpenMergeEditor(base, incoming, current, output)) {
               return std::string("the merge editor did not open");
             }
             // The output is the mirror's file, which is "mine": a fresh tab starts

@@ -237,7 +237,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
               return std::nullopt;
             },
             [&self, gathered](const std::filesystem::path& path) {
-              return self.compare_merge_.OpenGitConflictMerge(path, &gathered->prefetched);
+              return self.compare_merge_.diff_tabs().OpenGitConflictMerge(path, &gathered->prefetched);
             },
             "no merge conflicts");
       });
@@ -286,7 +286,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
               return std::nullopt;
             },
             [&self, gathered, ref, label](const std::filesystem::path& path) {
-              return self.compare_merge_.OpenWorkingTreeComparison(path, ref, label,
+              return self.compare_merge_.diff_tabs().OpenWorkingTreeComparison(path, ref, label,
                                                                    &gathered->prefetched);
             },
             "no differences");
@@ -327,7 +327,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
               return std::nullopt;
             },
             [&self, gathered, left_ref, right_ref](const std::filesystem::path& path) {
-              return self.compare_merge_.OpenBranchHeadComparison(
+              return self.compare_merge_.diff_tabs().OpenBranchHeadComparison(
                   path, left_ref, left_ref, right_ref, right_ref, &gathered->prefetched,
                   &gathered->review_files);
             },
@@ -378,7 +378,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCheckpointReview() {
               return std::nullopt;
             },
             [&self, gathered, ref](const std::filesystem::path& path) {
-              return self.compare_merge_.OpenWorkingTreeComparison(path, ref, "checkpoint",
+              return self.compare_merge_.diff_tabs().OpenWorkingTreeComparison(path, ref, "checkpoint",
                                                                    &gathered->prefetched);
             },
             "no changes since the checkpoint");

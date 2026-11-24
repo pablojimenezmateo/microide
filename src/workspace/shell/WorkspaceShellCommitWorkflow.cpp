@@ -232,7 +232,7 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
         // No argument means "let me choose": open the filterable branch picker
         // rather than rejecting, which is how the command is reached from the menu
         // and the palette. Typing the name stays available for scripted use.
-        MakeCompareMergeService().OpenBranchSwitchPicker();
+        MakeCompareMergeService().interactions().OpenBranchSwitchPicker();
         return {};
       }
       dispatched = git_operation_service_.SwitchBranch(root, args[0]);

@@ -558,7 +558,7 @@
     shell.context_.current_project_state.overlay.workflow.compare_picker.selected_index = index;
   }
   static void ActivateComparePickerSelection(WorkspaceShell& shell) {
-    shell.MakeCompareMergeService().OpenSelectedCommit();
+    shell.MakeCompareMergeService().interactions().OpenSelectedCommit();
   }
   static void StageCompareHunk(WorkspaceShell& shell) { shell.StageCompareHunk(); }
   static void UnstageCompareHunk(WorkspaceShell& shell) { shell.UnstageCompareHunk(); }
