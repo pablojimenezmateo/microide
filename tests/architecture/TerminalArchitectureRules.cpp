@@ -204,7 +204,11 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // kept DECSC's saved rendition and a DEC 2031 subscription from the last
   // child -- so one list now serves both. RIS itself stays inline at its one
   // dispatch site rather than taking a slot.
-  constexpr std::size_t kCap = 45;
+  // 46: +1 for ExecuteC0Locked, on the same terms. The ground state and the
+  // mid-CSI path each carried their own C0 switch, and the mid-CSI copy had
+  // drifted: it lost the backspace's pending-wrap clamp and SO/SI. One copy now
+  // serves both (TerminalSession/MidCsiC0MatchesGroundState).
+  constexpr std::size_t kCap = 46;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");

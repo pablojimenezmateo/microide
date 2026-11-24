@@ -377,6 +377,10 @@ class TerminalSession {
   void FlushPendingReply();
   void EnsureCursorLineExistsLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
+  // Executes one C0 control byte (< 0x20; ESC, CAN and SUB are the parser's, not
+  // this). One copy for both places ECMA-48 executes a C0: the ground state and the
+  // middle of a CSI sequence, which continues afterwards.
+  void ExecuteC0Locked(unsigned char byte);
   void MoveCursorLocked(std::size_t row, std::size_t column);
   // Absolute deque row of the top of the visible screen on the primary buffer.
   // The primary deque holds scrollback followed by the visible grid, so row-

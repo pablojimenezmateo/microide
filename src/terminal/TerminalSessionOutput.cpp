@@ -75,6 +75,63 @@ constexpr bool IsCanOrSub(unsigned char byte) { return byte == 0x18 || byte == 0
 
 }  // namespace
 
+void TerminalSession::ExecuteC0Locked(unsigned char byte) {
+  switch (byte) {
+    case '\r':
+      cursor_column_ = 0;
+      break;
+    case '\n':
+      AdvanceCursorRowLocked();
+      break;
+    case '\v':    // VT (0x0B)
+    case '\f': {  // FF (0x0C)
+      // ECMA-48 index: move down one row PRESERVING the column (like IND / ESC D),
+      // NOT resetting to column 0 the way LF does. VT/FF are never subject to the
+      // PTY's ONLCR translation, so `A\vB` must staircase (B under the char after
+      // A), not land B at column 0. Mirrors the IND handler above.
+      const std::size_t saved_column = cursor_column_;
+      AdvanceCursorRowLocked();
+      cursor_column_ = saved_column;
+      break;
+    }
+    case '\b':
+      // From the pending-wrap column a backspace lands on the second-to-last
+      // column, as in xterm (see ClampPendingWrapColumnLocked).
+      ClampPendingWrapColumn(cursor_column_, columns_);
+      if (cursor_column_ > 0) {
+        --cursor_column_;
+      }
+      break;
+    case '\a':
+      // BEL: no effect on the screen; the UI marks a background tab with it
+      // (ConsumeBell), and a host session carries it in the next frame.
+      pending_bell_ = true;
+      pending_host_bell_ = true;
+      break;
+    case 0x0e:  // SO: G1 into GL
+      charsets_.shifted_out = true;
+      break;
+    case 0x0f:  // SI: G0 back into GL
+      charsets_.shifted_out = false;
+      break;
+    case '\t': {
+      // HT is pure cursor motion to the next tab stop. It must NOT write
+      // spaces over the cells it passes: real terminals (xterm/VTE) leave the
+      // underlying glyphs intact, so `ABCDEFGHIJ\r\tX` yields `ABCDEFGHXJ`, not
+      // `        XJ`. A later write past the current line length pads the gap
+      // with default-style blanks via ResizeLineLocked, so no fill is needed here.
+      // Not clamped: a tab at the pending-wrap column leaves the wrap pending,
+      // as xterm.js does (its tab() returns before moving when x >= cols), so
+      // the next glyph still wraps.
+      cursor_column_ = NextTabStopLocked(cursor_column_);
+      break;
+    }
+    default:
+      // The remaining C0 controls have no effect on the screen.
+      break;
+  }
+}
+
 void TerminalSession::AppendOutputLocked(std::string_view data) {
   // The escape/UTF-8 parser, called per read chunk on the terminal reader
   // thread. Scoped per chunk, not per byte: the whole point of the ASCII bulk
@@ -286,37 +343,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
       // byte < 0x20 here is unambiguously a C0 to run, not sequence content. The
       // previous code buffered it as a parameter byte and corrupted the dispatch.
       if (byte < 0x20) {
-        switch (byte) {
-          case '\r':
-            cursor_column_ = 0;
-            break;
-          case '\n':
-            AdvanceCursorRowLocked();
-            break;
-          case '\v':
-          case '\f': {
-            const std::size_t saved_column = cursor_column_;
-            AdvanceCursorRowLocked();
-            cursor_column_ = saved_column;
-            break;
-          }
-          case '\b':
-            if (cursor_column_ > 0) {
-              --cursor_column_;
-            }
-            break;
-          case '\t':
-            cursor_column_ = NextTabStopLocked(cursor_column_);
-            break;
-          case '\a':
-            // Executed mid-CSI like any C0 (see above): it rings.
-            pending_bell_ = true;
-            pending_host_bell_ = true;
-            break;
-          default:
-            // The remaining C0 controls have no positional effect here.
-            break;
-        }
+        ExecuteC0Locked(byte);
         continue;
       }
       escape_sequence_buffer_.push_back(static_cast<char>(byte));
@@ -436,59 +463,21 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
 
     switch (byte) {
       case '\r':
-        cursor_column_ = 0;
-        break;
       case '\n':
-        AdvanceCursorRowLocked();
-        break;
-      case '\v':  // VT (0x0B)
-      case '\f': {  // FF (0x0C)
-        // ECMA-48 index: move down one row PRESERVING the column (like IND / ESC D),
-        // NOT resetting to column 0 the way LF does. VT/FF are never subject to the
-        // PTY's ONLCR translation, so `A\vB` must staircase (B under the char after
-        // A), not land B at column 0. Mirrors the IND handler above.
-        const std::size_t saved_column = cursor_column_;
-        AdvanceCursorRowLocked();
-        cursor_column_ = saved_column;
-        break;
-      }
+      case '\v':
+      case '\f':
       case '\b':
-        // From the pending-wrap column a backspace lands on the second-to-last
-        // column, as in xterm (see ClampPendingWrapColumnLocked).
-        ClampPendingWrapColumn(cursor_column_, columns_);
-        if (cursor_column_ > 0) {
-          --cursor_column_;
-        }
-        break;
       case '\a':
-        // BEL: no effect on the screen; the UI marks a background tab with it
-        // (ConsumeBell), and a host session carries it in the next frame.
-        pending_bell_ = true;
-        pending_host_bell_ = true;
-        break;
-      case 0x0e:  // SO: G1 into GL
-        charsets_.shifted_out = true;
-        break;
-      case 0x0f:  // SI: G0 back into GL
-        charsets_.shifted_out = false;
+      case 0x0e:
+      case 0x0f:
+      case '\t':
+        ExecuteC0Locked(byte);
         break;
       case 0x7f:
         // DEL received in the output stream is ignored (ECMA-48 / xterm / VTE).
         // The previous destructive delete-and-shift corrupted the display when a
         // stray 0x7f appeared in child output (e.g. `printf '\x7f'` after text).
         break;
-      case '\t': {
-        // HT is pure cursor motion to the next tab stop. It must NOT write
-        // spaces over the cells it passes: real terminals (xterm/VTE) leave the
-        // underlying glyphs intact, so `ABCDEFGHIJ\r\tX` yields `ABCDEFGHXJ`, not
-        // `        XJ`. A later write past the current line length pads the gap
-        // with default-style blanks via ResizeLineLocked, so no fill is needed here.
-        // Not clamped: a tab at the pending-wrap column leaves the wrap pending,
-        // as xterm.js does (its tab() returns before moving when x >= cols), so
-        // the next glyph still wraps.
-        cursor_column_ = NextTabStopLocked(cursor_column_);
-        break;
-      }
       default:
         // `byte >= 0x80` was a tautological second disjunct here (an unsigned
         // char >= 0x80 is already >= 32); every remaining C0 control simply has

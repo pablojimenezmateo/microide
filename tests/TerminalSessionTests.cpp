@@ -3156,6 +3156,27 @@ void TestTerminalSessionC0ControlExecutesMidCsi() {
   ExpectLineText(lines, 1, "B", "the mid-CSI line feed moved the cursor down before B printed");
 }
 
+// A C0 control executed mid-CSI does exactly what it does in the ground state: the
+// two places used to hold separate copies of the C0 switch, and the mid-CSI one had
+// lost the backspace's pending-wrap clamp and SO/SI (ExecuteC0Locked is the one copy).
+void TestTerminalSessionMidCsiC0MatchesGroundState() {
+  const auto text_after = [](std::string_view output) {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 4, 8);
+    TerminalSessionTestAccess::AppendOutput(session, output);
+    const auto lines = session.SnapshotLines();
+    return lines.empty() ? std::string() : LineText(lines.front());
+  };
+  // Eight glyphs leave the wrap pending; a backspace from there lands on the
+  // second-to-last column, so X overwrites G.
+  Expect(text_after("ABCDEFGH\bX") == "ABCDEFXH", "ground: a backspace from the pending wrap clamps first");
+  Expect(text_after("ABCDEFGH\x1b[\bmX") == "ABCDEFXH", "mid-CSI: the same backspace clamps the same way");
+  // G1 designated as DEC special graphics; SO shifts it into GL, so 'q' draws a line.
+  const std::string ground = text_after("\x1b)0\x0eq");
+  Expect(ground != "q", "ground: SO shifts G1's line drawing in");
+  Expect(text_after("\x1b)0\x1b[\x0emq") == ground, "mid-CSI: SO shifts it in as well");
+}
+
 // Regression: a full-window scroll region saved before a grow-resize follows the
 // new height when the screen is restored, instead of staying frozen at the old
 // height (ClampScrollRegionLocked only ever shrinks the bottom margin).
@@ -3445,6 +3466,7 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDecstbmClampsOutOfRangeBottom);
   AddTest(tests, "TerminalSession/C0ControlExecutesMidCsi",
           TestTerminalSessionC0ControlExecutesMidCsi);
+  AddTest(tests, "TerminalSession/MidCsiC0MatchesGroundState", TestTerminalSessionMidCsiC0MatchesGroundState);
   AddTest(tests, "TerminalSession/ResizeReexpandsSavedScrollRegion",
           TestTerminalSessionResizeReexpandsSavedScrollRegion);
   AddTest(tests, "TerminalSession/RestartResetsScrollRegionToDefaultHeight",
