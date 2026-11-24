@@ -18,48 +18,52 @@ void ClearPluginDiagnostics(
 
 void DestroyPluginState(runtime_types::PluginInstance* plugin);
 
-void UnregisterContributionsForState(
-    lua_State* state,
-    const runtime_types::PluginInstance* plugin,
-    std::unordered_map<std::string, runtime_types::PluginCommand>* commands,
-    std::vector<std::string>* command_names,
-    std::unordered_map<std::string, runtime_types::SidebarProvider>* sidebars,
-    std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers,
-    std::unordered_map<std::string, runtime_types::HoverProvider>* hovers,
-    std::vector<std::string>* hover_provider_order,
-    std::vector<PluginHost::ContributedMenuEntry>* menu_entries,
-    std::vector<PluginHost::ContributedKeybinding>* keybindings,
-    std::vector<PluginHost::ContributedSettingSpec>* settings,
-    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
-    std::vector<PluginHost::ContributedStatusItem>* status_item_order,
-    std::vector<PluginHost::ContributedFormatter>* formatters,
-    std::vector<PluginHost::ContributedSaveParticipant>* save_participants,
-    std::vector<PluginHost::ContributedVirtualDocument>* virtual_documents,
-    std::vector<runtime_types::SaveParticipantRuntime>* save_participant_runtimes,
-    std::vector<PluginHost::ContributedCompletion>* completions,
-    std::vector<runtime_types::CompletionRuntime>* completion_runtimes,
-    std::vector<PluginHost::ContributedCodeAction>* code_actions,
-    std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes,
-    std::vector<runtime_types::LanguageQueryRuntime>* language_query_runtimes,
-    std::vector<PluginHost::ContributedLanguageServer>* language_servers,
-    std::vector<PluginHost::ContributedDebugAdapter>* debug_adapters,
-    std::vector<PluginHost::ContributedLaunchConfig>* launch_configs,
-    std::vector<PluginHost::ContributedTask>* tasks,
-    std::vector<PluginHost::ContributedTool>* tools,
-    std::vector<PluginHost::ContributedTestProvider>* test_providers,
-    std::vector<runtime_types::TestProviderRuntime>* test_provider_runtimes,
-    std::vector<PluginHost::ContributedScmProvider>* scm_providers,
-    std::vector<runtime_types::ScmProviderRuntime>* scm_provider_runtimes,
-    std::vector<PluginHost::ContributedAnnotationProvider>* annotation_providers,
-    std::vector<runtime_types::AnnotationProviderRuntime>* annotation_provider_runtimes,
-    std::vector<PluginHost::ContributedAuthProvider>* auth_providers,
-    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes,
-    std::vector<PluginHost::ContributedBracketSet>* bracket_sets,
-    std::vector<PluginHost::ContributedCommentMarkers>* comment_markers,
-    std::vector<PluginHost::ContributedIndentRules>* indent_rules,
-    std::vector<PluginHost::ContributedSnippet>* snippets,
-    std::vector<PluginHost::ContributedTheme>* themes,
-    std::vector<PluginHost::ContributedFileIconTheme>* file_icon_themes);
+// Every contribution list the host keeps, for a teardown that drops one plugin's
+// (or one Lua state's) entries from all of them. All are required.
+struct ContributionLists {
+  std::unordered_map<std::string, runtime_types::PluginCommand>* commands = nullptr;
+  std::vector<std::string>* command_names = nullptr;
+  std::unordered_map<std::string, runtime_types::SidebarProvider>* sidebars = nullptr;
+  std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers = nullptr;
+  std::unordered_map<std::string, runtime_types::HoverProvider>* hovers = nullptr;
+  std::vector<std::string>* hover_provider_order = nullptr;
+  std::vector<PluginHost::ContributedMenuEntry>* menu_entries = nullptr;
+  std::vector<PluginHost::ContributedKeybinding>* keybindings = nullptr;
+  std::vector<PluginHost::ContributedSettingSpec>* settings = nullptr;
+  std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items = nullptr;
+  std::vector<PluginHost::ContributedStatusItem>* status_item_order = nullptr;
+  std::vector<PluginHost::ContributedFormatter>* formatters = nullptr;
+  std::vector<PluginHost::ContributedSaveParticipant>* save_participants = nullptr;
+  std::vector<PluginHost::ContributedVirtualDocument>* virtual_documents = nullptr;
+  std::vector<runtime_types::SaveParticipantRuntime>* save_participant_runtimes = nullptr;
+  std::vector<PluginHost::ContributedCompletion>* completions = nullptr;
+  std::vector<runtime_types::CompletionRuntime>* completion_runtimes = nullptr;
+  std::vector<PluginHost::ContributedCodeAction>* code_actions = nullptr;
+  std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes = nullptr;
+  std::vector<runtime_types::LanguageQueryRuntime>* language_query_runtimes = nullptr;
+  std::vector<PluginHost::ContributedLanguageServer>* language_servers = nullptr;
+  std::vector<PluginHost::ContributedDebugAdapter>* debug_adapters = nullptr;
+  std::vector<PluginHost::ContributedLaunchConfig>* launch_configs = nullptr;
+  std::vector<PluginHost::ContributedTask>* tasks = nullptr;
+  std::vector<PluginHost::ContributedTool>* tools = nullptr;
+  std::vector<PluginHost::ContributedTestProvider>* test_providers = nullptr;
+  std::vector<runtime_types::TestProviderRuntime>* test_provider_runtimes = nullptr;
+  std::vector<PluginHost::ContributedScmProvider>* scm_providers = nullptr;
+  std::vector<runtime_types::ScmProviderRuntime>* scm_provider_runtimes = nullptr;
+  std::vector<PluginHost::ContributedAnnotationProvider>* annotation_providers = nullptr;
+  std::vector<runtime_types::AnnotationProviderRuntime>* annotation_provider_runtimes = nullptr;
+  std::vector<PluginHost::ContributedAuthProvider>* auth_providers = nullptr;
+  std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes = nullptr;
+  std::vector<PluginHost::ContributedBracketSet>* bracket_sets = nullptr;
+  std::vector<PluginHost::ContributedCommentMarkers>* comment_markers = nullptr;
+  std::vector<PluginHost::ContributedIndentRules>* indent_rules = nullptr;
+  std::vector<PluginHost::ContributedSnippet>* snippets = nullptr;
+  std::vector<PluginHost::ContributedTheme>* themes = nullptr;
+  std::vector<PluginHost::ContributedFileIconTheme>* file_icon_themes = nullptr;
+};
+
+void UnregisterContributionsForState(lua_State* state, const runtime_types::PluginInstance* plugin,
+                                     const ContributionLists& lists);
 #endif
 
 }  // namespace microide::plugin::state_teardown_interop
