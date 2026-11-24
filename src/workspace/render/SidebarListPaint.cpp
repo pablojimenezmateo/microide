@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstring>
 #include <string_view>
 
 #include "render/DevicePixelSnap.h"
 #include "render/PaintElement.h"
+#include "workspace/SidebarMetrics.h"
 #include "workspace/render/EditorRowUnits.h"
 #include "workspace/render/SidebarListPaint.h"
 
@@ -20,37 +20,7 @@ namespace microide::workspace {
 
 using namespace detail;
 
-namespace {
-
-constexpr float kSidebarInset = 10.0f;
-
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
-std::uint64_t FloatBits(float value) {
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-
-std::uint64_t MixRect(std::uint64_t key, const SDL_FRect& rect) {
-  key = MixRowKey(key, FloatBits(rect.x) << 32 | FloatBits(rect.y));
-  return MixRowKey(key, FloatBits(rect.w) << 32 | FloatBits(rect.h));
-}
-
-std::uint64_t MixText(std::uint64_t key, std::string_view text) {
-  return MixRowKeyBytes(key, text.data(), text.size());
-}
-
-std::uint64_t ColorBits(SDL_Color color) {
-  return static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
-         static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24;
-}
-
-}  // namespace
+namespace {}  // namespace
 
 SDL_FRect SidebarPlaceholderBox(const SDL_FRect& sidebar, const ScrollableListLayout& list) {
   const float top = list.row_y + 4.0f;
@@ -72,7 +42,7 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
     std::uint64_t style = MixRowKey(0x5157u, inputs.text_renderer->MetricsGeneration());
     for (const SDL_Color color : {theme.row_highlight, theme.surface_background, theme.text_primary,
                                   theme.text_secondary, theme.text_muted, theme.diff_deleted, theme.accent}) {
-      style = MixRowKey(style, ColorBits(color));
+      style = MixRowKey(style, RowKeyColorBits(color));
     }
     const ScrollableListLayout& layout = inputs.list;
     const int scroll_row = layout.scroll_row;
@@ -96,8 +66,8 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
     list.text.append(inputs.placeholder);
     list.placeholder_length = inputs.placeholder.size();
     units.push_back(DerivedDamage::Unit{
-        .rect = UnitRect(inputs.renderer, list.placeholder_box),
-        .fingerprint = MixRowKey(MixText(MixRect(style, list.placeholder_box), inputs.placeholder),
+        .rect = render::SnapToDevicePixelsF(inputs.renderer, list.placeholder_box),
+        .fingerprint = MixRowKey(MixRowKeyText(MixRowKeyRect(style, list.placeholder_box), inputs.placeholder),
                                  inputs.placeholder_is_error ? 3u : 2u)});
     if (const auto geometry = MakeVerticalScrollbarGeometry(
             layout.list_rect, static_cast<float>(inputs.row_count), layout.visible_units,
@@ -107,11 +77,12 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
           .track = geometry->track, .thumb = geometry->thumb, .active = inputs.scrollbar_active};
     }
     units.push_back(DerivedDamage::Unit{
-        .rect = list.scrollbar.has_value() ? UnitRect(inputs.renderer, list.scrollbar->track) : SDL_FRect{},
-        .fingerprint = list.scrollbar.has_value()
-                           ? MixRowKey(MixRect(MixRect(style, list.scrollbar->track), list.scrollbar->thumb),
-                                       list.scrollbar->active ? 3u : 2u)
-                           : 1u});
+        .rect = list.scrollbar.has_value() ? render::SnapToDevicePixelsF(inputs.renderer, list.scrollbar->track)
+                                           : SDL_FRect{},
+        .fingerprint = list.scrollbar.has_value() ? MixRowKey(MixRowKeyRect(MixRowKeyRect(style, list.scrollbar->track),
+                                                                            list.scrollbar->thumb),
+                                                              list.scrollbar->active ? 3u : 2u)
+                                                  : 1u});
     for (int row = 0; row < layout.visible_rows; ++row) {
       const std::size_t index = static_cast<std::size_t>(scroll_row + row);
       if (index >= inputs.row_count) {
@@ -137,12 +108,13 @@ void PrepareSidebarListFrame(PreparedFrameState& frame, const SidebarListInputs&
       painted.secondary_at = list.text.size();
       list.text.append(item.secondary);
       painted.secondary_length = item.secondary.size();
-      std::uint64_t key = MixRect(style, painted.rect);
-      key = MixText(MixText(key, item.primary), item.secondary);
-      key = MixRowKey(key, FloatBits(painted.label_x) << 32 | FloatBits(painted.tree_x));
+      std::uint64_t key = MixRowKeyRect(style, painted.rect);
+      key = MixRowKeyText(MixRowKeyText(key, item.primary), item.secondary);
+      key = MixRowKey(key, RowKeyFloatBits(painted.label_x) << 32 | RowKeyFloatBits(painted.tree_x));
       key = MixRowKey(key, (painted.selected ? 1u : 0u) | (painted.emphasized ? 2u : 0u) |
                                (painted.chevron ? 4u : 0u) | (painted.collapsed ? 8u : 0u));
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, painted.rect), .fingerprint = key});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, painted.rect), .fingerprint = key});
     }
   }
   frame.derived_damage.Commit(DerivedSurface::SidebarList, inputs.damage);

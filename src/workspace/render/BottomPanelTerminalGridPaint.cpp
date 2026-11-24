@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <type_traits>
 
 #include "render/DevicePixelSnap.h"
@@ -35,23 +34,6 @@ SDL_FRect InBody(const SDL_FRect& rect, const SDL_FRect& body) {
 constexpr std::uint64_t kSelectionTag = 0x53454c;
 constexpr std::uint64_t kMatchTag = 0x4d4154;
 constexpr std::uint64_t kLinkTag = 0x4c4e4b;
-
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
-std::uint64_t FloatBits(float value) {
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-
-std::uint64_t ColorBits(SDL_Color color) {
-  return (static_cast<std::uint64_t>(color.r) << 24) | (static_cast<std::uint64_t>(color.g) << 16) |
-         (static_cast<std::uint64_t>(color.b) << 8) | color.a;
-}
 
 std::uint64_t LineKey(const terminal::TerminalLine& line) {
   return MixRowKeyBytes(kGridKeySeed, reinterpret_cast<const char*>(line.cells.data()),
@@ -187,13 +169,13 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
   if (inputs.visible) {
     grid.visible = true;
     const render::Theme& theme = *inputs.theme;
-    std::uint64_t style = MixRowKey(kGridKeySeed, ColorBits(theme.text_primary));
-    style = MixRowKey(style, ColorBits(theme.surface_background));
-    style = MixRowKey(style, ColorBits(theme.selection_fill));
-    style = MixRowKey(style, ColorBits(theme.search_match));
-    style = MixRowKey(style, ColorBits(theme.search_match_active));
+    std::uint64_t style = MixRowKey(kGridKeySeed, RowKeyColorBits(theme.text_primary));
+    style = MixRowKey(style, RowKeyColorBits(theme.surface_background));
+    style = MixRowKey(style, RowKeyColorBits(theme.selection_fill));
+    style = MixRowKey(style, RowKeyColorBits(theme.search_match));
+    style = MixRowKey(style, RowKeyColorBits(theme.search_match_active));
     style = MixRowKey(style, inputs.text_metrics);
-    style = MixRowKey(style, FloatBits(inputs.char_width));
+    style = MixRowKey(style, RowKeyFloatBits(inputs.char_width));
     for (const TerminalGridPaneInputs& pane : inputs.panes) {
       TerminalGridPanePaint& painted = grid.panes.emplace_back();
       painted = TerminalGridPanePaint{
@@ -208,7 +190,7 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
       };
       // The body: what shows where no row is. Only a reverse-video screen fills it.
       units.push_back(DerivedDamage::Unit{
-          .rect = UnitRect(inputs.renderer, pane.body),
+          .rect = render::SnapToDevicePixelsF(inputs.renderer, pane.body),
           .fingerprint = MixRowKey(style, pane.reverse_video ? 1u : 2u),
       });
       // The caret: a steady outline in a pane that does not own the keyboard (an
@@ -242,19 +224,20 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
         caret.bounds = bounds;
         caret_key = MixRowKey(style, static_cast<std::uint64_t>(caret.style) << 8 |
                                          static_cast<std::uint64_t>(caret.shape));
-        caret_key = MixRowKey(caret_key, ColorBits(theme.cursor));
-        caret_key = MixRowKey(caret_key, FloatBits(caret.cell.x) | FloatBits(caret.cell.w) << 32);
+        caret_key = MixRowKey(caret_key, RowKeyColorBits(theme.cursor));
+        caret_key = MixRowKey(caret_key, RowKeyFloatBits(caret.cell.x) | RowKeyFloatBits(caret.cell.w) << 32);
         if (caret.glyph != nullptr) {
           caret_key = MixRowKeyBytes(caret_key, reinterpret_cast<const char*>(caret.glyph),
                                      sizeof(terminal::TerminalCell));
           caret_key = MixRowKey(caret_key, pane.reverse_video ? 1u : 2u);
         }
       }
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, InBody(caret.bounds, pane.body)),
-                                          .fingerprint = caret_key});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, InBody(caret.bounds, pane.body)),
+                              .fingerprint = caret_key});
       // What every row of the pane shares.
       std::uint64_t pane_style = MixRowKey(style, pane.reverse_video ? 1u : 2u);
-      pane_style = MixRowKey(pane_style, FloatBits(pane.text_x) | FloatBits(pane.text_width) << 32);
+      pane_style = MixRowKey(pane_style, RowKeyFloatBits(pane.text_x) | RowKeyFloatBits(pane.text_width) << 32);
       for (const terminal::TerminalUnderlineColor& underline : pane.underline_colors) {
         const util::Rgba8 color = underline.color.value_or(util::Rgba8{0, 0, 0, 0});
         pane_style = MixRowKey(pane_style, static_cast<std::uint64_t>(underline.extra) << 32 |
@@ -329,8 +312,8 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
           key = MixRowKey(key, row.link_begin);
           key = MixRowKey(key, row.link_end);
         }
-        units.push_back(
-            DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, InBody(row.rect, pane.body)), .fingerprint = key});
+        units.push_back(DerivedDamage::Unit{
+            .rect = render::SnapToDevicePixelsF(inputs.renderer, InBody(row.rect, pane.body)), .fingerprint = key});
       }
       painted.count = grid.rows.size() - painted.first;
     }

@@ -134,4 +134,12 @@ inline SDL_Rect SnapToDevicePixels(SDL_Renderer* renderer, const SDL_FRect& rect
   return SnapToDevicePixels(rect, device_pixel_snap_detail::DeviceScale(renderer));
 }
 
+// The same snapped rect as a float rect: a derived-damage unit's rect, snapped
+// exactly as its PaintElement clips (clip-discipline D2).
+inline SDL_FRect SnapToDevicePixelsF(SDL_Renderer* renderer, const SDL_FRect& rect) {
+  const SDL_Rect snapped = SnapToDevicePixels(renderer, rect);
+  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
+                   static_cast<float>(snapped.h)};
+}
+
 }  // namespace microide::render

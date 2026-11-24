@@ -35,7 +35,6 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     DrawFilledRect(renderer, layout.overlay_anchor, theme_.overlay_backdrop);
   }
   const SDL_FRect overlay = overlay_vm.overlay_rect;
-  constexpr float kOverlayInset = 18.0f;
   if (overlay_vm.caret_anchored) {
     render::DrawCardFrame(renderer, theme_, overlay, render::CardStyle::Overlay);
   } else {

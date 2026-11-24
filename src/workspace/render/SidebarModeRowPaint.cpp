@@ -1,7 +1,6 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
-#include <cstring>
 #include <string_view>
 
 #include "render/DevicePixelSnap.h"
@@ -21,22 +20,6 @@ namespace microide::workspace {
 using namespace detail;
 
 namespace {
-
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
-std::uint64_t FloatBits(float value) {
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-std::uint64_t MixRect(std::uint64_t key, const SDL_FRect& rect) {
-  key = MixRowKey(key, FloatBits(rect.x) | FloatBits(rect.y) << 32);
-  return MixRowKey(key, FloatBits(rect.w) | FloatBits(rect.h) << 32);
-}
 
 void DrawModeGlyph(SDL_Renderer* renderer, SidebarMode mode, const SDL_FRect& icon_rect, SDL_Color color) {
   switch (mode) {
@@ -109,14 +92,15 @@ void PrepareSidebarModeRowFrame(PreparedFrameState& frame, const SidebarModeRowI
         units.push_back(DerivedDamage::Unit{});
         continue;
       }
-      std::uint64_t key = MixRowKeyBytes(MixRect(style, tab.rect), tab.label.data(), tab.label.size());
+      std::uint64_t key = MixRowKeyBytes(MixRowKeyRect(style, tab.rect), tab.label.data(), tab.label.size());
       key = MixRowKey(key, static_cast<std::uint64_t>(tab.mode) << 8 | (tab.hovered ? 1u : 0u) | (tab.active ? 2u : 0u));
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, tab.rect), .fingerprint = key});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, tab.rect), .fingerprint = key});
     }
     if (row.has_overflow) {
       units.push_back(DerivedDamage::Unit{
-          .rect = UnitRect(inputs.renderer, row.overflow_rect),
-          .fingerprint = MixRowKey(MixRect(style, row.overflow_rect),
+          .rect = render::SnapToDevicePixelsF(inputs.renderer, row.overflow_rect),
+          .fingerprint = MixRowKey(MixRowKeyRect(style, row.overflow_rect),
                                    (row.overflow_hovered ? 1u : 0u) | (row.overflow_active ? 2u : 0u))});
     } else {
       units.push_back(DerivedDamage::Unit{});

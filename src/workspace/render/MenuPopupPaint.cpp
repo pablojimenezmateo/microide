@@ -1,7 +1,6 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
-#include <cstring>
 #include <string_view>
 
 #include "render/DevicePixelSnap.h"
@@ -21,31 +20,12 @@ using namespace detail;
 
 namespace {
 
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
-std::uint64_t FloatBits(float value) {
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-std::uint64_t MixRect(std::uint64_t key, const SDL_FRect& rect) {
-  key = MixRowKey(key, FloatBits(rect.x) | FloatBits(rect.y) << 32);
-  return MixRowKey(key, FloatBits(rect.w) | FloatBits(rect.h) << 32);
-}
-std::uint64_t MixText(std::uint64_t key, std::string_view text) {
-  return MixRowKeyBytes(key, text.data(), text.size());
-}
-
 // Everything DrawMenuRow (or the separator's rule) reads of a row.
 std::uint64_t RowKey(const MenuPopupPaint& popup, const MenuRowPaint& row, std::uint64_t style) {
-  std::uint64_t key = MixRect(style, row.rect);
+  std::uint64_t key = MixRowKeyRect(style, row.rect);
   key = MixRowKey(key, (row.enabled ? 1u : 0u) | (row.checked ? 2u : 0u) | (row.hovered ? 4u : 0u) |
                            (row.separator ? 8u : 0u));
-  return MixText(MixText(key, popup.Label(row)), popup.Accelerator(row));
+  return MixRowKeyText(MixRowKeyText(key, popup.Label(row)), popup.Accelerator(row));
 }
 
 }  // namespace
@@ -69,9 +49,11 @@ void CommitMenuPopupUnits(PreparedFrameState& frame, SDL_Renderer* renderer, con
     std::vector<DerivedDamage::Unit>& units = frame.derived_damage.Begin(surface);
     if (popup.visible) {
       // The card under the rows: its fill and outline.
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(renderer, popup.rect), .fingerprint = MixRect(style, popup.rect)});
+      units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(renderer, popup.rect),
+                                          .fingerprint = MixRowKeyRect(style, popup.rect)});
       for (const MenuRowPaint& row : popup.rows) {
-        units.push_back(DerivedDamage::Unit{.rect = UnitRect(renderer, row.rect), .fingerprint = RowKey(popup, row, style)});
+        units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(renderer, row.rect),
+                                            .fingerprint = RowKey(popup, row, style)});
       }
     }
     frame.derived_damage.Commit(surface, damage);

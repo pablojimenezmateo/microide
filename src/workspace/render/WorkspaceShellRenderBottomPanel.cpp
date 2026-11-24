@@ -81,13 +81,6 @@ constexpr StripTabStyle kPanelTabStyle{
     .accent_edge = StripAccentEdge::Top,
 };
 
-// A unit's rect: the element's, snapped as its PaintElement clips (clip-discipline D2).
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
 }  // namespace
 
 void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelHeaderInputs& inputs) {
@@ -172,17 +165,17 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
           .activity_dot = tab.activity_dot,
           .bell_mark = tab.bell_mark,
       });
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect),
+      units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect),
                                           .fingerprint = FingerprintOf(painted, palette_key)});
     }
     header.label = tabs.empty() ? inputs.label : std::string_view{};
     // The label, when it shows: the header's left part up to the buttons.
     units.push_back(DerivedDamage::Unit{
-        .rect = UnitRect(inputs.renderer, header.header),
+        .rect = render::SnapToDevicePixelsF(inputs.renderer, header.header),
         .fingerprint = PaintFingerprint().Add(header.header).Add(header.label).Add(palette_key).value()});
     const auto button = [&](PreparedFrameState::PanelButtonPaint& slot, const SDL_FRect& rect, std::size_t hidden) {
       slot = PreparedFrameState::PanelButtonPaint{.rect = rect, .hovered = inputs.pointer_over(rect), .hidden = hidden};
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect),
+      units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect),
                                           .fingerprint = FingerprintOf(slot, palette_key)});
     };
     button(header.overflow_left, panel.tab_overflow.left_button, panel.tab_overflow.hidden_left);
@@ -202,10 +195,10 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     header.divider = MakeRect(header.header.x, header.header.y, header.header.w, kWorkspaceDividerThickness);
     header.divider_active = inputs.divider_dragged;
     units.push_back(DerivedDamage::Unit{
-        .rect = UnitRect(inputs.renderer, header.divider),
+        .rect = render::SnapToDevicePixelsF(inputs.renderer, header.divider),
         .fingerprint = PaintFingerprint().Add(header.divider).Add(header.divider_active).Add(palette_key).value()});
     // The drag ghost follows the pointer anywhere over the strip.
-    units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, header.header),
+    units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, header.header),
                                         .fingerprint = PaintFingerprint()
                                                            .Add(header.dragging)
                                                            .Add(header.drag_source)
@@ -219,7 +212,7 @@ void PrepareBottomPanelHeaderFrame(PreparedFrameState& frame, const BottomPanelH
     // whatever it asked for.
     const SDL_FRect body = BottomPanelContentRect(*inputs.layout);
     units.push_back(DerivedDamage::Unit{
-        .rect = UnitRect(inputs.renderer, body),
+        .rect = render::SnapToDevicePixelsF(inputs.renderer, body),
         .fingerprint =
             PaintFingerprint().Add(body).Add(static_cast<int>(panel.content)).Add(theme.surface_background).value()});
   }
@@ -347,7 +340,7 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
         painted.highlighted = inputs.channels->HighlightedContextSnippet(inputs.channel_id, entry, resolved);
         painted.highlight_path = std::hash<std::string_view>{}(resolved.native()) | 1u;
       }
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, painted.rect),
+      units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, painted.rect),
                                           .fingerprint = FingerprintOf(painted, row_style)});
     }
     // The empty channel's hint, word-wrapped because the panel narrows with the
@@ -359,14 +352,14 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
                                 std::max(0.0f, inputs.content.y + inputs.content.h - inputs.text_y));
     }
     units.push_back(DerivedDamage::Unit{
-        .rect = UnitRect(inputs.renderer, body.hint_rect),
+        .rect = render::SnapToDevicePixelsF(inputs.renderer, body.hint_rect),
         .fingerprint = PaintFingerprint().Add(body.hint_rect).Add(body.hint).Add(row_style).value()});
     if (inputs.scrollbar.has_value()) {
       body.scrollbar = PreparedFrameState::PanelScrollbarPaint{
           .track = inputs.scrollbar->track, .thumb = inputs.scrollbar->thumb, .active = inputs.scrollbar_active};
       const std::uint64_t bar_style =
           PaintFingerprint().Add(theme.surface_raised).Add(theme.text_muted).Add(theme.accent).value();
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, body.scrollbar->track),
+      units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, body.scrollbar->track),
                                           .fingerprint = FingerprintOf(*body.scrollbar, bar_style)});
     }
   }
@@ -447,7 +440,8 @@ void PrepareTerminalChromeFrame(PreparedFrameState& frame, const TerminalChromeI
                                     .Add(inputs.text_metrics)
                                     .value();
     const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
     if (inputs.no_session_box.has_value() && !inputs.empty_label.empty()) {
       chrome.no_session = {.rect = *inputs.no_session_box, .text = inputs.empty_label};
@@ -612,7 +606,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);
   }
 }
-
 
 // Host-owned painter for a single plugin content surface, shared by the bottom
 // preview panel (E0) and inline insets (E1). The surface carries only data (a

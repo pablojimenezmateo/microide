@@ -27,13 +27,6 @@ namespace {
 
 constexpr float kInset = kCommitWorkflowFieldInset;
 
-// A unit's rect: the element's, snapped as its PaintElement clips (clip-discipline D2).
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
 SDL_Color InkColor(const render::Theme& theme, GitPanelInk ink) {
   switch (ink) {
     case GitPanelInk::Secondary:
@@ -416,11 +409,11 @@ void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& input
     // commit line), then the banners -- a stale snapshot, a refresh error.
     const SDL_FRect action_row = git_sidebar_header::ActionRowRect(sidebar, 1);
     float y = action_row.y + action_row.h + 10.0f;
-    // Must match the constants in WorkspaceShellSidebar.cpp so the file list
-    // starts exactly below this block.
-    constexpr float kSummaryLineHeight = 17.0f;
-    constexpr float kCommitButtonHeight = 22.0f;
-    constexpr float kCommitButtonGap = 8.0f;
+    // GitSidebarSummaryHeight stacks the same metrics, so the file list starts
+    // exactly below this block.
+    using git_sidebar_header::kCommitButtonGap;
+    using git_sidebar_header::kCommitButtonHeight;
+    using git_sidebar_header::kSummaryLineHeight;
     if (git.show_commit_button) {
       const SDL_FRect commit_rect = git_sidebar_header::CommitButtonRect(sidebar);
       head.buttons.push_back(GitPanelButtonPaint{.rect = commit_rect,
@@ -472,7 +465,8 @@ void PrepareGitPanelFrame(PreparedFrameState& frame, const GitPanelInputs& input
                                     .Add(tr.MetricsGeneration())
                                     .value();
     const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
     for (const GitPanelButtonPaint& button : head.buttons) {
       unit(button.rect, FingerprintOf(button, style));

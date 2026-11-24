@@ -20,6 +20,7 @@
 #include <cstring>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -105,6 +106,25 @@ inline std::uint64_t MixRowKeyBytes(std::uint64_t hash, const char* data, std::s
     hash = MixRowKey(hash, word);
   }
   return hash;
+}
+
+// The pieces a derived surface's unit key is folded from, shared by every paint TU
+// so one surface's keys cannot drift from another's in how a value is spelled.
+inline std::uint64_t RowKeyFloatBits(float value) {
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof bits);
+  return bits;
+}
+inline std::uint64_t RowKeyColorBits(SDL_Color color) {
+  return static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
+         static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24;
+}
+inline std::uint64_t MixRowKeyRect(std::uint64_t key, const SDL_FRect& rect) {
+  key = MixRowKey(key, RowKeyFloatBits(rect.x) | RowKeyFloatBits(rect.y) << 32);
+  return MixRowKey(key, RowKeyFloatBits(rect.w) | RowKeyFloatBits(rect.h) << 32);
+}
+inline std::uint64_t MixRowKeyText(std::uint64_t key, std::string_view text) {
+  return MixRowKeyBytes(key, text.data(), text.size());
 }
 
 // Folds into `key` what plugins and language servers decorate `line` with: its

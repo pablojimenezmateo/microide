@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
-#include <cstring>
 #include <string_view>
 
 #include "render/DevicePixelSnap.h"
@@ -24,46 +23,26 @@ using namespace detail;
 
 namespace {
 
-// A unit's rect: the element's, snapped as its PaintElement clips (clip-discipline D2).
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
-std::uint64_t FloatBits(float value) {
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-std::uint64_t MixRect(std::uint64_t key, const SDL_FRect& rect) {
-  key = MixRowKey(key, FloatBits(rect.x) | FloatBits(rect.y) << 32);
-  return MixRowKey(key, FloatBits(rect.w) | FloatBits(rect.h) << 32);
-}
-std::uint64_t MixText(std::uint64_t key, std::string_view text) {
-  return MixRowKeyBytes(key, text.data(), text.size());
-}
-
 std::uint64_t FieldKey(const SearchSidebarFieldPaint& field, std::uint64_t caret_key, std::uint64_t style) {
-  return MixRowKey(MixRowKey(MixText(MixRect(MixRect(style, field.rect), field.bounds), field.text),
+  return MixRowKey(MixRowKey(MixRowKeyText(MixRowKeyRect(MixRowKeyRect(style, field.rect), field.bounds), field.text),
                              (field.focused ? 1u : 0u) | (field.editing ? 2u : 0u)),
                    caret_key);
 }
 
 std::uint64_t ButtonKey(const SearchSidebarButtonPaint& button, std::uint64_t style) {
-  return MixRowKey(MixText(MixRect(style, button.rect), button.label),
+  return MixRowKey(MixRowKeyText(MixRowKeyRect(style, button.rect), button.label),
                    (button.enabled ? 1u : 0u) | (button.hovered ? 2u : 0u) | (button.active ? 4u : 0u));
 }
 
 // Everything PaintRow reads of a row.
 std::uint64_t RowKey(const SearchSidebarRowPaint& row, std::uint64_t style) {
-  std::uint64_t key = MixText(MixRect(style, row.rect), row.text);
+  std::uint64_t key = MixRowKeyText(MixRowKeyRect(style, row.rect), row.text);
   key = MixRowKey(key, (row.file ? 1u : 0u) | (row.selected ? 2u : 0u) | (row.hovered ? 4u : 0u));
   return MixRowKey(key, static_cast<std::uint64_t>(row.match_start) << 32 ^ row.match_length);
 }
 
 std::uint64_t ScrollbarKey(const PanelScrollbarPaint& bar, std::uint64_t style) {
-  return MixRowKey(MixRect(MixRect(style, bar.track), bar.thumb), bar.active ? 1u : 2u);
+  return MixRowKey(MixRowKeyRect(MixRowKeyRect(style, bar.track), bar.thumb), bar.active ? 1u : 2u);
 }
 
 // Where a field's text starts under its frame's top (the text-input pass puts
@@ -283,7 +262,8 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
                                     .Add(inputs.text_renderer->MetricsGeneration())
                                     .value();
     const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
     // The fixed pieces first, each in its own slot whatever the list holds.
     for (std::size_t index = 0; index < panel.fields.size(); ++index) {
@@ -292,11 +272,12 @@ void PrepareSearchSidebarFrame(PreparedFrameState& frame, const SearchSidebarInp
     for (const SearchSidebarButtonPaint& button : panel.buttons) {
       unit(button.rect, ButtonKey(button, style));
     }
-    unit(panel.status_rect, MixText(MixRect(style, panel.status_rect), panel.status));
+    unit(panel.status_rect, MixRowKeyText(MixRowKeyRect(style, panel.status_rect), panel.status));
     unit(panel.scrollbar.has_value() ? panel.scrollbar->track : SDL_FRect{},
          panel.scrollbar.has_value() ? ScrollbarKey(*panel.scrollbar, style) : 0);
-    unit(panel.placeholder_rect, MixRowKey(MixText(MixRect(style, panel.placeholder_rect), panel.placeholder),
-                                           panel.placeholder_error ? 1u : 2u));
+    unit(panel.placeholder_rect,
+         MixRowKey(MixRowKeyText(MixRowKeyRect(style, panel.placeholder_rect), panel.placeholder),
+                   panel.placeholder_error ? 1u : 2u));
     for (const SearchSidebarRowPaint& row : panel.rows) {
       unit(row.rect, RowKey(row, style));
     }

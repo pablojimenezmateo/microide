@@ -106,6 +106,22 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
   const TextInputSurface surface = text_input_vm.current_surface;
   const float line_height = text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+  // A single-line field's caret and selection: its text at (text_x, text_y), laid
+  // out in `available_width` by `vm`.
+  const auto field_visual = [&](float text_x, float text_y, float available_width, SingleLineViewMetrics vm,
+                                SDL_Color foreground) {
+    return TextInputVisual{
+        .surface = surface,
+        .area = MakeRect(text_x, text_y, available_width, line_height),
+        .text_x = text_x,
+        .text_y = text_y,
+        .cursor_x = text_x + vm.cursor_x,
+        .foreground = foreground,
+        .background = theme_.surface_background,
+        .displayed_text = std::move(vm.displayed_text),
+        .selection_bytes = vm.selection_bytes,
+    };
+  };
 
   switch (surface) {
     case TextInputSurface::Editor: {
@@ -161,17 +177,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           input_rect.y + std::floor((input_rect.h - text_renderer_.LineHeight()) * 0.5f);
       const float available_width = std::max(1.0f, input_rect.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(*text_input_vm.prompt_input, "", available_width);
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
-          .foreground = theme_.text_primary,
-          .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
-      };
+      return field_visual(text_x, text_y, available_width, std::move(vm), theme_.text_primary);
     }
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
@@ -199,17 +205,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           replace_field ? *text_input_vm.buffer_search_replace
                         : *text_input_vm.buffer_search_query,
           "", available_width);
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
-          .foreground = theme_.text_primary,
-          .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
-      };
+      return field_visual(text_x, text_y, available_width, std::move(vm), theme_.text_primary);
     }
     case TextInputSurface::TerminalFind: {
       // Terminal find bar: the caret rides the same field geometry frame prep laid
@@ -225,17 +221,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const float available_width = std::max(1.0f, field.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(*prepare_cached_bottom_panel_vm_->find_query, "",
                                              available_width);
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
-          .foreground = theme_.text_primary,
-          .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
-      };
+      return field_visual(text_x, text_y, available_width, std::move(vm), theme_.text_primary);
     }
     case TextInputSurface::FileFinder:
     case TextInputSurface::ProjectSearchOverlay:
@@ -284,17 +270,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
                                             available_width);
           break;
       }
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
-          .foreground = theme_.text_secondary,
-          .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
-      };
+      return field_visual(text_x, text_y, available_width, std::move(vm), theme_.text_secondary);
     }
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -332,17 +308,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       auto vm = ComputeSingleLineViewMetrics(
           *text_input_vm.project_search_edit_buffer,
           prefix, available_width);
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
-          .foreground = theme_.text_primary,
-          .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
-      };
+      return field_visual(text_x, text_y, available_width, std::move(vm), theme_.text_primary);
     }
     case TextInputSurface::Terminal:
     case TextInputSurface::None:

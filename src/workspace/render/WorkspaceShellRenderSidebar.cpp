@@ -2,6 +2,7 @@
 #include "render/ScopedRenderClip.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
+#include "workspace/SidebarMetrics.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
@@ -28,9 +29,8 @@ using namespace detail;
 
 namespace {
 
-constexpr float kSidebarInset = 10.0f;
 // Frame prep derives the commit-draft body field width from the sidebar width and
-// its own copy of this inset (it has no panel layout to read). If the two ever
+// its own copy of the sidebar inset (it has no panel layout to read). If the two ever
 // drift, the viewport is sized for a different width than the field is drawn at
 // and the body's wrap/scroll silently disagrees with what is painted.
 static_assert(kSidebarInset == kCommitWorkflowFieldInset,

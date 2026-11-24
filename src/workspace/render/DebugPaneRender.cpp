@@ -25,13 +25,6 @@ using namespace detail;
 
 namespace {
 
-// A unit's rect: the element's, snapped as its PaintElement clips (clip-discipline D2).
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
 // A value's kind as its display colour: the editor's syntax palette, so numbers,
 // strings and pointers read the same in the debugger as in source.
 SDL_Color ValueKindColor(const render::Theme& theme, DebugValueKind kind) {
@@ -321,7 +314,8 @@ void PrepareDebugPaneFrame(PreparedFrameState& frame, const DebugPaneInputs& inp
                                     .Add(inputs.text_renderer->MetricsGeneration())
                                     .value();
     const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
     for (int i = 0; i < inputs.mode_row.tab_count; ++i) {
       const DebugPaneModeTab& tab = inputs.mode_row.tabs[static_cast<std::size_t>(i)];

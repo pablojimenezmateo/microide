@@ -890,7 +890,6 @@ class ListOverlayBuilder {
   }
 
  private:
-  static constexpr float kOverlayInset = 18.0f;
   static constexpr std::string_view kPickerHint = "↑↓ select · Enter choose · Esc cancel";
 
   std::size_t TotalRows() const {

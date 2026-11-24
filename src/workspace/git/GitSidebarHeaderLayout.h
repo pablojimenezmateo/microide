@@ -21,6 +21,10 @@ inline constexpr float kActionGap = 6.0f;
 // Vertical distance between the two action rows.
 inline constexpr float kActionRowStride = kActionButtonHeight + kActionGap;
 inline constexpr float kCommitButtonHeight = 22.0f;
+// Gap below the commit button. GitSidebarSummaryHeight and the panel's paint both
+// stack the summary block from these, so the file list starts right below it.
+inline constexpr float kCommitButtonGap = 8.0f;
+inline constexpr float kSummaryLineHeight = 17.0f;
 // Total height the header's action rows occupy, from kActionRowTop to the bottom
 // of the second row. Consumed by GitSidebarListTop.
 inline constexpr float kActionRowsHeight = kActionRowStride + kActionButtonHeight;

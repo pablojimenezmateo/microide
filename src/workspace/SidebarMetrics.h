@@ -16,6 +16,10 @@ inline constexpr float kSidebarHeaderHeight = 26.0f;
 // Gap between the header and the first row.
 inline constexpr float kSidebarListTopGap = 6.0f;
 
+// Horizontal padding between the sidebar's edge and its rows, buttons and fields:
+// the shell's hit-testing and every sidebar paint TU read this one value.
+inline constexpr float kSidebarInset = 10.0f;
+
 inline float SidebarListTop(const SDL_FRect& sidebar_rect) {
   return sidebar_rect.y + kSidebarHeaderHeight + kSidebarListTopGap;
 }

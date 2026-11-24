@@ -155,6 +155,10 @@ struct OverlayFindWidgetViewModel {
 // Fully owned/precomputed overlay surface model (TD-2026-07-17-084): the render
 // TU consumes only this — geometry, prebuilt labels, and the visible row window —
 // and never dereferences live OverlayState / ProjectWorkspaceState.
+// The overlay card's text inset: the builder measures and truncates overlay text to
+// the width inside it, and the overlay paint draws that text at it.
+inline constexpr float kOverlayInset = 18.0f;
+
 struct OverlaySurfaceViewModel {
   bool visible = false;
   OverlayMode mode = OverlayMode::FileFinder;

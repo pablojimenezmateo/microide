@@ -21,12 +21,7 @@ std::uint64_t MixBytes(std::uint64_t hash, const char* data, std::size_t size) {
   return MixRowKeyBytes(hash, data, size);
 }
 
-std::uint64_t ColorBits(SDL_Color color) {
-  return static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
-         static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24;
-}
-
-std::uint64_t MixColor(std::uint64_t hash, SDL_Color color) { return Mix(hash, ColorBits(color)); }
+std::uint64_t MixColor(std::uint64_t hash, SDL_Color color) { return Mix(hash, RowKeyColorBits(color)); }
 
 std::uint64_t MixText(std::uint64_t hash, std::string_view text) {
   return MixBytes(Mix(hash, text.size()), text.data(), text.size());
@@ -44,8 +39,8 @@ std::uint64_t LineDecorationKey(std::uint64_t key, const editor::FileDecorations
   key = Mix(key, 0x5701);
   for (const editor::TextStyleDecoration& style : decorations.TextStylesForLine(at)) {
     key = Mix(key, static_cast<std::uint64_t>(style.start_column) << 32 | style.end_column);
-    key = Mix(key, ColorBits(style.foreground) << 32 | ColorBits(style.background));
-    key = Mix(key, ColorBits(style.line_color) << 8 | style.flags);
+    key = Mix(key, RowKeyColorBits(style.foreground) << 32 | RowKeyColorBits(style.background));
+    key = Mix(key, RowKeyColorBits(style.line_color) << 8 | style.flags);
   }
   for (const editor::InlineTextDecoration& text : decorations.InlineTextsForLine(at)) {
     key = MixText(Mix(Mix(key, 0x1A11), text.anchor_column), text.text);

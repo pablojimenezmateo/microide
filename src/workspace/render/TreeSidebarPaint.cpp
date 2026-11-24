@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstring>
 #include <string_view>
 
 #include "editor/GutterIconRegistry.h"
@@ -24,54 +23,31 @@ using namespace detail;
 
 namespace {
 
-// A unit's rect: the element's, snapped as its PaintElement clips (clip-discipline D2).
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
 // The keys fold through the row-key step the editor's rows use (one multiply a
 // value, eight bytes of text a multiply): the tree's visible rows are keyed on
 // every prepared frame.
-std::uint64_t FloatBits(float value) {
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-std::uint64_t MixRect(std::uint64_t key, const SDL_FRect& rect) {
-  key = MixRowKey(key, FloatBits(rect.x) | FloatBits(rect.y) << 32);
-  return MixRowKey(key, FloatBits(rect.w) | FloatBits(rect.h) << 32);
-}
-std::uint64_t ColorBits(SDL_Color color) {
-  return static_cast<std::uint64_t>(color.r) | static_cast<std::uint64_t>(color.g) << 8 |
-         static_cast<std::uint64_t>(color.b) << 16 | static_cast<std::uint64_t>(color.a) << 24;
-}
-std::uint64_t MixText(std::uint64_t key, std::string_view text) {
-  return MixRowKeyBytes(key, text.data(), text.size());
-}
 
 std::uint64_t ButtonKey(const TreeSidebarButtonPaint& button, std::uint64_t style) {
-  return MixRowKey(MixText(MixRect(style, button.rect), button.label),
+  return MixRowKey(MixRowKeyText(MixRowKeyRect(style, button.rect), button.label),
                    (button.enabled ? 1u : 0u) | (button.hovered ? 2u : 0u));
 }
 
 // Everything PaintTreeRow reads of a row.
 std::uint64_t RowKey(const TreeSidebarRowPaint& row, std::uint64_t style) {
-  std::uint64_t key = MixText(MixRect(style, row.rect), row.label);
-  key = MixRowKey(key, FloatBits(row.indent));
+  std::uint64_t key = MixRowKeyText(MixRowKeyRect(style, row.rect), row.label);
+  key = MixRowKey(key, RowKeyFloatBits(row.indent));
   key = MixRowKey(key, (row.is_directory ? 1u : 0u) | (row.expanded ? 2u : 0u) | (row.selected ? 4u : 0u) |
                            (row.hovered ? 8u : 0u) | (row.muted ? 16u : 0u) | (row.has_icon ? 32u : 0u) |
                            static_cast<std::uint64_t>(row.git_status) << 8);
-  key = MixRowKey(key, ColorBits(row.git_color));
+  key = MixRowKey(key, RowKeyColorBits(row.git_color));
   if (row.has_icon) {
-    key = MixRowKey(key, static_cast<std::uint64_t>(row.icon_shape) << 32 | ColorBits(row.icon_color));
+    key = MixRowKey(key, static_cast<std::uint64_t>(row.icon_shape) << 32 | RowKeyColorBits(row.icon_color));
   }
   return key;
 }
 
 std::uint64_t ScrollbarKey(const PanelScrollbarPaint& bar, std::uint64_t style) {
-  return MixRowKey(MixRect(MixRect(style, bar.track), bar.thumb), bar.active ? 1u : 2u);
+  return MixRowKey(MixRowKeyRect(MixRowKeyRect(style, bar.track), bar.thumb), bar.active ? 1u : 2u);
 }
 
 void PaintTreeRow(SDL_Renderer* renderer, const TreeSidebarRowPaint& row, const render::Theme& theme,
@@ -201,7 +177,8 @@ void PrepareTreeSidebarFrame(PreparedFrameState& frame, const TreeSidebarInputs&
                                     .Add(inputs.text_renderer->MetricsGeneration())
                                     .value();
     const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
     for (const TreeSidebarButtonPaint& painted : tree.buttons) {
       unit(painted.rect, ButtonKey(painted, style));

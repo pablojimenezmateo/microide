@@ -21,7 +21,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
 // Mode-switch tab row (replaces the old dropdown) at the top of the sidebar header.
 constexpr float kSidebarModeRowTop = 4.0f;
@@ -41,12 +40,6 @@ constexpr float kGitSidebarListGap = 8.0f;
 constexpr float kTreeSidebarActionRowTop = 34.0f;
 constexpr float kTreeSidebarActionButtonHeight = 18.0f;
 constexpr float kTreeSidebarListGap = 8.0f;
-// Must match kSummaryLineHeight in WorkspaceShellRenderSidebar.cpp.
-constexpr float kGitSidebarSummaryLineHeight = 17.0f;
-// Commit button row (panel header) — height plus the gap below it. Must match the
-// values used in WorkspaceShellRenderSidebar.cpp / GitSidebarSummaryHeight.
-constexpr float kGitSidebarCommitButtonHeight = 22.0f;
-constexpr float kGitSidebarCommitButtonGap = 8.0f;
 constexpr float kGitSidebarHeaderMenuButtonSize = 16.0f;
 constexpr float kSidebarHeaderCompactButtonSize = 18.0f;
 
@@ -119,11 +112,11 @@ float WorkspaceShell::GitSidebarSummaryHeight() const {
   // line and the redundant staged/unstaged counts were removed. The commit-readiness
   // line is replaced by the Commit button (or a hint while the draft is open).
   if (view_model.show_commit_button) {
-    height += kGitSidebarCommitButtonHeight + kGitSidebarCommitButtonGap;
+    height += git_sidebar_header::kCommitButtonHeight + git_sidebar_header::kCommitButtonGap;
   } else if (!view_model.commit_summary_line.empty()) {
-    height += kGitSidebarSummaryLineHeight;
+    height += git_sidebar_header::kSummaryLineHeight;
   }
-  height += static_cast<float>(view_model.summary_lines.size()) * kGitSidebarSummaryLineHeight;
+  height += static_cast<float>(view_model.summary_lines.size()) * git_sidebar_header::kSummaryLineHeight;
   return height;
 }
 

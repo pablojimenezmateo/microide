@@ -15,12 +15,6 @@ using namespace detail;
 
 namespace {
 
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
-
 // A key under construction: one multiply per value, eight bytes of text to one.
 class Key {
  public:
@@ -127,7 +121,8 @@ void PrepareSettingsCardFrame(PreparedFrameState& frame, SettingsCardInputs inpu
                                     .Add(static_cast<std::uint64_t>(text.MetricsGeneration()))
                                     .value();
     const auto unit = [&](const SDL_FRect& rect, std::uint64_t fingerprint) {
-      units.push_back(DerivedDamage::Unit{.rect = UnitRect(inputs.renderer, rect), .fingerprint = fingerprint});
+      units.push_back(
+          DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, rect), .fingerprint = fingerprint});
     };
     const bool settings = vm.mode == SettingsOverlayMode::Settings && vm.empty_label.empty();
 

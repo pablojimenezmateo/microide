@@ -38,11 +38,6 @@ std::uint64_t FingerprintOf(const NotificationEntryViewModel& entry, std::uint64
 }
 
 // A toast's unit rect: the card's, snapped as its PaintElement clips (clip-discipline D2).
-SDL_FRect UnitRect(SDL_Renderer* renderer, const SDL_FRect& rect) {
-  const SDL_Rect snapped = render::SnapToDevicePixels(renderer, rect);
-  return SDL_FRect{static_cast<float>(snapped.x), static_cast<float>(snapped.y), static_cast<float>(snapped.w),
-                   static_cast<float>(snapped.h)};
-}
 
 SDL_Color ToneAccent(const render::Theme& theme, NotificationService::Tone tone) {
   switch (tone) {
@@ -75,7 +70,7 @@ void PrepareNotificationToastsFrame(PreparedFrameState& frame, SDL_Renderer* ren
                                   .Add(theme.row_highlight)
                                   .value();
   for (const NotificationEntryViewModel& entry : frame.notification_toasts.entries) {
-    units.push_back(DerivedDamage::Unit{.rect = UnitRect(renderer, entry.layout.rect),
+    units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(renderer, entry.layout.rect),
                                         .fingerprint = FingerprintOf(entry, style)});
   }
   frame.derived_damage.Commit(DerivedSurface::NotificationToasts, damage);
