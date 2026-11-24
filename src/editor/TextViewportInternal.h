@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -296,6 +297,59 @@ class DisjointEditCapture {
  public:
   explicit DisjointEditCapture(const TextBuffer& buffer) : buffer_(&buffer) {}
 
+  // The lines a site's edit touches, first and last inclusive.
+  struct LineRange {
+    std::size_t first = 0;
+    std::size_t last = 0;
+  };
+
+  // Groups the sites' line ranges -- one entry per site in ascending order,
+  // nullopt for a site that edits nothing -- into footprints: maximal runs of
+  // ranges that overlap or touch. Two carets on the same line share one, which is
+  // what keeps each footprint's capture window untouched until it opens. Then,
+  // walking the sites highest-first, call EnterSite(i) just before applying site
+  // i's edit and LeaveSite(i) just after.
+  void PlanFootprints(std::span<const std::optional<LineRange>> site_spans) {
+    footprints_.clear();
+    opens_at_.assign(site_spans.size(), kNoFootprint);
+    closes_at_.assign(site_spans.size(), kNoFootprint);
+    for (std::size_t site = 0; site < site_spans.size(); ++site) {
+      if (!site_spans[site].has_value()) {
+        continue;
+      }
+      const std::size_t start = site_spans[site]->first;
+      const std::size_t end_exclusive = site_spans[site]->last + 1;
+      if (!footprints_.empty() && start <= footprints_.back().end_exclusive) {
+        footprints_.back().end_exclusive = std::max(footprints_.back().end_exclusive, end_exclusive);
+        footprints_.back().last_site = site;
+        continue;
+      }
+      footprints_.push_back(Footprint{.start = start,
+                                      .end_exclusive = end_exclusive,
+                                      .first_site = site,
+                                      .last_site = site});
+    }
+    for (std::size_t f = 0; f < footprints_.size(); ++f) {
+      opens_at_[footprints_[f].last_site] = f;
+      closes_at_[footprints_[f].first_site] = f;
+    }
+  }
+
+  // Opens the footprint whose highest site is `site`, if any.
+  void EnterSite(std::size_t site) {
+    if (site < opens_at_.size() && opens_at_[site] != kNoFootprint) {
+      const Footprint& footprint = footprints_[opens_at_[site]];
+      BeginFootprint(footprint.start, footprint.end_exclusive);
+    }
+  }
+
+  // Closes the footprint whose lowest site is `site`, if any.
+  void LeaveSite(std::size_t site) {
+    if (site < closes_at_.size() && closes_at_[site] != kNoFootprint) {
+      EndFootprint();
+    }
+  }
+
   // Call immediately BEFORE applying the highest edit of a footprint.
   void BeginFootprint(std::size_t start, std::size_t end_exclusive) {
     open_start_ = std::min(start, buffer_->size());
@@ -367,6 +421,16 @@ class DisjointEditCapture {
   }
 
  private:
+  static constexpr std::size_t kNoFootprint = std::numeric_limits<std::size_t>::max();
+  struct Footprint {
+    std::size_t start = 0;
+    std::size_t end_exclusive = 0;
+    std::size_t first_site = 0;
+    std::size_t last_site = 0;
+  };
+  std::vector<Footprint> footprints_;
+  std::vector<std::size_t> opens_at_;
+  std::vector<std::size_t> closes_at_;
   struct Captured {
     std::size_t before_start = 0;
     LineBlob before_lines;

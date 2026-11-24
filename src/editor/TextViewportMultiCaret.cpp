@@ -357,43 +357,20 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return false;
   }
 
-  // Footprints: maximal runs of planned edits whose line ranges overlap or touch.
-  // Two carets on the same line share one footprint, which is what keeps each
-  // footprint's capture window untouched until it opens. Carets are already sorted
-  // ascending, so their ranges are too (TD-2026-08-06-157).
-  struct Footprint {
-    std::size_t start = 0;
-    std::size_t end_exclusive = 0;
-    std::size_t first_caret = 0;
-    std::size_t last_caret = 0;
-  };
-  std::vector<Footprint> footprints;
-  for (std::size_t i = 0; i < planned.size(); ++i) {
-    if (!planned[i].has_value()) {
-      continue;
-    }
-    const std::size_t range_start = planned[i]->removed.start.line;
-    const std::size_t range_end = planned[i]->removed.end.line + 1;
-    if (!footprints.empty() && range_start <= footprints.back().end_exclusive) {
-      footprints.back().end_exclusive = std::max(footprints.back().end_exclusive, range_end);
-      footprints.back().last_caret = i;
-      continue;
-    }
-    footprints.push_back(Footprint{.start = range_start,
-                                   .end_exclusive = range_end,
-                                   .first_caret = i,
-                                   .last_caret = i});
-  }
-  // caret index -> footprint index, so the descending apply walk below can open a
-  // footprint at its highest caret and close it at its lowest.
-  constexpr std::size_t kNoFootprint = std::numeric_limits<std::size_t>::max();
-  std::vector<std::size_t> footprint_opens_at(planned.size(), kNoFootprint);
-  std::vector<std::size_t> footprint_closes_at(planned.size(), kNoFootprint);
-  for (std::size_t f = 0; f < footprints.size(); ++f) {
-    footprint_opens_at[footprints[f].last_caret] = f;
-    footprint_closes_at[footprints[f].first_caret] = f;
-  }
+  // The capture records the SET of edited line ranges, not one range spanning the
+  // outermost carets (TD-2026-08-06-157). Carets are sorted ascending already, so
+  // their ranges are too.
   detail::DisjointEditCapture capture(document_->lines);
+  {
+    std::vector<std::optional<detail::DisjointEditCapture::LineRange>> site_lines(planned.size());
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+      if (planned[i].has_value()) {
+        site_lines[i] = detail::DisjointEditCapture::LineRange{
+            .first = planned[i]->removed.start.line, .last = planned[i]->removed.end.line};
+      }
+    }
+    capture.PlanFootprints(site_lines);
+  }
 
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
@@ -444,10 +421,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   std::optional<SuppressEntryCaretCapture> suppress_dead_caret_copies;
   suppress_dead_caret_copies.emplace(*this);
   for (std::size_t i = carets.size(); i-- > 0;) {
-    if (footprint_opens_at[i] != kNoFootprint) {
-      const Footprint& f = footprints[footprint_opens_at[i]];
-      capture.BeginFootprint(f.start, f.end_exclusive);
-    }
+    capture.EnterSite(i);
     const std::size_t line = std::min(carets[i].position.line, document_->lines.size() - 1);
     const std::size_t column =
         TextLayout::ClampTextColumn(document_->lines[line], carets[i].position.column);
@@ -480,9 +454,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
           .removed = planned[i]->removed,
           .shape = detail::ComputeReplacementShape(planned[i]->replacement)};
     }
-    if (footprint_closes_at[i] != kNoFootprint) {
-      capture.EndFootprint();
-    }
+    capture.LeaveSite(i);
   }
   suppress_dead_caret_copies.reset();
 

@@ -546,50 +546,26 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
               return detail::PositionLess(slot_sort_end(a), slot_sort_end(b));
             });
 
-  // Footprints: maximal runs of slots whose line ranges overlap or touch. Each is
-  // captured independently as the walk below reaches it, so the recorded entry is
-  // the SET of edited ranges rather than one range spanning the outermost carets
-  // (TD-2026-08-06-157). Slots are sorted by selection end and selections cannot
-  // overlap (checked above), so their line ranges arrive ascending.
-  struct Footprint {
-    std::size_t start = 0;
-    std::size_t end_exclusive = 0;
-    std::size_t first_slot = 0;
-    std::size_t last_slot = 0;
-  };
-  std::vector<Footprint> footprints;
-  for (std::size_t i = 0; i < slots.size(); ++i) {
-    const Slot& slot = slots[i];
-    std::size_t lo = 0;
-    std::size_t hi = 0;
-    if (slot.selection.has_value()) {
-      const SelectionRange norm = NormalizeRange(*slot.selection);
-      lo = std::min(norm.start.line, norm.end.line);
-      hi = std::max(norm.start.line, norm.end.line);
-    } else {
-      if (document_->lines.empty()) {
-        continue;
-      }
-      lo = std::min(slot.reference.line, document_->lines.size() - 1);
-      hi = lo;
-    }
-    hi = std::min(hi, document_->lines.size() - 1);
-    if (!footprints.empty() && lo <= footprints.back().end_exclusive) {
-      footprints.back().end_exclusive = std::max(footprints.back().end_exclusive, hi + 1);
-      footprints.back().last_slot = i;
-      continue;
-    }
-    footprints.push_back(
-        Footprint{.start = lo, .end_exclusive = hi + 1, .first_slot = i, .last_slot = i});
-  }
-  constexpr std::size_t kNoFootprint = std::numeric_limits<std::size_t>::max();
-  std::vector<std::size_t> footprint_opens_at(slots.size(), kNoFootprint);
-  std::vector<std::size_t> footprint_closes_at(slots.size(), kNoFootprint);
-  for (std::size_t f = 0; f < footprints.size(); ++f) {
-    footprint_opens_at[footprints[f].last_slot] = f;
-    footprint_closes_at[footprints[f].first_slot] = f;
-  }
+  // The capture records the SET of edited ranges rather than one range spanning
+  // the outermost carets (TD-2026-08-06-157). Slots are sorted by selection end
+  // and selections cannot overlap (checked above), so their line ranges arrive
+  // ascending.
   detail::DisjointEditCapture capture(document_->lines);
+  {
+    std::vector<std::optional<detail::DisjointEditCapture::LineRange>> slot_lines(slots.size());
+    const std::size_t last_line = document_->lines.size() - 1;
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+      std::size_t lo = std::min(slots[i].reference.line, last_line);
+      std::size_t hi = lo;
+      if (slots[i].selection.has_value()) {
+        const SelectionRange norm = NormalizeRange(*slots[i].selection);
+        lo = std::min(norm.start.line, norm.end.line);
+        hi = std::max(norm.start.line, norm.end.line);
+      }
+      slot_lines[i] = detail::DisjointEditCapture::LineRange{.first = lo, .last = std::min(hi, last_line)};
+    }
+    capture.PlanFootprints(slot_lines);
+  }
 
   const ViewState before_state = CaptureViewState();
   // Every per-caret entry below is folded into ONE aggregate (capture.Build) and
@@ -617,21 +593,14 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   bool caret_changed = false;
 
   for (std::size_t slot_index = slots.size(); slot_index-- > 0;) {
-    if (footprint_opens_at[slot_index] != kNoFootprint) {
-      const Footprint& open = footprints[footprint_opens_at[slot_index]];
-      capture.BeginFootprint(open.start, open.end_exclusive);
-    }
+    capture.EnterSite(slot_index);
     // The body below leaves through a dozen `continue`s; a guard closes the
     // footprint on every one of them.
-    struct CloseFootprint {
-      detail::DisjointEditCapture* capture;
-      bool close;
-      ~CloseFootprint() {
-        if (close) {
-          capture->EndFootprint();
-        }
-      }
-    } close_guard{&capture, footprint_closes_at[slot_index] != kNoFootprint};
+    struct LeaveSiteGuard {
+      detail::DisjointEditCapture& capture;
+      std::size_t site;
+      ~LeaveSiteGuard() { capture.LeaveSite(site); }
+    } leave_guard{capture, slot_index};
 
     const Slot& slot = slots[slot_index];
     const std::size_t line = std::min(slot.reference.line, document_->lines.size() - 1);
