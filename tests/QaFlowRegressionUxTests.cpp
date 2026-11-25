@@ -731,6 +731,63 @@ void TestARenderInvalidationKeepsNoCoveredRect() {
 
 }
 
+void TestEveryClickableElementTheUiNamesIsAHoverTarget() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "notes.txt", "changed\n");
+  constexpr int kWidth = 1440;
+  constexpr int kHeight = 900;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OpenFile(shell, root / "notes.txt");
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the git view lists the change");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto sweep = [&](const std::string& layout) {
+    shell.Render(canvas.renderer(), kWidth, kHeight);
+    (void)shell.ConsumePendingRenderInvalidation();
+    std::string missing;
+    std::size_t swept = 0;
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      const std::string kind = entry["kind"].AsString();
+      static const std::set<std::string> kHoverable = {"button", "tab", "project-tab", "panel-tab", "sidebar-view",
+                                                       "row", "status", "menu", "overlay-row"};
+      if (!kHoverable.contains(kind) || !entry["enabled"].AsBool(true)) {
+        continue;
+      }
+      const auto& r = entry["rect"].AsArray();
+      const float x = static_cast<float>(r[0].AsInt()) + static_cast<float>(r[2].AsInt()) / 2.0f;
+      const float y = static_cast<float>(r[1].AsInt()) + static_cast<float>(r[3].AsInt()) / 2.0f;
+      ++swept;
+      (void)DispatchEvents(shell, {MouseMotionEvent(x, y)});
+      const std::optional<SDL_FRect> hovered = TestAccess::HoverTargetRect(shell, x, y);
+      const bool shell_hovers = hovered.has_value() && x >= hovered->x && x <= hovered->x + hovered->w &&
+                                y >= hovered->y && y <= hovered->y + hovered->h;
+      const auto* diff = TestAccess::ActiveCompareOrNull(shell);
+      const bool diff_hovers = diff != nullptr && diff->hover_state.has_value();
+      if (!shell_hovers && !diff_hovers) {
+        missing += " " + kind + ":" + entry["name"].AsString();
+      }
+    }
+    Expect(swept > 10, layout + ": the sweep found elements to try: " + std::to_string(swept));
+    Expect(missing.empty(), layout + ": every enabled clickable element is a hover target; not:" + missing);
+  };
+  sweep("the git view beside an editor");
+  Expect(TestAccess::OpenWorkingTreeComparison(shell, root / "notes.txt", "HEAD", "HEAD"), "the diff opens");
+  sweep("a diff in front");
+  Expect(TestAccess::ExecuteCommandLine(shell, "files"), "the file finder opens");
+  sweep("the file finder open");
+}
+
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
@@ -764,6 +821,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/SwitchingBackToATabKeepsItsScroll", TestSwitchingBackToATabKeepsItsScroll);
   AddTest(tests, "QaFlowRegressionUx/AnEditorsViewSurvivesCloseReopenAndRestart",
           TestAnEditorsViewSurvivesCloseReopenAndRestart);
+  AddTest(tests, "QaFlowRegressionUx/EveryClickableElementTheUiNamesIsAHoverTarget",
+          TestEveryClickableElementTheUiNamesIsAHoverTarget);
   AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",
           TestTheWindowTitleNamesTheActiveFileAndItsState);
 }

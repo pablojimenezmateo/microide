@@ -405,6 +405,13 @@ What it left, by workstream:
    names with a hover visual, moves the pointer onto it and requires
    `HoveredInteractiveRect` to name it, and a sweep that clicks every element with a
    modal up and requires focus not to move.
+   The hover sweep landed 2026-11-25:
+   `QaFlowRegressionUx/EveryClickableElementTheUiNamesIsAHoverTarget` moves the
+   pointer onto every enabled button, tab, row, status segment, menu and overlay
+   row the `ui` query names -- beside an editor with the git view, with a diff in
+   front, with the file finder open -- and requires the shell's hover target (or
+   the diff surface's own hover state) to take it. All pass. The modal-focus
+   sweep is still open.
 2. **W2 frame-prep invariants.** The default build has no `NDEBUG` (CMake build type
    empty), so the `qa` lane and the soak's default job are already the assert-armed
    QA the plan asks for; `guidelines/testing.md` now says so. Not added: asserts that

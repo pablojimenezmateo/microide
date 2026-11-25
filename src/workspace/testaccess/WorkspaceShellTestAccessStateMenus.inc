@@ -280,6 +280,13 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.HoveredInteractiveRect(layout, x, y);
   }
+  static std::optional<SDL_FRect> HoverTargetRect(WorkspaceShell& shell, float x, float y) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    if (const auto segment = shell.HoveredStatusBarSegmentRect(layout, x, y)) {
+      return segment;
+    }
+    return shell.HoveredInteractiveRect(layout, x, y);
+  }
   static std::optional<SDL_FRect> MenuOverflowChevronRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);
