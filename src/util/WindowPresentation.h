@@ -11,6 +11,7 @@ struct WindowPresentation {
   float ui_scale = 1.0f;
   float presentation_scale_x = 1.0f;
   float presentation_scale_y = 1.0f;
+  float requested_scale = 1.0f;
 };
 
 WindowPresentation ComputeWindowPresentation(int pixel_width,

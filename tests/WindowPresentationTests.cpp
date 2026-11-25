@@ -54,6 +54,25 @@ void TestWindowPresentationKeepsTheExactScaleAtAnyWindowSize() {
          "a window that is a whole number of units is that many");
 }
 
+void TestARaisedScaleTheWindowCannotHoldFallsBackToTheLayoutFloor() {
+  const auto three = ComputeWindowPresentation(1440, 900, 1.0f, 3.0f);
+  Expect(three.presentation_scale_x == three.presentation_scale_y && three.presentation_scale_x <= 2.25f &&
+             three.logical_width >= 640 && three.logical_height >= 400,
+         "ui.scale 3 on a 1440x900 screen lays out at least 640x400 units: " +
+             std::to_string(three.logical_width) + "x" + std::to_string(three.logical_height) + " at " +
+             std::to_string(three.presentation_scale_x));
+  Expect(three.requested_scale == 3.0f, "and remembers the scale that was asked for");
+  const auto laptop = ComputeWindowPresentation(1366, 768, 1.0f, 2.0f);
+  Expect(laptop.logical_width >= 640 && laptop.logical_height >= 400 && laptop.presentation_scale_x < 2.0f,
+         "ui.scale 2 on a 1366x768 laptop too: " + std::to_string(laptop.logical_width) + "x" +
+             std::to_string(laptop.logical_height));
+  const auto roomy = ComputeWindowPresentation(2560, 1600, 1.0f, 2.0f);
+  Expect(roomy.presentation_scale_x == 2.0f, "a window that holds the floor keeps the exact scale");
+  const auto tiny = ComputeWindowPresentation(320, 200, 2.0f, 1.5f);
+  Expect(tiny.presentation_scale_x == 2.0f,
+         "a window too small for the floor even at ui.scale 1 is never drawn smaller than the display's own scale");
+}
+
 void TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale() {
   using microide::util::MinimumWindowSize;
   using microide::util::WindowSize;
@@ -80,6 +99,8 @@ void RegisterWindowPresentationTests(std::vector<TestCase>& tests) {
           TestWindowPresentationKeepsTheExactScaleAtAnyWindowSize);
   AddTest(tests, "WindowPresentation/SanitizesInvalidScales",
           TestWindowPresentationSanitizesInvalidScales);
+  AddTest(tests, "WindowPresentation/ARaisedScaleTheWindowCannotHoldFallsBackToTheLayoutFloor",
+          TestARaisedScaleTheWindowCannotHoldFallsBackToTheLayoutFloor);
   AddTest(tests, "WindowPresentation/MinimumWindowSizeKeepsTheLayoutFloorAtAnyScale",
           TestMinimumWindowSizeKeepsTheLayoutFloorAtAnyScale);
 }

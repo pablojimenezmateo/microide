@@ -207,15 +207,12 @@ test (inverted std::clamp at ui.scale 3; overlapping status-bar segments; the fi
 widget, tab-strip contents, banner and merge-toolbar buttons leaving their area;
 the crash-safety flush missing edits to a non-active buffer) and left these:
 
-- **A tab drag abandoned with Escape, then released, paints stale.** Three panes
-  side by side (`split-right` twice), press `tab:2/b.txt`, drag it into the first
-  pane's strip, Escape, release: the release requests no damage, yet a full repaint
-  then differs over every strip (13k px; the hover tooltip moves to the tab under
-  the pointer and the third pane's breadcrumb changes from a.txt back to b.txt). The
-  Escape frame is a full repaint, so it already painted stale state -- a cache or
-  ordering defect in `CancelDrag`, not a missing rect. Reproduces at ui.scale 1 in
-  a `QaFlowRegression` fixture (the drag-and-drop half is covered by
-  `ATabDraggedAcrossThreePanesPaintsFresh`).
+- **A tab drag abandoned with Escape, then released, paints stale: FIXED
+  2026-11-25.** The motion of a tab (or path) drag never recorded the pointer,
+  so after Escape the tooltip was laid out at the press point, and the release
+  moved it without asking for a frame. Drags now record the pointer like every
+  other gesture (`QaFlowRegression/ATabDragAbandonedWithEscapeThenReleasedPaintsFresh`,
+  8953 stale pixels before).
 - **Deterministic stale frames whose minimal replay still fails at `193dda043`:**
   `9e662fe598fe` (tab drag across three panes: the bare gesture is fresh, so a
   precondition of the 198-action minimal matters), `7f858b8312bb`, `b5c3ab96f87c`,
@@ -427,23 +424,23 @@ What it left, by workstream:
    single-line file under load), and a focus left on a hidden panel (first seen on a
    tiny window; may be gone with the minimum size). They are in the soak ledger
    (`tools/soak/soak.py report`) with their bundles.
-11. **Layouts below the 640x400-unit floor.** The window's minimum size now follows
-    ui.scale (`util::MinimumWindowSize`), but it is capped to the screen: ui.scale 3
-    on a 1440x900 screen, or 2 on a 1366x768 laptop, still lays the workbench out in
-    fewer units than the floor, where the chrome runs off the window and over itself.
-    The fix is a layout that degrades below the floor (collapse the sidebar, the
-    panel and the status segments in order) or an effective scale clamped to what the
-    screen can hold; until then the QA driver's geometry oracles skip such layouts
-    (`LAYOUT_FLOOR` in `tools/qa/microide_qa.py`) so they do not drown the rest.
-12. **A caret on the last line can stay out of view under a sticky band.** Where
-    the end of a document is reached just past a fold, the scroll that shows the
-    last line has no band, and the taller band-less view clamps it back into the
-    fold, whose band then hides the last row. The frame settles on the consistent
-    scroll (no stale paint: `QaFlowRegression/TypingWhereTheEndLeavesAFold...`), but
-    the caret stays one row below the view while typing there. The fix is a band
-    rule for the end of the document (drop the band when the view reaches the last
-    line, as the band then pins nothing the user scrolled past) applied in
-    `StickyScrollLines` so every consumer agrees.
+11. **Layouts below the 640x400-unit floor: FIXED 2026-11-25.** The window is
+    drawn at the requested scale only while it holds the floor; otherwise at the
+    largest 0.05 step that does, never below the display's own scale
+    (`util::ComputeWindowPresentation`; ui.scale 3 on 1440x900 lays out 640x400
+    units at 2.25). The minimum window size still follows the REQUESTED scale,
+    so a window that can grow does. `LAYOUT_FLOOR` stays in the QA driver for a
+    window smaller than 640x400 pixels at scale 1.
+12. **A caret on the last line could stay out of view under a sticky band:
+    FIXED 2026-11-25.** Two defects. The sizing loop re-targeted the scroll the
+    band-less pass had clamped, not the one asked for; and at the band-less
+    bottom of a document a band whose fold ends before the deepest scroll the
+    band allows has no consistent scroll at all. The band rule now takes the
+    pane's height and keeps an opener there only if its fold still holds the
+    top line at that deepest scroll (`ComputeStickyScrollLinesUncached`), so a
+    function running to the end keeps its band and a block that ends just
+    before does not. `QaFlowRegression/TheCaretOnTheLastLineStaysInViewWhereAFoldEndsNearTheEnd`
+    sweeps 87 shapes (failed at a 23-line tail before).
 10. **The soak runner's acceptance** (24 h unattended, a planted stale-paint and a
     planted lost-save defect each found, minimized under 20 actions, deduplicated and
     verified after the revert) has not been run end to end; its pieces have, one by

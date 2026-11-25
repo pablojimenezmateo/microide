@@ -119,6 +119,9 @@ std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowP
       .window_per_unit =
           SDL_FPoint{window_per_unit(presentation.presentation_scale_x, window_width, pixel_width),
                      window_per_unit(presentation.presentation_scale_y, window_height, pixel_height)},
+      .requested_window_per_unit =
+          SDL_FPoint{window_per_unit(presentation.requested_scale, window_width, pixel_width),
+                     window_per_unit(presentation.requested_scale, window_height, pixel_height)},
       .chrome =
           workspace::WorkspaceShell::WindowChromeState{
               .custom_enabled = CustomWindowChromeEnabled(window),
@@ -944,7 +947,7 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
   }
 
   workspace_shell_.SetWindowPresentationState(*presentation);
-  ApplyMinimumWindowSize(presentation->window_per_unit);
+  ApplyMinimumWindowSize(presentation->requested_window_per_unit);
   if (!ApplyRenderPresentation(renderer_, RenderPresentationOf(*presentation))) {
     SDL_Log("ApplyRenderPresentation failed: %s", SDL_GetError());
     return false;

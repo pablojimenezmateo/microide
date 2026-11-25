@@ -63,7 +63,7 @@ void TestArchitectureFileSizes() {
   run_rule("CheckShellFileSize(WorkspaceShellMembers.inc)",
            [&](const std::filesystem::path& root) {
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1428);
+                                                     1426);
            });
 
   AssertRuleResultsPass(results);
