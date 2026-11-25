@@ -39,6 +39,52 @@ namespace {
 
 bool UiRectHasArea(const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; }
 
+util::JsonValue TruncatedRectJson(const SDL_FRect& rect) {
+  util::JsonArray array;
+  array.reserve(4);
+  for (const float v : {rect.x, rect.y, rect.w, rect.h}) {
+    array.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
+  }
+  return util::JsonValue(std::move(array));
+}
+
+util::JsonValue FloatJson(float value) { return util::JsonValue(static_cast<double>(value)); }
+
+util::JsonValue IntJson(std::int64_t value) { return util::JsonValue(value); }
+
+const char* QuickPickKindName(QuickPickKind kind) {
+  switch (kind) {
+    case QuickPickKind::ColorTheme: return "color-theme";
+    case QuickPickKind::DocumentSymbol: return "document-symbol";
+    case QuickPickKind::WorkspaceSymbol: return "workspace-symbol";
+    case QuickPickKind::LanguageMode: return "language-mode";
+    case QuickPickKind::RecentEditor: return "recent-editor";
+    case QuickPickKind::RunCommand: return "command-choices";
+    case QuickPickKind::LaunchConfig: return "launch-config";
+  }
+  return "launch-config";
+}
+
+const char* ActionSourceName(ActionSource source) {
+  switch (source) {
+    case ActionSource::Command: return "command";
+    case ActionSource::Shortcut: return "shortcut";
+    case ActionSource::Menu: return "menu";
+    case ActionSource::ContextMenu: return "context-menu";
+  }
+  return "command";
+}
+
+template <typename PanelLayout>
+util::JsonValue LogSurfaceRowsJson(util::JsonObject& out, const PanelLayout& panel_layout) {
+  out["textX"] = FloatJson(panel_layout.text_x);
+  out["firstLineY"] = FloatJson(panel_layout.text_y);
+  out["lineHeight"] = FloatJson(panel_layout.line_height);
+  out["firstRow"] = IntJson(std::max(0, panel_layout.scroll.vertical_scroll));
+  out["visibleRows"] = IntJson(std::max(0, panel_layout.scroll.visible_rows));
+  return util::JsonValue(std::move(out));
+}
+
 void AddOverflowChips(ControlUiElements& out, const std::string& strip,
                       const TabStripOverflowControls& overflow) {
   if (overflow.hidden_left > 0) {
@@ -517,6 +563,100 @@ void WorkspaceShell::ControlUiPanel(const WorkspaceLayout& layout, ControlUiElem
   }
 }
 
+namespace {
+
+void AppendCompareControls(ControlUiElements& out, render::TextRenderer& text_renderer,
+                           const CompareTabState& compare_tab, const SDL_FRect& surface_rect,
+                           const CompareSurfaceLayout& surface) {
+  using namespace control_ui_kind;
+  AddControlUiElement(out, kDivider, "compare", CompareDividerHitRect(surface_rect, surface));
+  const auto compare_scroll = ComputeCompareScrollLayout(surface_rect, surface, compare_tab);
+  if (compare_scroll.vertical_scrollbar.has_value()) {
+    AddControlUiScrollbar(out, "compare", *compare_scroll.vertical_scrollbar);
+  }
+  if (compare_scroll.horizontal_scrollbar.has_value()) {
+    AddControlUiScrollbar(out, "compare/h", *compare_scroll.horizontal_scrollbar);
+  }
+  const CompareControlGeometry controls = MakeCompareControlGeometry(surface_rect, surface);
+  const CompareHeaderButtonRects header =
+      BuildCompareHeaderButtonRects(text_renderer, controls, compare_tab);
+  for (const auto& [rect, name] :
+       {std::pair{header.previous, "compare/previous-change"}, std::pair{header.next, "compare/next-change"},
+        std::pair{header.file_reviewed, "compare/file-reviewed"}}) {
+    if (rect.has_value()) {
+      AddControlUiElement(out, kButton, name, *rect);
+    }
+  }
+  for (int row = 0; row < surface.visible_rows; ++row) {
+    const std::optional<CompareControlRow> control_row = CompareControlRowAt(compare_tab, row);
+    if (!control_row.has_value()) {
+      break;
+    }
+    if (control_row->note) {
+      const int note_hunk = control_row->row->hunk_index;
+      const CompareNoteActionRects note = BuildCompareNoteActionRects(text_renderer, controls, row);
+      const std::string prefix = "compare/note-" +
+                                 (note_hunk >= 0 ? std::to_string(note_hunk)
+                                  : compare::IsCompareDetachedNoteHunk(note_hunk)
+                                      ? "detached-" + std::to_string(compare::CompareDetachedNoteIndex(note_hunk))
+                                      : std::string("file")) +
+                                 "/";
+      AddControlUiElement(out, kButton, prefix + "edit", note.edit, control_row->row->summary_text);
+      AddControlUiElement(out, kButton, prefix + "delete", note.remove);
+      continue;
+    }
+    const int hunk = control_row->controls_hunk;
+    if (hunk < 0) {
+      continue;
+    }
+    const CompareHunkReviewRects hunk_controls =
+        BuildCompareHunkReviewRects(text_renderer, controls, compare_tab, hunk, row);
+    const std::string prefix = "compare/hunk-" + std::to_string(hunk) + "/";
+    if (hunk_controls.toggle.has_value()) {
+      AddControlUiElement(out, kButton, prefix + "toggle-reviewed", *hunk_controls.toggle,
+                          std::string(CompareHunkToggleLabel(CompareHunkReviewStatus(compare_tab, hunk))));
+    }
+    if (hunk_controls.comment.has_value()) {
+      AddControlUiElement(out, kButton, prefix + "comment", *hunk_controls.comment);
+    }
+  }
+  int block = 0;
+  const float bottom = surface_rect.y + surface_rect.h;
+  for (float y = surface.rows_y + surface.line_height / 2.0f; surface.line_height > 0.0f && y < bottom;
+       y += surface.line_height) {
+    const auto hit = CompareCollapsedContextRowAt(compare_tab, surface_rect, surface.rows_y, surface.line_height,
+                                                  surface.show_vertical, y);
+    if (!hit.has_value()) {
+      continue;
+    }
+    const CollapsedContextActionRects rects = BuildCollapsedContextActionRects(
+        text_renderer, hit->block_rect, hit->row->previous_hunk_index >= 0, hit->row->next_hunk_index >= 0);
+    const std::string prefix = "compare/context-" + std::to_string(block++) + "/";
+    const auto on_surface = [&](const SDL_FRect& rect) -> std::optional<SDL_FRect> {
+      SDL_FRect visible{};
+      if (!SDL_GetRectIntersectionFloat(&rect, &surface_rect, &visible)) {
+        return std::nullopt;
+      }
+      return visible;
+    };
+    if (rects.previous_rect.has_value()) {
+      if (const auto visible = on_surface(*rects.previous_rect)) {
+        AddControlUiElement(out, kButton, prefix + "previous", *visible);
+      }
+    }
+    if (const auto visible = on_surface(rects.all_rect)) {
+      AddControlUiElement(out, kButton, prefix + "all", *visible, std::to_string(hit->row->collapsed_line_count));
+    }
+    if (rects.next_rect.has_value()) {
+      if (const auto visible = on_surface(*rects.next_rect)) {
+        AddControlUiElement(out, kButton, prefix + "next", *visible);
+      }
+    }
+  }
+}
+
+}
+
 void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiElements& out) {
   using namespace control_ui_kind;
   if (const auto& panel = context_.current_project_state.panel;
@@ -643,91 +783,8 @@ void WorkspaceShell::ControlUiButtons(const WorkspaceLayout& layout, ControlUiEl
   }
   if (CompareTabState* compare_tab = ActiveTabIsCompare() ? ActiveCompareTab() : nullptr; compare_tab != nullptr) {
     const SDL_FRect surface_rect = ActiveTabSurface(layout);
-    const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(surface_rect, *compare_tab);
-    AddControlUiElement(out, kDivider, "compare", CompareDividerHitRect(surface_rect, surface));
-    const auto compare_scroll = ComputeCompareScrollLayout(surface_rect, surface, *compare_tab);
-    if (compare_scroll.vertical_scrollbar.has_value()) {
-      AddControlUiScrollbar(out, "compare", *compare_scroll.vertical_scrollbar);
-    }
-    if (compare_scroll.horizontal_scrollbar.has_value()) {
-      AddControlUiScrollbar(out, "compare/h", *compare_scroll.horizontal_scrollbar);
-    }
-    const CompareControlGeometry controls = MakeCompareControlGeometry(surface_rect, surface);
-    const CompareHeaderButtonRects header =
-        BuildCompareHeaderButtonRects(editor_text_renderer_, controls, *compare_tab);
-    for (const auto& [rect, name] :
-         {std::pair{header.previous, "compare/previous-change"}, std::pair{header.next, "compare/next-change"},
-          std::pair{header.file_reviewed, "compare/file-reviewed"}}) {
-      if (rect.has_value()) {
-        AddControlUiElement(out, kButton, name, *rect);
-      }
-    }
-    for (int row = 0; row < surface.visible_rows; ++row) {
-      const std::optional<CompareControlRow> control_row = CompareControlRowAt(*compare_tab, row);
-      if (!control_row.has_value()) {
-        break;
-      }
-      if (control_row->note) {
-        const int note_hunk = control_row->row->hunk_index;
-        const CompareNoteActionRects note = BuildCompareNoteActionRects(editor_text_renderer_, controls, row);
-        const std::string prefix = "compare/note-" +
-                                   (note_hunk >= 0 ? std::to_string(note_hunk)
-                                    : compare::IsCompareDetachedNoteHunk(note_hunk)
-                                        ? "detached-" + std::to_string(compare::CompareDetachedNoteIndex(note_hunk))
-                                        : std::string("file")) +
-                                   "/";
-        AddControlUiElement(out, kButton, prefix + "edit", note.edit, control_row->row->summary_text);
-        AddControlUiElement(out, kButton, prefix + "delete", note.remove);
-        continue;
-      }
-      const int hunk = control_row->controls_hunk;
-      if (hunk < 0) {
-        continue;
-      }
-      const CompareHunkReviewRects hunk_controls =
-          BuildCompareHunkReviewRects(editor_text_renderer_, controls, *compare_tab, hunk, row);
-      const std::string prefix = "compare/hunk-" + std::to_string(hunk) + "/";
-      if (hunk_controls.toggle.has_value()) {
-        AddControlUiElement(out, kButton, prefix + "toggle-reviewed", *hunk_controls.toggle,
-                            std::string(CompareHunkToggleLabel(CompareHunkReviewStatus(*compare_tab, hunk))));
-      }
-      if (hunk_controls.comment.has_value()) {
-        AddControlUiElement(out, kButton, prefix + "comment", *hunk_controls.comment);
-      }
-    }
-    int block = 0;
-    const float bottom = surface_rect.y + surface_rect.h;
-    for (float y = surface.rows_y + surface.line_height / 2.0f; surface.line_height > 0.0f && y < bottom;
-         y += surface.line_height) {
-      const auto hit = CompareCollapsedContextRowAt(*compare_tab, surface_rect, surface.rows_y, surface.line_height,
-                                                    surface.show_vertical, y);
-      if (!hit.has_value()) {
-        continue;
-      }
-      const CollapsedContextActionRects rects = BuildCollapsedContextActionRects(
-          editor_text_renderer_, hit->block_rect, hit->row->previous_hunk_index >= 0, hit->row->next_hunk_index >= 0);
-      const std::string prefix = "compare/context-" + std::to_string(block++) + "/";
-      const auto on_surface = [&](const SDL_FRect& rect) -> std::optional<SDL_FRect> {
-        SDL_FRect visible{};
-        if (!SDL_GetRectIntersectionFloat(&rect, &surface_rect, &visible)) {
-          return std::nullopt;
-        }
-        return visible;
-      };
-      if (rects.previous_rect.has_value()) {
-        if (const auto visible = on_surface(*rects.previous_rect)) {
-          AddControlUiElement(out, kButton, prefix + "previous", *visible);
-        }
-      }
-      if (const auto visible = on_surface(rects.all_rect)) {
-        AddControlUiElement(out, kButton, prefix + "all", *visible, std::to_string(hit->row->collapsed_line_count));
-      }
-      if (rects.next_rect.has_value()) {
-        if (const auto visible = on_surface(*rects.next_rect)) {
-          AddControlUiElement(out, kButton, prefix + "next", *visible);
-        }
-      }
-    }
+    AppendCompareControls(out, editor_text_renderer_, *compare_tab, surface_rect,
+                          ComputeCompareSurfaceLayout(surface_rect, *compare_tab));
   }
   const NotificationsViewModel toasts =
       RenderViewModelBuilder(context_).BuildNotifications(notification_service_, layout.status_bar, text_renderer_);
@@ -1035,13 +1092,7 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     overlay["count"] = util::JsonValue(static_cast<std::int64_t>(OverlayItemCount()));
     if (state.overlay.mode == OverlayMode::QuickPick) {
       const QuickPickKind kind = state.overlay.workflow.quick_pick.kind;
-      overlay["kind"] = util::JsonValue(std::string(kind == QuickPickKind::ColorTheme        ? "color-theme"
-                                                    : kind == QuickPickKind::DocumentSymbol  ? "document-symbol"
-                                                    : kind == QuickPickKind::WorkspaceSymbol ? "workspace-symbol"
-                                                    : kind == QuickPickKind::LanguageMode    ? "language-mode"
-                                                    : kind == QuickPickKind::RecentEditor    ? "recent-editor"
-                                                    : kind == QuickPickKind::RunCommand      ? "command-choices"
-                                                                                             : "launch-config"));
+      overlay["kind"] = util::JsonValue(std::string(QuickPickKindName(kind)));
     }
     overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));
     if (state.overlay.mode == OverlayMode::QuickPick) {
@@ -1132,21 +1183,12 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     }
     entry["kind"] = util::JsonValue(std::move(kind));
     entry["text"] = util::JsonValue(std::move(text));
-    util::JsonArray rect;
-    for (const float v : {hover->rect.x, hover->rect.y, hover->rect.w, hover->rect.h}) {
-      rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
-    }
-    entry["rect"] = util::JsonValue(std::move(rect));
+    entry["rect"] = TruncatedRectJson(hover->rect);
     if (hover->primary_action_rect.has_value()) {
       util::JsonObject action;
       action["label"] =
           util::JsonValue(std::string(hover->kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA"));
-      util::JsonArray action_rect;
-      for (const float v : {hover->primary_action_rect->x, hover->primary_action_rect->y, hover->primary_action_rect->w,
-                            hover->primary_action_rect->h}) {
-        action_rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
-      }
-      action["rect"] = util::JsonValue(std::move(action_rect));
+      action["rect"] = TruncatedRectJson(*hover->primary_action_rect);
       entry["action"] = util::JsonValue(std::move(action));
     }
     popups["hover"] = util::JsonValue(std::move(entry));
@@ -1172,22 +1214,7 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
         }
       }
     }
-    const char* source = "command";
-    switch (receipt.source) {
-      case ActionSource::Command:
-        source = "command";
-        break;
-      case ActionSource::Shortcut:
-        source = "shortcut";
-        break;
-      case ActionSource::Menu:
-        source = "menu";
-        break;
-      case ActionSource::ContextMenu:
-        source = "context-menu";
-        break;
-    }
-    actions["source"] = util::JsonValue(std::string(source));
+    actions["source"] = util::JsonValue(std::string(ActionSourceName(receipt.source)));
     actions["rejected"] = util::JsonValue(receipt.rejected);
     root["actions"] = util::JsonValue(std::move(actions));
   }
@@ -1201,15 +1228,11 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
     }
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
         editor_text_renderer_, *viewport, pane.rect, viewport->sticky_band_rows(), line_numbers);
-    const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
+    const auto num = FloatJson;
     util::JsonObject entry;
     entry["group"] = util::JsonValue(static_cast<std::int64_t>(pane.group_index));
     entry["focused"] = util::JsonValue(pane.active);
-    util::JsonArray rect;
-    for (const float v : {pane.rect.x, pane.rect.y, pane.rect.w, pane.rect.h}) {
-      rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
-    }
-    entry["rect"] = util::JsonValue(std::move(rect));
+    entry["rect"] = TruncatedRectJson(pane.rect);
     entry["textX"] = num(metrics.text_x);
     entry["firstLineY"] = num(metrics.first_line_y);
     entry["lineHeight"] = num(metrics.line_height);
@@ -1242,35 +1265,18 @@ void WorkspaceShell::ControlUiDetails(const WorkspaceLayout& layout, util::JsonO
 
   if (const TerminalPaneState* pane = ActiveTerminalPane(); pane != nullptr && BottomPanelVisible()) {
     const auto panel_layout = ComputeBottomPanelLogLayout(layout, pane->session.LineCount());
-    const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
     util::JsonObject terminal;
-    util::JsonArray rect;
-    for (const float v : {panel_layout.content_rect.x, panel_layout.content_rect.y, panel_layout.content_rect.w,
-                          panel_layout.content_rect.h}) {
-      rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
-    }
-    terminal["rect"] = util::JsonValue(std::move(rect));
-    terminal["textX"] = num(panel_layout.text_x);
-    terminal["firstLineY"] = num(panel_layout.text_y);
-    terminal["lineHeight"] = num(panel_layout.line_height);
-    terminal["charWidth"] = num(std::max(1.0f, terminal_text_renderer_.CharWidth()));
-    terminal["firstRow"] = util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.vertical_scroll)));
-    terminal["visibleRows"] = util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.visible_rows)));
-    root["terminal"] = util::JsonValue(std::move(terminal));
+    terminal["rect"] = TruncatedRectJson(panel_layout.content_rect);
+    terminal["charWidth"] = FloatJson(std::max(1.0f, terminal_text_renderer_.CharWidth()));
+    root["terminal"] = LogSurfaceRowsJson(terminal, panel_layout);
   }
   if (BottomPanelVisible() && context_.current_project_state.panel.content == PanelContentKind::Output) {
     const auto* entries = OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
     const std::size_t count = entries != nullptr ? entries->size() : 0;
     const auto panel_layout = ComputeBottomPanelLogLayout(layout, count);
-    const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
     util::JsonObject output;
     output["channel"] = util::JsonValue(context_.current_project_state.panel.output.channel_id);
-    output["textX"] = num(panel_layout.text_x);
-    output["firstLineY"] = num(panel_layout.text_y);
-    output["lineHeight"] = num(panel_layout.line_height);
-    output["firstRow"] = util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.vertical_scroll)));
-    output["visibleRows"] = util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.visible_rows)));
-    root["output"] = util::JsonValue(std::move(output));
+    root["output"] = LogSurfaceRowsJson(output, panel_layout);
   }
 }
 
