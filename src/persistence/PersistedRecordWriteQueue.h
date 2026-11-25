@@ -58,10 +58,16 @@ class PersistedRecordWriteQueue {
   mutable std::mutex memo_mutex_;
   std::unordered_map<std::string, std::vector<std::byte>> written_body_;
   std::size_t applied_writes_ = 0;
-  std::map<std::string, WriteFailure> failures_;
+  struct FailedWrite {
+    WriteFailure failure;
+    std::vector<std::byte> body;
+    std::uint32_t capability_flags = 0;
+  };
+  std::map<std::string, FailedWrite> failures_;
   std::atomic<std::uint64_t> failure_revision_{0};
 
-  void SetFailureLocked(const std::string& key, std::optional<WriteFailure> failure);
+  void SetFailureLocked(const std::string& key, std::optional<FailedWrite> failure);
+  void RetryFailedWrites();
 
   std::uint64_t NextSequence() { return submitted_sequence_.fetch_add(1, std::memory_order_acq_rel) + 1; }
   void Finish(std::uint64_t sequence) {

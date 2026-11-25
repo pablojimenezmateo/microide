@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <thread>
 #include <filesystem>
@@ -271,6 +272,32 @@ void TestServiceLoadSeesAnUnflushedSave() {
 
 }
 
+void TestAFailedRecordIsRetriedWhenAnotherOneLands() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path blocker = temp_dir.path() / "blocked";
+  WriteFile(blocker, "not a directory");
+  const std::filesystem::path failing = blocker / "workspace-session";
+  const std::filesystem::path other = temp_dir.path() / "session";
+
+  PersistedRecordWriteQueue queue;
+  Expect(!queue.CurrentFailure().has_value(), "a fresh queue has no failure");
+  const std::uint64_t clean = queue.failure_revision();
+  queue.Queue(failing, Body("workspace"), 1u);
+  queue.Flush();
+  const auto failure = queue.CurrentFailure();
+  Expect(failure.has_value() && failure->path == failing && !failure->reason.empty(),
+         "the failed record is named, with its reason");
+  Expect(queue.failure_revision() != clean, "and the failure is a change");
+
+  std::error_code error;
+  std::filesystem::remove(blocker, error);
+  queue.Queue(other, Body("session"), 1u);
+  queue.Flush();
+  Expect(!queue.CurrentFailure().has_value(), "a record that lands retries the failed one");
+  Expect(std::filesystem::exists(failing) && ReadRecordText(failing) == "workspace",
+         "which then holds the body it was queued with");
+}
+
 void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedRecordWriteQueue/EncodedWriteLandsCoalescesAndDropsAFailedEncode",
           TestEncodedWriteLandsCoalescesAndDropsAFailedEncode);
@@ -286,6 +313,8 @@ void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests) {
           TestDeleteAndWriteResolveInSubmissionOrder);
   AddTest(tests, "PersistedRecordWriteQueue/MemoNeverSkipsAWriteThatIsNotOnDisk",
           TestMemoNeverSkipsAWriteThatIsNotOnDisk);
+  AddTest(tests, "PersistedRecordWriteQueue/AFailedRecordIsRetriedWhenAnotherOneLands",
+          TestAFailedRecordIsRetriedWhenAnotherOneLands);
   AddTest(tests, "PersistedRecordWriteQueue/FailedWriteIsRetriedOnTheNextSave",
           TestFailedWriteIsRetriedOnTheNextSave);
   AddTest(tests, "PersistedRecordWriteQueue/ManyRecordsAllLandWithTheirOwnBodies",

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 
 #include <unistd.h>
 #include <optional>
@@ -366,8 +367,10 @@ void TestWorkspaceShellASessionThatCannotBeSavedSaysUnsavedWorkIsUnprotected() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
   WorkspaceShellTestAccess::OpenFile(shell, root / "notes.txt");
-  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("unsaved ");
+  WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
   const auto warning = [&shell]() -> std::string {
+    (void)shell.HandleScheduledWake();
     for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
       if (row.message.starts_with("Could not save ")) {
         return row.message;
@@ -375,17 +378,23 @@ void TestWorkspaceShellASessionThatCannotBeSavedSaysUnsavedWorkIsUnprotected() {
     }
     return {};
   };
-  std::string arm_error;
-  Expect(util::CrashPointControl::Arm("fail=ENOSPC:durable.writing", &arm_error), "armed: " + arm_error);
-  WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
-  util::CrashPointControl::Disarm();
-  (void)shell.HandleScheduledWake();
-  const std::string said = warning();
-  Expect(said.find("space") != std::string::npos && said.find("crash") != std::string::npos,
+  const auto failing = [](const std::string& file, const std::function<void()>& write) {
+    std::string arm_error;
+    Expect(util::CrashPointControl::Arm("fail=ENOSPC:durable.writing@" + file + " (staging)", &arm_error),
+           "armed: " + arm_error);
+    write();
+    util::CrashPointControl::Disarm();
+  };
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("unsaved ");
+  failing("session", [&] { WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell); });
+  std::string said = warning();
+  Expect(said.find("session state") != std::string::npos && said.find("space") != std::string::npos &&
+             said.find("crash") != std::string::npos,
          "a session the disk cannot take says so and what it costs: '" + said + "'");
   WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
-  (void)shell.HandleScheduledWake();
-  Expect(warning().empty(), "the next flush that lands takes the warning down: '" + warning() + "'");
+  Expect(warning().empty(), "the next session flush that lands takes the warning down: '" + warning() + "'");
+
   util::SetCrashPointHook(nullptr);
 }
 

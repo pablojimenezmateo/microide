@@ -70,19 +70,50 @@ void PersistedRecordWriteQueue::ApplyWrite(const std::filesystem::path& path, co
               (cause ? ": " + cause.message() : std::string()) + ")");
     std::lock_guard lock(memo_mutex_);
     written_body_.erase(key);
-    SetFailureLocked(key, WriteFailure{.path = path,
-                                       .reason = cause ? util::DescribeWriteError(cause)
-                                                       : std::string(PersistedRecordWriterErrorName(stage))});
+    SetFailureLocked(key, FailedWrite{.failure = WriteFailure{.path = path,
+                                                              .reason = cause ? util::DescribeWriteError(cause)
+                                                                              : std::string(PersistedRecordWriterErrorName(stage))},
+                                      .body = std::move(body),
+                                      .capability_flags = capability_flags});
     return;
   }
-  std::lock_guard lock(memo_mutex_);
-  SetFailureLocked(key, std::nullopt);
-  if (body.size() > kMaxMemoizedBodyBytes) {
-    written_body_.erase(key);
-  } else {
-    written_body_[key] = std::move(body);
+  {
+    std::lock_guard lock(memo_mutex_);
+    SetFailureLocked(key, std::nullopt);
+    if (body.size() > kMaxMemoizedBodyBytes) {
+      written_body_.erase(key);
+    } else {
+      written_body_[key] = std::move(body);
+    }
+    ++applied_writes_;
   }
-  ++applied_writes_;
+  RetryFailedWrites();
+}
+
+void PersistedRecordWriteQueue::RetryFailedWrites() {
+  std::map<std::string, FailedWrite> pending;
+  {
+    std::lock_guard lock(memo_mutex_);
+    if (failures_.empty()) {
+      return;
+    }
+    pending = failures_;
+  }
+  for (auto& [key, failed] : pending) {
+    if (!PersistedRecordWriter::WriteFile(failed.failure.path, failed.body, failed.capability_flags)) {
+      continue;
+    }
+    std::lock_guard lock(memo_mutex_);
+    const auto it = failures_.find(key);
+    if (it == failures_.end() || it->second.body != failed.body) {
+      continue;
+    }
+    SetFailureLocked(key, std::nullopt);
+    if (failed.body.size() <= kMaxMemoizedBodyBytes) {
+      written_body_[key] = std::move(failed.body);
+    }
+    ++applied_writes_;
+  }
 }
 
 void PersistedRecordWriteQueue::Flush() { queue_.Flush(); }
@@ -114,7 +145,7 @@ void PersistedRecordWriteQueue::QueueDelete(const std::filesystem::path& path) {
   });
 }
 
-void PersistedRecordWriteQueue::SetFailureLocked(const std::string& key, std::optional<WriteFailure> failure) {
+void PersistedRecordWriteQueue::SetFailureLocked(const std::string& key, std::optional<FailedWrite> failure) {
   const auto it = failures_.find(key);
   if (!failure.has_value()) {
     if (it != failures_.end()) {
@@ -123,11 +154,11 @@ void PersistedRecordWriteQueue::SetFailureLocked(const std::string& key, std::op
     }
     return;
   }
-  if (it != failures_.end() && it->second.reason == failure->reason) {
-    return;
-  }
+  const bool same_reason = it != failures_.end() && it->second.failure.reason == failure->failure.reason;
   failures_[key] = std::move(*failure);
-  failure_revision_.fetch_add(1, std::memory_order_acq_rel);
+  if (!same_reason) {
+    failure_revision_.fetch_add(1, std::memory_order_acq_rel);
+  }
 }
 
 std::optional<PersistedRecordWriteQueue::WriteFailure> PersistedRecordWriteQueue::CurrentFailure() const {
@@ -135,7 +166,7 @@ std::optional<PersistedRecordWriteQueue::WriteFailure> PersistedRecordWriteQueue
   if (failures_.empty()) {
     return std::nullopt;
   }
-  return failures_.begin()->second;
+  return failures_.begin()->second.failure;
 }
 
 std::size_t PersistedRecordWriteQueue::applied_write_count() const {

@@ -266,9 +266,11 @@ std::optional<PersistenceService::WriteFailureChange> PersistenceService::TakeWr
   if (!failure.has_value()) {
     return WriteFailureChange{};
   }
-  return WriteFailureChange{.message = "Could not save the editor's " + failure->path.filename().string() +
-                                       " state: " + failure->reason +
-                                       ". Unsaved edits are not protected against a crash until it saves."};
+  const std::string file = failure->path.filename().string();
+  return WriteFailureChange{.message = "Could not save the editor's " + file + " state: " + failure->reason +
+                                       (file == "session" ? ". Unsaved edits are not protected against a crash "
+                                                            "until it saves."
+                                                          : ". It is retried with the next save.")};
 }
 
 }
