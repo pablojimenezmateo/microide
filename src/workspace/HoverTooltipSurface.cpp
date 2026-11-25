@@ -34,6 +34,63 @@ TooltipHit Hit(std::string_view text, const SDL_FRect& anchor) {
   return TooltipHit{.text = std::string(text), .anchor = anchor};
 }
 
+TooltipHit SidebarModeRowTooltip(const SidebarModeRowLayout& mode_row, float x, float y) {
+  if (mode_row.icon_only) {
+    for (int i = 0; i < mode_row.tab_count; ++i) {
+      const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
+      if (!Contains(tab.rect, x, y)) {
+        continue;
+      }
+      const SidebarViewSpec* spec = FindBuiltinSidebarView(tab.mode);
+      return spec != nullptr ? Hit(spec->label, tab.rect) : TooltipHit{};
+    }
+  }
+  if (mode_row.has_overflow && Contains(mode_row.overflow_rect, x, y)) {
+    return Hit("More Views", mode_row.overflow_rect);
+  }
+  return {};
+}
+
+TooltipHit BottomPanelHeaderTooltip(const TabStripService& tab_strips, LayoutMode mode, const SDL_FRect& panel,
+                                    bool maximized, float x, float y) {
+  const SDL_FRect header = MakeRect(panel.x, panel.y, panel.w, kWorkspaceBottomPanelHeaderHeight);
+  if (!Contains(header, x, y)) {
+    return {};
+  }
+  if (const SDL_FRect rect = tab_strips.BottomPanelTerminalNewTabRect(mode, header); Contains(rect, x, y)) {
+    return Hit("New Terminal (Ctrl+Shift+`)", rect);
+  }
+  if (const SDL_FRect maximize = tab_strips.BottomPanelMaximizeButtonRect(mode, header); Contains(maximize, x, y)) {
+    return Hit(maximized ? "Restore Panel Size (Ctrl+Shift+J)" : "Maximize Panel (Ctrl+Shift+J)", maximize);
+  }
+  return {};
+}
+
+TooltipHit DebugToolbarTooltip(const DebugToolbarLayout& toolbar, bool session_stopped, float x, float y) {
+  if (!Contains(toolbar.widget, x, y)) {
+    return {};
+  }
+  for (std::size_t i = 0; i < toolbar.button_count; ++i) {
+    if (Contains(toolbar.buttons[i], x, y)) {
+      return Hit(DebugToolbarButtonTooltip(toolbar.kinds[i], session_stopped), toolbar.buttons[i]);
+    }
+  }
+  return {};
+}
+
+TooltipHit StatusBarTooltip(const StatusBarViewModel& status_vm, const render::TextRenderer& text_renderer, float x,
+                            float y) {
+  TooltipHit found;
+  ForEachStatusBarSegmentRect(status_vm, text_renderer,
+                              [&](const StatusBarSegmentViewModel& segment, const SDL_FRect& rect) {
+                                if (found || segment.tooltip.empty() || !Contains(rect, x, y)) {
+                                  return;
+                                }
+                                found = Hit(segment.tooltip, rect);
+                              });
+  return found;
+}
+
 TooltipHit GitSidebarHeaderTooltip(const SDL_FRect& sidebar, const GitSidebarState& git, float x,
                                    float y) {
   if (const SDL_FRect refresh = git_sidebar_header::RefreshButtonRect(sidebar);
@@ -170,23 +227,7 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
 
   if (!found && context_.current_project_state.sidebar.visible &&
       Contains(layout.sidebar, x, y)) {
-    const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
-    if (mode_row.icon_only) {
-      for (int i = 0; i < mode_row.tab_count; ++i) {
-        const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
-        if (!Contains(tab.rect, x, y)) {
-          continue;
-        }
-        const SidebarViewSpec* spec = FindBuiltinSidebarView(tab.mode);
-        if (spec != nullptr) {
-          found = Hit(spec->label, tab.rect);
-        }
-        break;
-      }
-    }
-    if (!found && mode_row.has_overflow && Contains(mode_row.overflow_rect, x, y)) {
-      found = Hit("More Views", mode_row.overflow_rect);
-    }
+    found = SidebarModeRowTooltip(SidebarModeRow(layout.sidebar), x, y);
 
     const SidebarMode mode = ActiveSidebarMode();
     if (!found && mode == SidebarMode::Git) {
@@ -216,22 +257,8 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     }
   }
   if (!found && BottomPanelVisible()) {
-    const SDL_FRect panel_header =
-        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
-                 kWorkspaceBottomPanelHeaderHeight);
-    if (Contains(panel_header, x, y)) {
-      const LayoutMode mode = layout_mode_service_.CurrentMode();
-      if (const SDL_FRect rect = tab_strip_service_.BottomPanelTerminalNewTabRect(mode, panel_header);
-          Contains(rect, x, y)) {
-        found = Hit("New Terminal (Ctrl+Shift+`)", rect);
-      } else if (const SDL_FRect maximize =
-                     tab_strip_service_.BottomPanelMaximizeButtonRect(mode, panel_header);
-                 Contains(maximize, x, y)) {
-        found = Hit(layout.panel_maximized ? "Restore Panel Size (Ctrl+Shift+J)"
-                                           : "Maximize Panel (Ctrl+Shift+J)",
-                    maximize);
-      }
-    }
+    found = BottomPanelHeaderTooltip(tab_strip_service_, layout_mode_service_.CurrentMode(), layout.bottom_panel,
+                                     layout.panel_maximized, x, y);
   }
   if (!found && BottomPanelVisible() && terminal_find_service_.visible()) {
     static constexpr std::array<std::string_view, kTerminalFindToggleCount> kTerminalToggles = {
@@ -242,31 +269,13 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   }
 
   if (!found && DebugToolbarVisible()) {
-    const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
-        ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout), debug_service_.SupportsStepBack());
-    if (Contains(tb.widget, x, y)) {
-      const bool session_stopped = IsDebugSessionStopped();
-      for (std::size_t i = 0; i < tb.button_count && !found; ++i) {
-        if (!Contains(tb.buttons[i], x, y)) {
-          continue;
-        }
-        found = Hit(DebugToolbarButtonTooltip(tb.kinds[i], session_stopped),
-                    tb.buttons[i]);
-      }
-    }
+    found = DebugToolbarTooltip(ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout),
+                                                          debug_service_.SupportsStepBack()),
+                                IsDebugSessionStopped(), x, y);
   }
-
   if (!found && Contains(layout.status_bar, x, y)) {
-    const StatusBarViewModel status_vm =
-        RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
-    ForEachStatusBarSegmentRect(
-        status_vm, text_renderer_,
-        [&](const StatusBarSegmentViewModel& segment, const SDL_FRect& rect) {
-          if (found || segment.tooltip.empty() || !Contains(rect, x, y)) {
-            return;
-          }
-          found = Hit(segment.tooltip, rect);
-        });
+    found = StatusBarTooltip(RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_),
+                             text_renderer_, x, y);
   }
 
   if (!found && ActiveTabIsCompare()) {
