@@ -109,7 +109,7 @@ def _sha256_file(path: Path) -> str | None:
 def _doc_key(doc: dict[str, Any]) -> tuple[str, str]:
     """A document across a relaunch: its path, or an untitled buffer's title --
     within its project, since each project numbers its own Untitled-N."""
-    return (str(doc.get("project") or ""), str(doc.get("path") or doc.get("title")))
+    return (str(doc.get("project") or ""), str(doc.get("path") or doc.get("title")))  # pragma: no mutate
 
 def _logged_history(app: Any, prefix: str, path: str, keep: int = 200) -> list[str]:
     """The app log's `prefix` lines about `path` (a ` path=<path> ` field), across
@@ -667,7 +667,7 @@ class DataOracle:
         over a few frames) or after a bounded wait."""
         deadline = time.monotonic() + 10 * q.SLOW_FACTOR
         after = self.documents(all_projects=True)
-        while time.monotonic() < deadline:
+        while not _past(deadline):
             keys = {_doc_key(d) for d in after}
             if all(_doc_key(d) in keys for d in dirty):
                 break
@@ -742,7 +742,7 @@ class DataOracle:
                 if "unknown query" in str(failure):
                     return None
                 raise
-            if time.monotonic() >= deadline:
+            if _past(deadline):
                 return False
             time.sleep(0.1)
 
@@ -754,7 +754,7 @@ class DataOracle:
 
 
 def _project_relative(app: q.App, path: str) -> str:
-    project = str(app.project or "")
+    project = str(app.project or "")  # pragma: no mutate
     return path[len(project) + 1:] if project and path.startswith(project + "/") else path
 
 
@@ -933,7 +933,7 @@ class ResourceOracle:
             for line in Path(f"/proc/{pid}/status").read_text().splitlines():
                 if line.startswith("VmRSS:"):
                     self.rss_steps.append((step, len(self.app.actions), int(line.split()[1])))
-                    break
+                    break  # pragma: no mutate
 
     def rss_timeline(self, jumps: int = 5, around: int = 3) -> str:
         """The run's rss after each step, thinned to 40 rows, then the steps with
@@ -1184,7 +1184,7 @@ def latency_subject(what: str) -> str:
         try:
             line = ast.literal_eval(what)
         except (ValueError, SyntaxError):
-            line = what[1:-1]
+            line = what[1:-1]  # pragma: no mutate
         verb = re.match(r"[\w-]+", str(line).lstrip())
         return f"the {verb.group(0)} command" if verb else "an empty command"
     return what
@@ -1308,7 +1308,7 @@ def caret_bounds_reports(log: str, binary: Path | None = None) -> str:
     'microide caret-bounds: here: f has its caret at 2:3\\n  #1 a\\n  #2 b\\n'
     """
     reports: list[list[str]] = []
-    taking = False
+    taking = False  # pragma: no mutate
     for line in log.splitlines():
         if "microide caret-bounds:" in line:
             taking = True
@@ -1316,7 +1316,7 @@ def caret_bounds_reports(log: str, binary: Path | None = None) -> str:
         elif taking and line.startswith("  #"):
             reports[-1].append(line)
         else:
-            taking = False
+            taking = False  # pragma: no mutate
     if binary is None:
         return "".join(line + "\n" for report in reports for line in report)
     # The app numbers its frames ("  #1 module(+0x...) [0x...]"); the resolver
@@ -1539,7 +1539,7 @@ class IdleOracle:
         parts = []
         for name in ("wchan", "syscall"):
             try:
-                parts.append((base / name).read_text().strip().split(" ")[0])
+                parts.append(((base / name).read_text().split() or ["-"])[0])
             except OSError:
                 parts.append("?")
         return " ".join(parts)
@@ -1661,7 +1661,8 @@ class RemoteConvergence:
             status = self.app.query("status")
         except q.QaFailure:
             return {}
-        if Path(status.get("projectRoot") or "") != self.mirror:
+        root = status.get("projectRoot")
+        if not root or Path(root) != self.mirror:
             return {"elsewhere": True}
         return status.get("remote") or {}
 

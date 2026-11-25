@@ -3999,5 +3999,312 @@ class DefaultLimitTests(unittest.TestCase):
         self.assertEqual(len(history), 200)
         self.assertTrue(history[0].endswith(" n1"))
 
+
+class FreshOracleTests(unittest.TestCase):
+    def test_every_oracle_starts_with_no_evidence_and_nothing_reported(self):
+        app = mock.Mock()
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 2.0):
+            liveness = monkey_oracles.Liveness(app)
+            frames = monkey_oracles.FrameLatency(app)
+        self.assertEqual(liveness.budget, 5.0)
+        self.assertEqual(frames.budget_ms, 1000.0)
+        data = monkey_oracles.DataOracle(app)
+        self.assertEqual((data.evidence, data.untitled_evidence, data.saved_file_before), ({}, {}, None))
+        for oracle in (liveness, frames, monkey_oracles.UndoAlgebra(app, random.Random(0)),
+                       monkey_oracles.ResourceOracle(app), monkey_oracles.InvariantOracle(app),
+                       monkey_oracles.StructuralDiffOracle(app),
+                       monkey_oracles.RemoteConvergence(app, Path("/m"), Path("/h"), "x")):
+            self.assertEqual(oracle.evidence, {}, type(oracle).__name__)
+        self.assertIs(monkey_oracles.InvariantOracle(app).unavailable, False)
+        self.assertIs(monkey_oracles.IdleOracle(app).reported, False)
+        self.assertIsNone(monkey_oracles.ResourceOracle(app).rss_pid)
+
+
+class TerminalOriginsOrderTests(unittest.TestCase):
+    def test_a_frame_before_any_start_is_ignored(self):
+        self.assertEqual(monkey_oracles.terminal_origins("  #0 stray\n", {1}),
+                         "1 alive child(ren) with no traced start: 1\n")
+
+    def test_every_start_is_read_and_a_restart_is_not_stopped(self):
+        log = ("microide terminal-life: start pid=1\n  #0 a\n"
+               "microide terminal-life: stop pid=1\n"
+               "microide terminal-life: start pid=1\n  #0 a\n"
+               "microide terminal-life: start pid=2\n  #0 a\n")
+        self.assertEqual(monkey_oracles.terminal_origins(log, {1, 2}),
+                         "2 alive shell(s) started here: 1 (never stopped) 2 (never stopped)\n  #0 a\n")
+
+    def test_the_most_shared_stack_comes_first(self):
+        log = ("microide terminal-life: start pid=1\n  #0 a\n"
+               "microide terminal-life: start pid=2\n  #0 b\n"
+               "microide terminal-life: start pid=3\n  #0 b\n")
+        self.assertTrue(monkey_oracles.terminal_origins(log, {1, 2, 3}).startswith("2 alive shell(s)"))
+
+    def test_the_symbolized_stack_keeps_its_indent(self):
+        with mock.patch.object(monkey_oracles.q, "symbolize_backtrace", return_value="  frame\n\n"):
+            text = monkey_oracles.terminal_origins("microide terminal-life: start pid=1\n  #0 a\n", {1}, Path("/b"))
+        self.assertEqual(text.splitlines()[1], "  frame")
+
+    def test_at_most_twenty_unknown_children(self):
+        text = monkey_oracles.terminal_origins("", set(range(1, 22)))
+        self.assertEqual(text, "21 alive child(ren) with no traced start: " + " ".join(map(str, range(1, 21))) + "\n")
+
+
+class MergeResultBesideTests(unittest.TestCase):
+    RESULT = {"path": "/p/m.cpp", "project": "/p", "surface": "merge", "dirty": True}
+
+    def test_only_another_surfaces_dirty_buffer_of_the_same_file_counts(self):
+        beside = monkey_oracles._result_beside_its_files_buffer
+        own = {"path": "/p/m.cpp", "project": "/p", "surface": "compare", "dirty": True}
+        self.assertTrue(beside(self.RESULT, [self.RESULT, own]))
+        self.assertFalse(beside(self.RESULT, [self.RESULT, {**own, "surface": "merge"}]))
+        self.assertFalse(beside(self.RESULT, [self.RESULT, {**own, "dirty": False}]))
+        self.assertFalse(beside(self.RESULT, [self.RESULT, {**own, "path": "/p/other.cpp"}]))
+        self.assertFalse(beside({**self.RESULT, "surface": "editor"}, [own]))
+        self.assertTrue(beside(self.RESULT, [{k: v for k, v in own.items() if k != "surface"}]))
+
+
+class DataOracleSmallTests(unittest.TestCase):
+    def app(self, answers):
+        app = mock.Mock()
+        app.asked = []
+
+        def query(verb, args=None):
+            app.asked.append((verb, args))
+            answer = answers[verb]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer(args) if callable(answer) else answer
+        app.query.side_effect = query
+        return app
+
+    def test_documents_are_the_active_projects_unless_every_one_is_asked(self):
+        app = self.app({"documents": [{"path": "a"}]})
+        oracle = monkey_oracles.DataOracle(app)
+        oracle.documents()
+        oracle.documents(all_projects=True)
+        self.assertEqual(app.asked, [("documents", None), ("documents", {"all": True})])
+        self.assertEqual(monkey_oracles.DataOracle(self.app({"documents": {"not": "a list"}})).documents(), [])
+
+    def test_a_clean_mismatch_after_a_dirty_buffer_and_one_without_a_sha(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "a.txt").write_text("disk")
+        disk = hashlib.sha256(b"disk").hexdigest()
+        oracle = monkey_oracles.DataOracle(mock.Mock())
+        found = oracle.clean_mismatches([{"path": str(directory / "a.txt"), "dirty": True},
+                                         {"path": str(directory / "a.txt"), "dirty": False}])
+        self.assertEqual(found, {str(directory / "a.txt"): ("", disk)})
+
+    def test_the_buffer_io_history_keeps_two_hundred(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "microide-1.log").write_text(
+            "".join(f"microide buffer-io: read path=/a n{i}\n" for i in range(201)))
+        history = monkey_oracles.DataOracle(mock.Mock(work=directory))._buffer_io_history("/a")
+        self.assertEqual(len(history), 200)
+
+    def test_an_answer_with_no_sites_knows_none(self):
+        oracle = monkey_oracles.DataOracle(self.app({"crash-points": {"installed": True}}))
+        self.assertEqual(oracle.crash_points(), [])
+
+    def test_the_least_tried_weighting_is_one_over_one_plus_tries(self):
+        oracle = monkey_oracles.DataOracle(self.app({"crash-points": {"installed": True, "sites": [
+            {"site": "s", "files": {"a": 1, "b": 1}}]}, "buffer": {}}))
+        rng = mock.Mock()
+        rng.choices.return_value = [("s", "a")]
+        oracle.choose_point(rng, tried=lambda key: 3 if key == "s@a" else 0)
+        self.assertEqual(rng.choices.call_args.kwargs["weights"], [0.25, 1.0])
+        oracle.choose_point(rng)
+        self.assertEqual(rng.choices.call_args.kwargs["weights"], [1.0, 1.0])
+
+    def test_the_active_projects_documents(self):
+        docs = [{"path": "a", "project": "/p"}, {"path": "b", "project": "/q"}, {"path": "c"}]
+        oracle = monkey_oracles.DataOracle(self.app({"status": {"projectRoot": "/p"}}))
+        self.assertEqual([d["path"] for d in oracle._of_active_project(docs)], ["a", "c"])
+        oracle = monkey_oracles.DataOracle(self.app({"status": {}}))
+        self.assertEqual(oracle._of_active_project(docs), docs)
+        oracle = monkey_oracles.DataOracle(self.app({"status": RuntimeError("busy")}))
+        self.assertEqual(oracle._of_active_project(docs), docs)
+
+    def test_settings_that_are_not_a_list_say_no_mode(self):
+        oracle = monkey_oracles.DataOracle(self.app({"settings": {"editor.autosave": "on"}}))
+        self.assertIsNone(oracle._autosave_mode())
+
+    def test_a_lap_only_for_an_owed_project_that_has_not_loaded(self):
+        projects = [{"root": "/p", "loaded": True, "active": True}, {"root": "/q", "loaded": False}]
+        app = self.app({"projects": projects, "settings": [{"id": "editor.autosave", "value": "off"}]})
+        oracle = monkey_oracles.DataOracle(app)
+        self.assertIsNone(oracle._load_restored_projects([{"project": "/p", "dirty": True}]))
+        app.send_line.assert_not_called()
+
+    def test_a_lap_with_no_active_project_still_goes_round(self):
+        projects = [{"root": "/p", "loaded": True}, {"root": "/q", "loaded": False}]
+        app = self.app({"projects": projects, "settings": [{"id": "editor.autosave", "value": "on_focus_change"}]})
+        oracle = monkey_oracles.DataOracle(app)
+        self.assertEqual(oracle._load_restored_projects([{"project": "/q", "dirty": True}]), set())
+        self.assertEqual(app.send_line.call_count, 2)
+
+    def test_the_restore_is_waited_for_on_the_clock(self):
+        clock = _FakeClock()
+        answers = iter([[], [], [{"path": "a", "project": "/p"}]])
+        app = self.app({"documents": lambda args: (self.assertEqual(args, {"all": True}), next(answers))[1]})
+        oracle = monkey_oracles.DataOracle(app)
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            after = oracle._wait_restored([{"path": "a", "project": "/p"}])
+        self.assertEqual(after, [{"path": "a", "project": "/p"}])
+        self.assertEqual(clock.slept, [0.2, 0.2])
+        clock = _FakeClock()
+        app = self.app({"documents": []})
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 2.0):
+            monkey_oracles.DataOracle(app)._wait_restored([{"path": "a"}])
+        self.assertAlmostEqual(sum(clock.slept), 20.0, delta=0.3)
+
+    def test_the_staged_answer_is_waited_for_on_the_clock(self):
+        clock = _FakeClock()
+        answers = iter([{"staged": False}, {"staged": False}, {"staged": True}])
+        oracle = monkey_oracles.DataOracle(self.app({"persistence": lambda args: next(answers)}))
+        with clock.patch():
+            self.assertTrue(oracle.wait_staged(5.0))
+        self.assertEqual(clock.slept, [0.1, 0.1])
+        clock = _FakeClock()
+        oracle = monkey_oracles.DataOracle(self.app({"persistence": {"staged": False}}))
+        with clock.patch():
+            self.assertFalse(oracle.wait_staged(1.0))
+        self.assertAlmostEqual(sum(clock.slept), 1.0, delta=0.15)
+
+    def test_a_churn_or_an_external_step_among_the_last_twenty_rows(self):
+        app = mock.Mock(project="/w")
+        oracle = monkey_oracles.DataOracle(app)
+        app.actions = [{"churn": "a.txt"}] + [{}] * 19
+        self.assertTrue(oracle._churned("/w/a.txt"))
+        app.actions = [{"churn": "a.txt"}] + [{}] * 20
+        self.assertFalse(oracle._churned("/w/a.txt"))
+        app.actions = [{"churn": "b.txt"}]
+        self.assertFalse(oracle._churned("/w/a.txt"))
+        app.actions = [{"external": "git-checkout"}]
+        self.assertTrue(oracle._churned("/w/a.txt"))
+
+    def test_a_path_relative_to_the_project(self):
+        relative = monkey_oracles._project_relative
+        self.assertEqual(relative(mock.Mock(project="/w"), "/w/a/b.txt"), "a/b.txt")
+        self.assertEqual(relative(mock.Mock(project="/w"), "/wx/a.txt"), "/wx/a.txt")
+        self.assertEqual(relative(mock.Mock(project=None), "/w/a.txt"), "/w/a.txt")
+
+
+class ResourceSmallTests(unittest.TestCase):
+    def test_a_step_whose_status_cannot_be_read_or_parsed_notes_nothing(self):
+        app = mock.Mock()
+        app.proc.poll.return_value = None
+        app.actions = []
+        oracle = monkey_oracles.ResourceOracle(app)
+        app.pid = 2 ** 22 + 12345
+        oracle.note_step(1)
+        app.pid = os.getpid()
+        for status in ("VmRSS: abc kB\n", "VmRSS:\n"):
+            with mock.patch.object(Path, "read_text", return_value=status):
+                oracle.note_step(2)
+        self.assertEqual(oracle.rss_steps, [])
+
+    def test_threads_are_counted_by_name(self):
+        import threading
+        stop = threading.Event()
+        threads = [threading.Thread(target=stop.wait, name="qa-same") for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        try:
+            names = monkey_oracles.ResourceOracle._thread_names(os.getpid())
+        finally:
+            stop.set()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(names["qa-same"], 2)
+        real = Path.read_text
+
+        def flaky(path, *args, **kwargs):
+            if path.name == "comm":
+                raise FileNotFoundError(path)
+            return real(path, *args, **kwargs)
+        with mock.patch.object(Path, "read_text", flaky):
+            self.assertEqual(monkey_oracles.ResourceOracle._thread_names(os.getpid()), collections.Counter())
+
+    def test_terminal_panes_are_asked_of_the_terminals_query(self):
+        app = mock.Mock()
+        app.query.side_effect = lambda verb, args=None: {"tabs": [{"panes": [1]}]} if verb == "terminals" else {}
+        self.assertEqual(monkey_oracles.ResourceOracle(app)._terminal_panes(), 1)
+        app.query.side_effect = lambda verb, args=None: {}
+        self.assertEqual(monkey_oracles.ResourceOracle(app)._terminal_panes(), 0)
+
+
+class SmallHelperTests(unittest.TestCase):
+    def test_a_line_that_merely_starts_and_ends_with_the_same_letter_is_no_quote(self):
+        self.assertEqual(monkey_oracles.latency_subject("XcmdX"), "XcmdX")
+        self.assertEqual(monkey_oracles.latency_subject("'\\x41bc d'"), "the Abc command", "escapes are read")
+
+    def test_caret_reports_keep_only_their_own_frames(self):
+        log = "  #9 stray\nmicroide caret-bounds: r1\n  #1 a\nother\n  #2 not-r1\nmicroide caret-bounds: r2\n  #1 b\n"
+        self.assertEqual(monkey_oracles.caret_bounds_reports(log),
+                         "microide caret-bounds: r1\n  #1 a\nmicroide caret-bounds: r2\n  #1 b\n")
+        blocks = []
+        with mock.patch.object(monkey_oracles.q, "symbolize_backtrace",
+                               side_effect=lambda block, binary: blocks.append(block) or "S\n"):
+            text = monkey_oracles.caret_bounds_reports(log, Path("/b"))
+        self.assertEqual(text, "S\nS\n")
+        self.assertEqual(blocks, ["microide caret-bounds: r1\na", "microide caret-bounds: r2\nb"])
+
+    def test_the_main_thread_sample_is_its_wait_channel_and_syscall(self):
+        app = mock.Mock(pid=os.getpid())
+        wchan = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/wchan")
+        sample = monkey_oracles.IdleOracle(app)._sample_main_thread()
+        self.assertEqual(len(sample.split(" ")), 2)
+        if wchan.exists() and wchan.read_text().strip() and wchan.read_text().strip() != "0":
+            self.assertNotIn("?", sample)
+        read = []
+        answers = iter(["sleep_wait\n", "7 0x3 0x4\n"])
+
+        def reading(path, *args, **kwargs):
+            read.append(path.name)
+            return next(answers)
+        with mock.patch.object(Path, "read_text", reading):
+            self.assertEqual(monkey_oracles.IdleOracle(app)._sample_main_thread(), "sleep_wait 7")
+        self.assertEqual(read, ["wchan", "syscall"])
+        with mock.patch.object(Path, "read_text", side_effect=["", "7\n"]):
+            self.assertEqual(monkey_oracles.IdleOracle(app)._sample_main_thread(), "- 7")
+
+
+class RemoteSideEvidenceDetailTests(RemoteConvergenceTests):
+    def test_each_side_is_cut_at_a_mebibyte_and_stamped(self):
+        (self.host / "big.bin").write_bytes(b"h" * ((1 << 20) + 5))
+        oracle = monkey_oracles.RemoteConvergence(mock.Mock(work=None), self.mirror, self.host, "x")
+        out = oracle._side_evidence("big.bin")
+        self.assertEqual(len(out["diff-big.bin.host"]), 1 << 20)
+        stamps = out["diff-big.bin.txt"].decode().splitlines()
+        self.assertTrue(stamps[0].startswith(f"host: {(1 << 20) + 5} bytes, mtime_ns "))
+        self.assertEqual(stamps[1], "mirror: No such file or directory")
+        self.assertTrue(out["diff-big.bin.txt"].endswith(b"\n") and not out["diff-big.bin.txt"].endswith(b"\n\n"))
+
+    def test_no_project_root_is_another_project_in_front(self):
+        app = mock.Mock()
+        app.query.return_value = {"remote": {"state": "ready"}}
+        oracle = monkey_oracles.RemoteConvergence(app, self.mirror, self.host, "x")
+        self.assertEqual(oracle._remote(), {"elsewhere": True})
+        app.query.return_value = {"projectRoot": str(self.mirror)}
+        self.assertEqual(oracle._remote(), {})
+
+
+class LastGapTests(unittest.TestCase):
+    def test_an_unrelated_line_between_two_starts_does_not_end_the_reading(self):
+        log = ("microide terminal-life: start pid=1\n  #0 a\nsomething else\n"
+               "microide terminal-life: start pid=2\n  #0 a\n")
+        self.assertEqual(monkey_oracles.terminal_origins(log, {1, 2}),
+                         "2 alive shell(s) started here: 1 (never stopped) 2 (never stopped)\n  #0 a\n")
+
+    def test_the_buffer_io_history_passes_its_limit_on(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "microide-1.log").write_text(
+            "".join(f"microide buffer-io: read path=/a n{i}\n" for i in range(3)))
+        history = monkey_oracles.DataOracle(mock.Mock(work=directory))._buffer_io_history("/a", keep=1)
+        self.assertEqual(history, ["microide-1.log: microide buffer-io: read path=/a n2"])
+
 if __name__ == "__main__":
     unittest.main()
