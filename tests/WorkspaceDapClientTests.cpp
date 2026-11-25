@@ -506,9 +506,188 @@ while True:
   client.Shutdown();
 }
 
+void TestWorkspaceDapClientAnswersEveryRequestOnceWhateverOrderTheAdapterReplies() {
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(R"py(import json
+import random
+import sys
+import threading
+import time
+
+rng = random.Random(int(sys.argv[1]))
+pending = []
+reverse_open = set()
+lock = threading.Lock()
+seq = 0
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    return json.loads(body.decode("utf-8")) if body else None
+
+def write_message(message):
+    global seq
+    seq += 1
+    message["seq"] = seq
+    if message["type"] != "request":
+        message.setdefault("body", {})["n"] = seq
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+    return seq
+
+def respond(req, body):
+    write_message({"type": "response", "request_seq": req["seq"], "success": True,
+                   "command": req["command"], "body": body})
+
+def answer(req):
+    body = {"slot": req.get("arguments", {}).get("slot", -1)}
+    respond(req, dict(body))
+    if rng.random() < 0.1:
+        respond(req, dict(body))
+
+def flush_some(everything=False):
+    rng.shuffle(pending)
+    take = len(pending) if everything else rng.randint(0, len(pending))
+    for _ in range(take):
+        if rng.random() < 0.2:
+            time.sleep(rng.random() * 0.02)
+        answer(pending.pop())
+
+def late_answers():
+    while True:
+        time.sleep(0.03)
+        with lock:
+            flush_some(everything=True)
+
+def chatter():
+    roll = rng.random()
+    if roll < 0.15:
+        write_message({"type": "event", "event": "output",
+                       "body": {"category": "stdout", "output": "x" * rng.choice([10, 200000])}})
+    elif roll < 0.25:
+        write_message({"type": "event", "event": rng.choice(["stopped", "continued"]),
+                       "body": {"threadId": 1, "reason": "step"}})
+    elif roll < 0.32:
+        reverse_open.add(write_message({"type": "request", "command": "runInTerminal",
+                                        "arguments": {"args": ["true"]}}))
+    elif roll < 0.37:
+        write_message({"type": "response", "request_seq": 900000 + seq, "success": True,
+                       "command": "threads"})
+
+threading.Thread(target=late_answers, daemon=True).start()
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    lock.acquire()
+    if msg.get("type") == "response":
+        reverse_open.discard(msg.get("request_seq"))
+        lock.release()
+        continue
+    command = msg.get("command")
+    if command == "initialize":
+        respond(msg, {"supportsConfigurationDoneRequest": True})
+        write_message({"type": "event", "event": "initialized"})
+    elif command == "report":
+        flush_some(everything=True)
+        respond(msg, {"unanswered_reverse": len(reverse_open)})
+    elif command == "disconnect":
+        respond(msg, {})
+        lock.release()
+        break
+    else:
+        chatter()
+        pending.append(msg)
+        flush_some()
+    if command not in ("initialize", "report") and rng.random() < 0.3:
+        flush_some(everything=True)
+    lock.release()
+)py"));
+  const std::vector<std::string> commands = {"threads", "stackTrace", "scopes", "variables", "evaluate"};
+  for (const int seed : {1, 2, 3, 4}) {
+    DapClient client;
+    std::vector<std::int64_t> order;
+    client.SetEventCallback([&order](const std::string&, const JsonValue& body) {
+      if (body.IsObject()) {
+        order.push_back(body["n"].AsInt());
+      }
+    });
+    Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), std::to_string(seed)},
+                        "mock"),
+           "the scripted adapter starts");
+    Expect(WaitForInitialized(client, 5000), "the adapter initializes");
+    std::vector<int> answers;
+    std::size_t misrouted = 0;
+    std::uint64_t state = static_cast<std::uint64_t>(seed) * 6364136223846793005ull + 1442695040888963407ull;
+    const auto next = [&state](std::uint64_t bound) {
+      state = state * 6364136223846793005ull + 1442695040888963407ull;
+      return (state >> 33) % bound;
+    };
+    for (int step = 0; step < 150; ++step) {
+      const int slot = static_cast<int>(answers.size());
+      answers.push_back(0);
+      const std::string& command = commands[next(commands.size())];
+      util::JsonObject arguments;
+      arguments["slot"] = JsonValue(static_cast<std::int64_t>(slot));
+      if (command == "evaluate" && next(8) == 0) {
+        arguments["expression"] = JsonValue(std::string(200000, 'e'));
+      }
+      (void)client.SendRequestAsync(command, JsonValue(std::move(arguments)),
+                                    [&, slot, command](const codec::DapResponse& response) {
+                                      ++answers[static_cast<std::size_t>(slot)];
+                                      if (!response.success || response.command != command ||
+                                          response.body["slot"].AsInt(-1) != slot) {
+                                        ++misrouted;
+                                      }
+                                      order.push_back(response.body["n"].AsInt());
+                                    });
+      client.DrainCallbacks();
+    }
+    const bool settled = PollUntil(
+        client, [&] { return std::all_of(answers.begin(), answers.end(), [](int count) { return count >= 1; }); },
+        30000);
+    const auto unanswered = static_cast<std::size_t>(std::count(answers.begin(), answers.end(), 0));
+    std::optional<std::int64_t> unanswered_reverse;
+    (void)client.SendRequestAsync("report", JsonValue(nullptr), [&](const codec::DapResponse& response) {
+      unanswered_reverse = response.body["unanswered_reverse"].AsInt(-1);
+    });
+    Expect(PollUntil(client, [&] { return unanswered_reverse.has_value(); }, 10000), "the adapter reports");
+    const std::string label = "seed " + std::to_string(seed) + ": ";
+    const auto twice = static_cast<std::size_t>(
+        std::count_if(answers.begin(), answers.end(), [](int count) { return count > 1; }));
+    Expect(settled && unanswered == 0,
+           label + "every request is answered within 30 s, " + std::to_string(unanswered) + " of 150 were not");
+    Expect(twice == 0, label + "no request is answered twice, " + std::to_string(twice) +
+                           " were (the adapter repeats some responses)");
+    Expect(misrouted == 0, label + "each response reaches its own request, " + std::to_string(misrouted) + " did not");
+    Expect(std::is_sorted(order.begin(), order.end()) &&
+               std::adjacent_find(order.begin(), order.end()) == order.end(),
+           label + "responses and events reach the main thread in the order the adapter sent them");
+    Expect(unanswered_reverse == 0, label + "every reverse request the adapter sent is answered, " +
+                                        std::to_string(unanswered_reverse.value_or(-1)) + " were not");
+    Expect(client.IsRunning(), label + "the client survives stray and repeated responses");
+    client.Shutdown();
+  }
+}
+
 }
 
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceDapClient/AnswersEveryRequestOnceWhateverOrderTheAdapterReplies",
+          TestWorkspaceDapClientAnswersEveryRequestOnceWhateverOrderTheAdapterReplies);
   AddTest(tests, "WorkspaceDapClient/EmitsInitializedBeforeResponseSeesCapabilities",
           TestWorkspaceDapClientEmitsInitializedBeforeResponseSeesCapabilities);
   AddTest(tests, "WorkspaceDapClient/PreInitializeEventFloodStillInitializes",
