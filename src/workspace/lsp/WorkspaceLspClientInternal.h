@@ -174,6 +174,10 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     readiness_snapshot.indexed_count = 0;
   }
 
+  bool SendDidChange(const std::string& uri,
+                     std::optional<LspClient::Range> changed_range,
+                     const std::string& text);
+
   int GetNextId() {
     std::lock_guard lock(mutex);
     return next_id++;

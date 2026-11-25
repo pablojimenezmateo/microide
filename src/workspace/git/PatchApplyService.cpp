@@ -324,10 +324,14 @@ bool PatchApplyService::RequestUnstageSelectedLines(CompareTabState& compare_tab
                             "Selected lines have no unstaged changes");
 }
 
-bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) {
-  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::DiscardHunk, false,
-                               "Discard hunk is not available for this compare target",
-                               "Selected hunk has no discardable changes");
+bool PatchApplyService::ResolveAndPreviewDiscard(CompareTabState& compare_tab,
+                                                 PatchOperationKind kind,
+                                                 bool selected_lines,
+                                                 std::string_view unavailable_detail,
+                                                 std::string_view empty_patch_detail,
+                                                 std::string summary) {
+  auto resolved =
+      ResolvePatch(compare_tab, kind, selected_lines, unavailable_detail, empty_patch_detail);
   if (!resolved.has_value()) {
     return false;
   }
@@ -339,31 +343,24 @@ bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) 
   if (callbacks_.open_discard_preview_prompt != nullptr) {
     callbacks_.open_discard_preview_prompt(project::PatchApplyPreview{
         .patch_text = pending_discard_->patch_text,
-        .summary = "Discard the selected hunk from the working tree?",
+        .summary = std::move(summary),
     });
   }
   return true;
 }
 
+bool PatchApplyService::RequestDiscardHunkPreview(CompareTabState& compare_tab) {
+  return ResolveAndPreviewDiscard(compare_tab, PatchOperationKind::DiscardHunk, false,
+                                  "Discard hunk is not available for this compare target",
+                                  "Selected hunk has no discardable changes",
+                                  "Discard the selected hunk from the working tree?");
+}
+
 bool PatchApplyService::RequestDiscardSelectedLinesPreview(CompareTabState& compare_tab) {
-  auto resolved = ResolvePatch(compare_tab, PatchOperationKind::DiscardSelectedLines, true,
-                               "Discard selected lines is not available for this selection",
-                               "Selected lines have no discardable changes");
-  if (!resolved.has_value()) {
-    return false;
-  }
-  std::lock_guard lock(mutex_);
-  pending_discard_ = PendingDiscard{
-      .request = std::move(resolved->request),
-      .patch_text = std::move(resolved->patch_text),
-  };
-  if (callbacks_.open_discard_preview_prompt != nullptr) {
-    callbacks_.open_discard_preview_prompt(project::PatchApplyPreview{
-        .patch_text = pending_discard_->patch_text,
-        .summary = "Discard the selected lines from the working tree?",
-    });
-  }
-  return true;
+  return ResolveAndPreviewDiscard(compare_tab, PatchOperationKind::DiscardSelectedLines, true,
+                                  "Discard selected lines is not available for this selection",
+                                  "Selected lines have no discardable changes",
+                                  "Discard the selected lines from the working tree?");
 }
 
 bool PatchApplyService::ConfirmPendingDiscard() {

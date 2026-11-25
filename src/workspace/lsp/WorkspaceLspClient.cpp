@@ -179,82 +179,54 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
   return queued;
 }
 
-bool LspClient::DidChange(const std::string& uri, const std::string& text) {
+bool LspClient::Impl::SendDidChange(const std::string& uri,
+                                    std::optional<LspClient::Range> changed_range,
+                                    const std::string& text) {
   int version = 0;
   {
-    std::lock_guard lock(impl_->mutex);
-    const auto it = impl_->document_versions.find(uri);
-    if (it == impl_->document_versions.end()) {
+    std::lock_guard lock(mutex);
+    const auto it = document_versions.find(uri);
+    if (it == document_versions.end()) {
       return false;
     }
     version = it->second + 1;
   }
-  const bool queued = impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_.get(), uri, text, version]() mutable {
+  const bool queued = SendMessageBuilderAfterInitialize(
+      [this, uri, changed_range, text = text, version]() mutable {
         using namespace util;
         JsonObject text_doc;
         text_doc["uri"] = JsonValue(uri);
         text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
         JsonObject change;
-        std::string body = text;
-        util::ReplaceInvalidUtf8Bytes(body);
-        change["text"] = JsonValue(std::move(body));
+        if (changed_range.has_value()) {
+          change["range"] = lsp_protocol::MakeRange(*changed_range);
+        }
+        util::ReplaceInvalidUtf8Bytes(text);
+        change["text"] = JsonValue(std::move(text));
         JsonArray changes;
         changes.push_back(JsonValue(std::move(change)));
         JsonObject params;
         params["textDocument"] = JsonValue(std::move(text_doc));
         params["contentChanges"] = JsonValue(std::move(changes));
-        return impl->SerializeMessage(
-            impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
+        return SerializeMessage(
+            MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
       },
       text.size());
   if (queued) {
-    std::lock_guard lock(impl_->mutex);
-    impl_->document_versions[uri] = std::max(impl_->document_versions[uri], version);
+    std::lock_guard lock(mutex);
+    document_versions[uri] = std::max(document_versions[uri], version);
   }
   return queued;
+}
+
+bool LspClient::DidChange(const std::string& uri, const std::string& text) {
+  return impl_->SendDidChange(uri, std::nullopt, text);
 }
 
 bool LspClient::DidChangeIncremental(const std::string& uri,
                                      Range changed_range,
                                      const std::string& new_text) {
-  if (!impl_->supports_incremental_sync) {
-    return false;
-  }
-  int version = 0;
-  {
-    std::lock_guard lock(impl_->mutex);
-    const auto it = impl_->document_versions.find(uri);
-    if (it == impl_->document_versions.end()) {
-      return false;
-    }
-    version = it->second + 1;
-  }
-  const bool queued = impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_.get(), uri, changed_range, new_text, version]() mutable {
-        using namespace util;
-        JsonObject text_doc;
-        text_doc["uri"] = JsonValue(uri);
-        text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
-        JsonObject change;
-        change["range"] = lsp_protocol::MakeRange(changed_range);
-        std::string body = new_text;
-        util::ReplaceInvalidUtf8Bytes(body);
-        change["text"] = JsonValue(std::move(body));
-        JsonArray changes;
-        changes.push_back(JsonValue(std::move(change)));
-        JsonObject params;
-        params["textDocument"] = JsonValue(std::move(text_doc));
-        params["contentChanges"] = JsonValue(std::move(changes));
-        return impl->SerializeMessage(
-            impl->MakeNotification("textDocument/didChange", JsonValue(std::move(params))));
-      },
-      new_text.size());
-  if (queued) {
-    std::lock_guard lock(impl_->mutex);
-    impl_->document_versions[uri] = std::max(impl_->document_versions[uri], version);
-  }
-  return queued;
+  return impl_->supports_incremental_sync && impl_->SendDidChange(uri, changed_range, new_text);
 }
 
 bool LspClient::DidSave(const std::string& uri) {

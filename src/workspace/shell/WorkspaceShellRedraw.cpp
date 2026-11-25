@@ -37,16 +37,11 @@
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/ProjectEventTrace.h"
 
 namespace microide::workspace {
 
 namespace {
-
-bool TraceProjectEventsEnabled() {
-  static const bool enabled =
-      util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_PROJECT_EVENTS");
-  return enabled;
-}
 
 std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();

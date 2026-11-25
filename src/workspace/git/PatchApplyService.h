@@ -85,6 +85,9 @@ class PatchApplyService {
   bool ResolveAndDispatch(CompareTabState& compare_tab, project::PatchOperationKind kind,
                           bool selected_lines, std::string_view unavailable_detail,
                           std::string_view empty_patch_detail);
+  bool ResolveAndPreviewDiscard(CompareTabState& compare_tab, project::PatchOperationKind kind,
+                                bool selected_lines, std::string_view unavailable_detail,
+                                std::string_view empty_patch_detail, std::string summary);
   void ReportResult(const project::PatchApplyResult& result, std::string_view project_suffix = {});
   bool RejectIgnoreWhitespaceApply(const CompareTabState& compare_tab);
 

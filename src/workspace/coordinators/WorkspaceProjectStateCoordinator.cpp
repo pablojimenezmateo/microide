@@ -24,16 +24,11 @@
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/services/SidebarService.h"
+#include "workspace/ProjectEventTrace.h"
 
 namespace microide::workspace {
 
 namespace {
-
-bool TraceProjectEventsEnabled() {
-  static const bool enabled =
-      util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_PROJECT_EVENTS");
-  return enabled;
-}
 
 void LogProjectIndexBatch(const std::filesystem::path& root,
                           const platform::IndexUpdateBatch& batch,

@@ -11,6 +11,7 @@
 #include <limits>
 #include <signal.h>
 #include <utility>
+#include <variant>
 
 #include "project/remote/RemoteManifest.h"
 
@@ -586,8 +587,11 @@ FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view
   return Ok(std::nullopt);
 }
 
-FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
-                                  const Precondition& expect) {
+namespace {
+
+std::variant<Parent, FileOpResult> OpenExpectedEntry(const std::filesystem::path& root,
+                                                     std::string_view path,
+                                                     const Precondition& expect) {
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, false, &error);
   if (!parent.has_value()) {
@@ -605,11 +609,23 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
   if (!exists) {
     return Ok(std::nullopt);
   }
+  return std::move(*parent);
+}
+
+}
+
+FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
+                                  const Precondition& expect) {
+  std::variant<Parent, FileOpResult> opened = OpenExpectedEntry(root, path, expect);
+  if (FileOpResult* verdict = std::get_if<FileOpResult>(&opened)) {
+    return std::move(*verdict);
+  }
+  const Parent& parent = std::get<Parent>(opened);
   struct stat info {};
   const bool directory =
-      ::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+      ::fstatat(parent.dir.Get(), parent.name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
       S_ISDIR(info.st_mode);
-  if (::unlinkat(parent->dir.Get(), parent->name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) {
+  if (::unlinkat(parent.dir.Get(), parent.name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) {
     if (directory && (errno == ENOTEMPTY || errno == EEXIST)) {
       return Conflict(std::nullopt);
     }
@@ -622,24 +638,12 @@ FileOpResult SetAsideTreeEntry(const std::filesystem::path& root, std::string_vi
                                const Precondition& expect, const std::filesystem::path& aside,
                                bool* moved) {
   *moved = false;
-  std::string error;
-  std::optional<Parent> parent = OpenParent(root, path, false, &error);
-  if (!parent.has_value()) {
-    return Error(error);
+  std::variant<Parent, FileOpResult> opened = OpenExpectedEntry(root, path, expect);
+  if (FileOpResult* verdict = std::get_if<FileOpResult>(&opened)) {
+    return std::move(*verdict);
   }
-  if (parent->absent) {
-    return AbsentVerdict(expect);
-  }
-  FileOpResult refused;
-  bool exists = false;
-  if (!CheckExpect(parent->dir.Get(), parent->name, expect, true, &refused,
-                   &exists)) {
-    return refused;
-  }
-  if (!exists) {
-    return Ok(std::nullopt);
-  }
-  if (RenameNoReplace(parent->dir.Get(), parent->name.c_str(), AT_FDCWD, aside.c_str()) != 0) {
+  const Parent& parent = std::get<Parent>(opened);
+  if (RenameNoReplace(parent.dir.Get(), parent.name.c_str(), AT_FDCWD, aside.c_str()) != 0) {
     return Error(Errno("cannot set " + std::string(path) + " aside"));
   }
   *moved = true;
