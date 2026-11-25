@@ -59,7 +59,8 @@ class _RelaunchingApp:
         if verb == "status":
             return {"projectRoot": self.ROOTS[self.active]}
         if verb == "documents":
-            return [dict(doc) for p in self.catalog if self.loaded[p] for doc in self.docs[p]]
+            shown = [p for p in self.catalog if self.loaded[p] and (p == self.active or (args or {}).get("all"))]
+            return [dict(doc) for p in shown for doc in self.docs[p]]
         raise AssertionError(verb)
 
     def send_line(self, line, timeout=15.0, record=True):
@@ -1095,6 +1096,7 @@ class Kill9VerdictTests(unittest.TestCase):
             for patch in patches:
                 stack.enter_context(patch)
             found = oracle.kill9_and_check(random.Random(1), waited=waited, point=point)
+        self.assertTrue(all(kind == "data" for kind, _ in found), found)
         return [message for _, message in found]
 
     def file(self, name, text):
@@ -1996,11 +1998,13 @@ class _LoggingRelaunchingApp(_RelaunchingApp):
         self.work = work
         self.log = ""
         self.persistence = {"staged": True}
+        self.read_limits: list[int] = []
 
     def _log_size(self) -> int:
         return len(self.log)
 
     def log_since(self, mark: int, limit: int) -> str:
+        self.read_limits.append(limit)
         return self.log[mark:mark + limit]
 
     def query(self, verb, args=None):
@@ -2045,6 +2049,7 @@ class Kill9ProcedureTests(unittest.TestCase):
             if kill_at is not None:
                 stack.enter_context(mock.patch.object(oracle, "_kill_at", side_effect=lambda p: kill_at(oracle, p)))
             found = oracle.kill9_and_check(rng or random.Random(1), waited=waited, point=point, choose=choose)
+        self.assertTrue(all(kind == "data" for kind, _ in found), found)
         return oracle, [message for _, message in found], slept
 
     def test_the_kill_is_recorded_for_a_replay(self):
@@ -2373,6 +2378,230 @@ class UndoPickTests(unittest.TestCase):
         self.assertEqual(picks, {1, 2, 3, 4})
         self.assertEqual(monkey_oracles.UndoAlgebra(mock.Mock(), random.Random(7)).pick(),
                          random.Random(7).randint(1, 4))
+
+
+class Kill9DetailTests(Kill9ProcedureTests):
+    """The details of kill9_and_check the procedure tests left open."""
+
+    def test_the_snapshot_is_every_projects_documents(self):
+        app = self.app()
+        app.active = 0
+        oracle, _, _ = self.run_kill(app)
+        self.assertEqual({doc["path"] for doc in oracle.last_kill["before"]}, {"/p/a/x.txt", "/p/b/y.txt"})
+
+    def test_the_killed_log_is_read_up_to_sixteen_mebibytes(self):
+        app = self.app()
+        self.run_kill(app)
+        self.assertEqual(app.read_limits, [16 * 1024 * 1024])
+
+    def test_the_state_copy_keeps_links_as_links(self):
+        app = self.app()
+        state = app.work / "state"
+        state.mkdir(parents=True)
+        (state / "session").write_text("record")
+        (state / "session.link").symlink_to("session")
+        oracle, _, _ = self.run_kill(app)
+        self.assertTrue((oracle.last_kill_state / "session.link").is_symlink())
+
+    def test_an_app_without_a_work_tree_is_killed_all_the_same(self):
+        app = _RelaunchingApp()
+        del app.work
+        oracle, found, _ = self.run_kill(app)
+        self.assertIsNone(oracle.last_kill_state)
+        self.assertEqual(found, [])
+
+    def test_the_point_is_what_the_kill_is_armed_with(self):
+        app = self.app()
+        armed = []
+        self.run_kill(app, point="kill:durable.writing@session#1|edit",
+                      kill_at=lambda oracle, point: (armed.append(point), (False, [], None))[1])
+        self.assertEqual(armed, ["kill:durable.writing@session#1|edit"])
+
+    def test_a_point_always_waits_whatever_the_draw(self):
+        app = self.app()
+        rng = mock.Mock()
+        rng.random.return_value = 0.99
+        self.run_kill(app, rng=rng, waited=None, point="kill:x@y#1|edit", kill_at=lambda oracle, p: (False, [], None))
+        self.assertTrue(app.actions[-1]["waited"])
+        app = self.app()
+        rng.random.return_value = 0.7
+        self.run_kill(app, rng=rng, waited=None)
+        self.assertFalse(app.actions[-1]["waited"], "0.7 itself does not wait")
+
+    def test_the_point_is_named_by_its_rule_whatever_its_file_holds(self):
+        for point, named in (("kill:durable.writing@a:b.txt#1|edit", "durable.writing@a:b.txt#1"),
+                             ("kill:durable.writing@a|b.txt#1|edit", "durable.writing@a"),
+                             ("durable.writing@x#1|edit", "durable.writing@x#1")):
+            app = self.app()
+            doc = {"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+            app.docs[1] = [doc]
+            _, found, _ = self.run_kill(app, point=point, kill_at=lambda oracle, p: (True, [doc], None), after=[])
+            self.assertEqual(found, [f"the unsaved buffer y.txt did not come back after a kill -9 (the crash-safety "
+                                     f"flush had 3.5s of quiet) (killed at {named})"], point)
+        app = self.app()
+        app.docs[1] = [doc]
+        _, found, _ = self.run_kill(app, point="kill:x@y#1|edit", kill_at=lambda oracle, p: (False, [doc], None),
+                                    after=[])
+        self.assertEqual(found, ["the unsaved buffer y.txt did not come back after a kill -9 (the crash-safety "
+                                 "flush had 3.5s of quiet)"], "a trigger that did not die names no point")
+
+    def test_an_untouched_clean_file_is_still_held_across_a_point_kill(self):
+        path = self.dir / "c.txt"
+        path.write_bytes(b"clean\n")
+        clean = {"path": str(path), "dirty": False, "sha256": hashlib.sha256(b"clean\n").hexdigest(),
+                 "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [clean]
+        _, found, _ = self.run_kill(app, point="kill:durable.writing@session#1|edit",
+                                    kill_at=lambda oracle, p: (True, [clean], None), after=[clean],
+                                    between=lambda: path.write_bytes(b"changed\n"))
+        self.assertEqual(found, ["c.txt changed on disk across a kill -9 and relaunch, and nothing saved it"])
+
+
+
+class Kill9EachBufferTests(Kill9ProcedureTests):
+    """Every buffer is judged: a buffer the check passes over must not end the
+    check for the buffers after it."""
+
+    LOST = {"path": "/p/b/z.txt", "dirty": True, "sha256": "zz", "bytes": 2, "project": "/p/b"}
+    LOST_MESSAGE = ("the unsaved buffer z.txt did not come back after a kill -9 (the crash-safety flush had 3.5s "
+                    "of quiet)")
+
+    def test_after_a_buffer_saved_before_the_kill(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"saved\n")
+        first = {"path": str(path), "dirty": True, "sha256": hashlib.sha256(b"saved\n").hexdigest(),
+                 "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [first, self.LOST]
+        _, found, _ = self.run_kill(app, after=[])
+        self.assertEqual(found, [self.LOST_MESSAGE])
+
+    def test_after_a_buffer_its_log_says_was_saved(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"saved\n")
+        sha = hashlib.sha256(b"saved\n").hexdigest()
+        first = {"path": str(path), "dirty": True, "sha256": "unsaved", "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [first, self.LOST]
+        relaunch = app.crash_and_relaunch
+
+        def crash(*args, **kwargs):
+            if kwargs.get("between"):
+                app.log += _io_line("write", str(path), sha)
+            relaunch(*args, **kwargs)
+        app.crash_and_relaunch = crash
+        _, found, _ = self.run_kill(app, after=[])
+        self.assertEqual(found, [self.LOST_MESSAGE])
+
+    def test_a_buffer_back_dirty_was_not_saved_whatever_the_log_says(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"saved\n")
+        sha = hashlib.sha256(b"saved\n").hexdigest()
+        first = {"path": str(path), "dirty": True, "sha256": "unsaved", "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [first]
+        relaunch = app.crash_and_relaunch
+
+        def crash(*args, **kwargs):
+            if kwargs.get("between"):
+                app.log += _io_line("write", str(path), sha)
+            relaunch(*args, **kwargs)
+        app.crash_and_relaunch = crash
+        _, found, _ = self.run_kill(app, after=[{**first, "sha256": sha, "bytes": 6}])
+        self.assertEqual(found, ["the unsaved buffer a.txt came back after a kill -9 with different content "
+                                 "(6 -> 6 bytes)"])
+
+    def test_after_a_buffer_in_the_file_a_killed_save_was_writing(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"old\n")
+        first = {"path": str(path), "dirty": True, "sha256": "staged", "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [first, self.LOST]
+
+        def kill_at(oracle, point):
+            oracle.saved_file_before = hashlib.sha256(b"old\n").hexdigest()
+            return True, [first, self.LOST], str(path)
+        _, found, _ = self.run_kill(app, point="kill:durable.renaming@a.txt#1|save", kill_at=kill_at,
+                                    after=[{**first, "sha256": "transformed"}])
+        self.assertEqual(found, [self.LOST_MESSAGE + " (killed at durable.renaming@a.txt#1)"])
+
+    def test_a_save_point_with_no_logged_write_is_not_a_part_way_save(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"other\n")
+        doc = {"path": str(path), "dirty": True, "sha256": "staged", "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [doc]
+
+        def kill_at(oracle, point):
+            oracle.saved_file_before = "something else"
+            return True, [doc], str(path)
+        _, found, _ = self.run_kill(app, point="kill:durable.renaming@a.txt#1|save", kill_at=kill_at, after=[doc])
+        self.assertEqual(found, [])
+
+    def test_after_a_trigger_changed_buffer_back_clean_in_its_file(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"saved\n")
+        held = hashlib.sha256(b"saved\n").hexdigest()
+        first = {"path": str(path), "dirty": True, "sha256": "staged", "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [first, self.LOST]
+        _, found, _ = self.run_kill(app, point="kill:x@y#1|edit",
+                                    kill_at=lambda oracle, p: (True, [{**first, "sha256": "edited"}, self.LOST], None),
+                                    after=[{**first, "sha256": held, "dirty": False}])
+        self.assertEqual(found, [self.LOST_MESSAGE + " (killed at x@y#1)"])
+
+    def test_after_an_untouched_buffer_back_clean_in_its_file(self):
+        path = self.dir / "a.txt"
+        path.write_bytes(b"saved\n")
+        held = hashlib.sha256(b"saved\n").hexdigest()
+        first = {"path": str(path), "dirty": True, "sha256": held, "bytes": 6, "project": "/p/b"}
+        app = self.app()
+        app.docs[1] = [first, self.LOST]
+        _, found, _ = self.run_kill(app, after=[{**first, "dirty": False}])
+        self.assertEqual(found, [self.LOST_MESSAGE])
+
+    def test_after_a_merge_result_that_came_back_untitled(self):
+        path = "/p/b/m.cpp"
+        file_buffer = {"path": path, "dirty": True, "sha256": "file", "bytes": 4, "project": "/p/b",
+                       "title": "compare: m.cpp", "surface": "compare"}
+        result = {"path": path, "dirty": True, "sha256": "result", "bytes": 6, "project": "/p/b",
+                  "title": "merge: m.cpp", "surface": "merge"}
+        app = self.app()
+        app.docs[1] = [result, file_buffer, self.LOST]
+        untitled = {"path": "", "dirty": True, "sha256": "result", "bytes": 6, "project": "/p/b",
+                    "title": "Untitled-1", "surface": "editor"}
+        _, found, _ = self.run_kill(app, after=[file_buffer, untitled])
+        self.assertEqual(found, [self.LOST_MESSAGE])
+
+    def test_a_merge_result_may_come_back_as_the_trigger_left_it(self):
+        path = "/p/b/m.cpp"
+        file_buffer = {"path": path, "dirty": True, "sha256": "file", "bytes": 4, "project": "/p/b",
+                       "title": "compare: m.cpp", "surface": "compare"}
+        result = {"path": path, "dirty": True, "sha256": "result", "bytes": 6, "project": "/p/b",
+                  "title": "merge: m.cpp", "surface": "merge"}
+        app = self.app()
+        app.docs[1] = [result, file_buffer]
+        edited = {**result, "sha256": "edited"}
+        for back_sha in ("result", "edited"):
+            untitled = {"path": "", "dirty": True, "sha256": back_sha, "bytes": 6, "project": "/p/b",
+                        "title": "Untitled-1", "surface": "editor"}
+            app = self.app()
+            app.docs[1] = [result, file_buffer]
+            _, found, _ = self.run_kill(app, point="kill:x@y#1|edit",
+                                        kill_at=lambda oracle, p: (True, [edited, file_buffer], None),
+                                        after=[file_buffer, untitled])
+            self.assertEqual(found, [], back_sha)
+
+    def test_a_buffer_back_as_staged_after_a_trigger_edit_is_fine(self):
+        doc = {"path": "/p/b/y.txt", "dirty": True, "sha256": "staged", "bytes": 3, "project": "/p/b"}
+        for back_sha in ("staged", "edited"):
+            app = self.app()
+            app.docs[1] = [doc]
+            _, found, _ = self.run_kill(app, point="kill:x@y#1|edit",
+                                        kill_at=lambda oracle, p: (True, [{**doc, "sha256": "edited"}], None),
+                                        after=[{**doc, "sha256": back_sha}])
+            self.assertEqual(found, [], back_sha)
 
 if __name__ == "__main__":
     unittest.main()

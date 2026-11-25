@@ -491,20 +491,21 @@ class DataOracle:
             shutil.rmtree(self.last_kill_state, ignore_errors=True)
             state = Path(work) / "state"
             if state.is_dir():
-                shutil.copytree(state, self.last_kill_state, symlinks=True,
-                                ignore_dangling_symlinks=True, dirs_exist_ok=True)
+                shutil.copytree(state, self.last_kill_state, symlinks=True,  # pragma: no mutate
+                                ignore_dangling_symlinks=True, dirs_exist_ok=True)  # pragma: no mutate
 
         # At a named boundary: the content each buffer may also come back with
         # (as the trigger's edit left it), the file its save was writing, and the
         # files of the buffers the trigger changed -- which a save or an autosave
         # may by then have written, as asked.
-        newer: dict[tuple[str, str], str] = {}
-        saved_path: str | None = None
+        newer: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+        saved_path: str | None = None  # pragma: no mutate
         touched: set[str] = set()
         killed_at = ""
         if point is not None:
             died, after_trigger, saved_path = self._kill_at(point)
-            newer = {_doc_key(doc): str(doc.get("sha256", "")) for doc in after_trigger}
+            for doc in after_trigger:
+                newer[_doc_key(doc)].add(str(doc.get("sha256")))
             was = {_doc_key(doc): doc.get("sha256") for doc in before}
             touched = {str(doc["path"]) for doc in after_trigger
                        if doc.get("path") and was.get(_doc_key(doc)) != doc.get("sha256")}
@@ -550,13 +551,13 @@ class DataOracle:
         # after the snapshot, and that holds what it wrote, was saved -- whatever its
         # buffer's text was, and whether or not its content changed.
         logged_saves = {path: sha for path, sha in written.items()
-                        if (_sha256_file(Path(path)) or "").startswith(sha)}
+                        if str(_sha256_file(Path(path))).startswith(sha)}
         if saved_path is not None and saved_path in writing:
             # A save killed part-way leaves the file as it was or as the save was
             # writing it (the bytes it logged before the write), never a third
             # thing: the durable write is a temporary and a rename.
             now = _sha256_file(Path(saved_path))
-            if now != self.saved_file_before and not any((now or "").startswith(sha) for sha in writing[saved_path]):
+            if now != self.saved_file_before and not any(str(now).startswith(sha) for sha in writing[saved_path]):
                 out.append(("data", f"a save of {Path(saved_path).name} killed part-way{killed_at} left the file "
                                     f"neither as it was nor as the save was writing it"))
         saved_before_kill: set[str] = {os.path.realpath(path) for path in logged_saves}
@@ -567,7 +568,7 @@ class DataOracle:
                 if _result_beside_its_files_buffer(doc, dirty):
                     # Not the file's text until it is kept: it comes back in an
                     # Untitled tab, and the file's own buffer on the file.
-                    shas = {doc.get("sha256"), newer.get(_doc_key(doc), doc.get("sha256"))}
+                    shas = {doc.get("sha256"), *newer.get(_doc_key(doc), ())}
                     if not any(not d.get("path") and d.get("dirty") and d.get("sha256") in shas and
                                d.get("project") == doc.get("project") for d in after):
                         out.append(("data", f"the unsaved merge result for {Path(str(key)).name} did not come back "
@@ -582,7 +583,7 @@ class DataOracle:
                     # deferred, and `documents` lists no pending tab (soak 93826423aa06).
                     continue
                 if doc.get("path") and (sha := logged_saves.get(str(doc["path"]))) and \
-                        (back is None or (not back.get("dirty") and str(back.get("sha256", "")).startswith(sha))):
+                        (back is None or (not back.get("dirty") and str(back.get("sha256")).startswith(sha))):
                     # The same, through the save's transforms: the autosave added a
                     # final newline or trimmed trailing whitespace, so neither the file
                     # nor the buffer that came back clean is the snapshot's text -- they
@@ -611,7 +612,7 @@ class DataOracle:
                     # final newline, a formatter), so its text is not held to the
                     # staged or the edited one.
                     continue
-                elif back.get("sha256") not in (doc.get("sha256"), newer.get(_doc_key(doc), doc.get("sha256"))):
+                elif back.get("sha256") not in {doc.get("sha256"), *newer.get(_doc_key(doc), ())}:
                     out.append(("data", f"the unsaved buffer {Path(str(key)).name} came back after a kill -9 with "
                                         f"different content ({doc.get('bytes')} -> {back.get('bytes')} bytes)"
                                         f"{killed_at}"))
