@@ -21,6 +21,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/services/CompareMergeService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/WorkspacePluginRuntime.h"
@@ -801,7 +802,7 @@ bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
 }
 
 std::string WorkspaceActionContext::ReviewComments(const std::filesystem::path& scope) const {
-  return operations_.review_comments != nullptr ? operations_.review_comments(scope) : std::string();
+  return services_.compare_review.CommentsAsReferences(scope);
 }
 
 std::filesystem::path WorkspaceActionContext::ReviewCommentMenuScope() const {
@@ -1117,15 +1118,11 @@ std::string WorkspaceActionContext::CompareWithClipboard(ActionSource source) {
 }
 
 void WorkspaceActionContext::MarkBranchFileReviewed() {
-  if (operations_.mark_branch_file_reviewed != nullptr) {
-    operations_.mark_branch_file_reviewed();
-  }
+  services_.compare_review.SetActiveFileReviewed(true);
 }
 
 void WorkspaceActionContext::UnmarkBranchFileReviewed() {
-  if (operations_.unmark_branch_file_reviewed != nullptr) {
-    operations_.unmark_branch_file_reviewed();
-  }
+  services_.compare_review.SetActiveFileReviewed(false);
 }
 
 bool WorkspaceActionContext::RunCompareCommand(ActionId id, std::string* error) {
@@ -1137,27 +1134,19 @@ bool WorkspaceActionContext::RunCompareCommand(ActionId id, std::string* error) 
 }
 
 void WorkspaceActionContext::MarkBranchHunkReviewed() {
-  if (operations_.mark_branch_hunk_reviewed != nullptr) {
-    operations_.mark_branch_hunk_reviewed();
-  }
+  services_.compare_review.SetSelectedHunkReviewed(true);
 }
 
 void WorkspaceActionContext::UnmarkBranchHunkReviewed() {
-  if (operations_.unmark_branch_hunk_reviewed != nullptr) {
-    operations_.unmark_branch_hunk_reviewed();
-  }
+  services_.compare_review.SetSelectedHunkReviewed(false);
 }
 
 void WorkspaceActionContext::ClearBranchReviewState() {
-  if (operations_.clear_branch_review_state != nullptr) {
-    operations_.clear_branch_review_state();
-  }
+  services_.compare_review.ClearReview();
 }
 
 void WorkspaceActionContext::EditBranchReviewNote(std::string note_text) {
-  if (operations_.edit_branch_review_note != nullptr) {
-    operations_.edit_branch_review_note(std::move(note_text));
-  }
+  services_.compare_review.EditSelectedNote(note_text);
 }
 
 bool WorkspaceActionContext::ApplyGitSelectedRanges(GitRangeVerb verb) {

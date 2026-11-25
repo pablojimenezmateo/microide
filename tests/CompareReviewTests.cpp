@@ -78,18 +78,11 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          ProjectWorkspaceState project_state;
          float ui_scale = 1.0f;
 
-         int marked_file = 0;
-         int unmarked_file = 0;
-         int marked_hunk = 0;
-         int unmarked_hunk = 0;
-
          WorkspaceActionContext::Operations operations;
-         operations.mark_branch_file_reviewed = [&]() { ++marked_file; };
-         operations.unmark_branch_file_reviewed = [&]() { ++unmarked_file; };
-         operations.mark_branch_hunk_reviewed = [&]() { ++marked_hunk; };
-         operations.unmark_branch_hunk_reviewed = [&]() { ++unmarked_hunk; };
          microide::workspace::CompareTabState branch_tab;
          branch_tab.review_mode = microide::compare::CompareReviewMode::Branch;
+         branch_tab.path = "f.txt";
+         branch_tab.model = BuildCompareModel("a\n", "b\n");
          microide::workspace::CompareTabState* active_tab = nullptr;
          operations.active_compare_tab = [&]() { return active_tab; };
          std::string feedback;
@@ -99,32 +92,32 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          };
 
          microide::tests::ActionContextTestServices services(catalog, project_state, ui_scale);
+         services.review_active_tab = [&]() { return active_tab; };
          WorkspaceActionContext context(catalog, project_state, ui_scale, services.Services(),
                                         std::move(operations));
          ActionCoordinator coordinator(context);
 
          const std::vector<std::string> no_args;
          Expect(!coordinator.Execute(ActionId::MarkBranchFileReviewed, no_args, ActionSource::Command) &&
-                    marked_file == 0 && !feedback.empty(),
+                    services.review_persists == 0 && !feedback.empty(),
                 "with no branch-review diff open the mark is refused with a reason, not run");
          active_tab = &branch_tab;
          Expect(coordinator.Execute(ActionId::MarkBranchFileReviewed, no_args,
-                                    ActionSource::Command),
-                "mark-branch-file-reviewed should dispatch");
+                                    ActionSource::Command) &&
+                    services.review_persists == 1,
+                "mark-branch-file-reviewed should reach the review service");
          Expect(coordinator.Execute(ActionId::UnmarkBranchFileReviewed, no_args,
-                                    ActionSource::Command),
-                "unmark-branch-file-reviewed should dispatch");
+                                    ActionSource::Command) &&
+                    services.review_persists == 2,
+                "unmark-branch-file-reviewed should reach the review service");
          Expect(coordinator.Execute(ActionId::MarkBranchHunkReviewed, no_args,
-                                    ActionSource::Command),
-                "mark-branch-hunk-reviewed should dispatch");
+                                    ActionSource::Command) &&
+                    services.review_persists == 3,
+                "mark-branch-hunk-reviewed should reach the review service");
          Expect(coordinator.Execute(ActionId::UnmarkBranchHunkReviewed, no_args,
-                                    ActionSource::Command),
-                "unmark-branch-hunk-reviewed should dispatch");
-
-         Expect(marked_file == 1 && unmarked_file == 1,
-                "each file-review command must reach its own operation exactly once");
-         Expect(marked_hunk == 1 && unmarked_hunk == 1,
-                "each hunk-review command must reach its own operation exactly once");
+                                    ActionSource::Command) &&
+                    services.review_persists == 4,
+                "unmark-branch-hunk-reviewed should reach the review service");
        }});
 
   tests.push_back(

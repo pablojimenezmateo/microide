@@ -21,6 +21,7 @@
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/services/AssistService.h"
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/services/CompareReviewService.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/services/NotificationService.h"
 #include "workspace/services/QuickPickService.h"
@@ -39,6 +40,10 @@ struct ActionContextTestServices {
         sidebar(workspace::SidebarCoordinator(state, prompts, menus, project_root, plugin_runtime, {})),
         compare_merge(workspace::DiffTabCoordinator(state, {}),
                       workspace::CompareInteractionCoordinator(state, {})),
+        compare_review(state, prompts,
+                       {.active_compare_tab =
+                            [this]() { return review_active_tab ? review_active_tab() : nullptr; },
+                        .persist = [this]() { ++review_persists; }}),
         debug_pane(state, {}),
         menu_coordinator(menus, {}),
         clipboard(workspace::SystemClipboard::Backend{}) {}
@@ -55,6 +60,7 @@ struct ActionContextTestServices {
             .output_channels = output_channels,
             .sidebar = sidebar,
             .compare_merge = compare_merge,
+            .compare_review = compare_review,
             .debug_pane = debug_pane,
             .menus = menu_coordinator,
             .clipboard = clipboard,
@@ -72,6 +78,8 @@ struct ActionContextTestServices {
   std::filesystem::path project_root;
   workspace::WorkspacePluginRuntime plugin_runtime;
   workspace::WorkspaceOutputChannels output_channels;
+  std::function<workspace::CompareTabState*()> review_active_tab;
+  int review_persists = 0;
 
   workspace::AssistService assist;
   workspace::DebugService debug;
@@ -83,6 +91,7 @@ struct ActionContextTestServices {
   workspace::PersistenceCoordinator persistence;
   workspace::SidebarService sidebar;
   workspace::CompareMergeService compare_merge;
+  workspace::CompareReviewService compare_review;
   workspace::DebugPaneService debug_pane;
   workspace::MenuCoordinator menu_coordinator;
   workspace::SystemClipboard clipboard;

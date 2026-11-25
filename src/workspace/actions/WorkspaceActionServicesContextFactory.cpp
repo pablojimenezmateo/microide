@@ -325,6 +325,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .output_channels = output_channels_,
           .sidebar = MakeSidebarService(),
           .compare_merge = MakeCompareMergeService(),
+          .compare_review = MakeCompareReviewService(),
           .debug_pane = MakeDebugPaneService(),
           .menus = MakeMenuCoordinator(),
           .clipboard = clipboard_,
@@ -555,19 +556,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .request_frame = [this]() { RequestPreparedFrame(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
-          .mark_branch_file_reviewed = [this]() { MakeCompareReviewService().SetActiveFileReviewed(true); },
-          .unmark_branch_file_reviewed = [this]() { MakeCompareReviewService().SetActiveFileReviewed(false); },
-          .mark_branch_hunk_reviewed = [this]() { MakeCompareReviewService().SetSelectedHunkReviewed(true); },
           .run_compare_command = [this](ActionId id,
                                         std::string* error) { return ActionContextRunCompareCommand(id, error); },
-          .unmark_branch_hunk_reviewed = [this]() { MakeCompareReviewService().SetSelectedHunkReviewed(false); },
-          .clear_branch_review_state = [this]() { MakeCompareReviewService().ClearReview(); },
-          .review_comments =
-              [this](const std::filesystem::path& scope) {
-                return MakeCompareReviewService().CommentsAsReferences(scope);
-              },
-          .edit_branch_review_note =
-              [this](std::string note_text) { MakeCompareReviewService().EditSelectedNote(note_text); },
           .apply_git_selected_ranges =
               [this](GitRangeVerb verb) {
                 const CompareTabState* compare_tab = ActiveCompareTab();
