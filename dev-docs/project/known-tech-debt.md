@@ -279,51 +279,6 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      window, and `qa-scale`'s layout seed 2 at 1.25 still meets a stale 1x8 px
      line at ui.scale 1.1 (an app paint defect).
 
-### TD-2026-11-16-451 — the rr on the soak machine is patched for tee(2); upstream is not. [OPEN]
-
-`rr record` aborts the whole recording -- the app with it -- at a system call
-it does not know ("Expected ENOSYS for 'tee' ... unsupported by rr",
-`src/record_syscall.cc`). Ubuntu's coreutils (`cat`, `head`, `seq`, `yes`)
-call `tee` on pipes, so a recorded soak job lost its recorder the first time a
-terminal command or a task ran one: twice in 500 steps of the `terminal`
-profile, four times in 240 of `world` (2026-11-16, rr 5.10.0 at a808942).
-
-Fixed here, not upstream: `tools/soak/rr-tee.patch` (twelve lines: `tee` writes
-no user memory, so it is an `IrregularEmulatedSyscall` that may switch, beside
-`splice`) is applied to `build/rr-src` and installed to `/usr/local/bin/rr`.
-Rebuilding rr from a fresh checkout loses it: `git apply` the patch first, then
-`cmake --build obj && sudo cmake --install obj`, then `chmod a+rX` the
-installed files (the install runs under umask 0077).
-
-Still open: send the patch upstream, and until a release carries it, a machine
-with a stock rr lists `terminal` and `world` in `soak.py`'s
-`UNRECORDED_PROFILES`. A run that loses its recorder to any other system call
-reports a `recorder` finding the ledger does not book; `soak.py health` counts
-them, and that count is the signal to look for the next one.
-
-### TD-2026-11-13-449 — SDL's X11 clipboard can paste the previous text right after another application copies. [OPEN]
-
-Found standing up the QA driver's foreign clipboard (`App.foreign_clipboard`,
-`tools/qa/x_clipboard.py`): a paste a few milliseconds after another client took
-the CLIPBOARD returned the text of the paste BEFORE it, into a buffer confirmed
-empty -- about one paste in three in `edit-foreign-clipboard` without a settle.
-
-The mechanism is SDL 3.2's X11 backend (`SDL_x11clipboard.c` / `SDL_x11events.c`):
-on the XFixes notice that the owner changed, SDL asks the new owner for TARGETS
-(into the `SDL_FORMATS` property). A paste then runs `GetSelectionData`, which
-converts into the `SDL_SELECTION` property and waits on `selection_waiting` --
-a flag ANY SelectionNotify clears, the TARGETS answer included. It then reads
-`SDL_SELECTION`, which still holds the previous paste (read with delete=False),
-and returns it. The same read also happens after its 1 s timeout, where it then
-takes the selection itself with empty data.
-
-Who meets it: a paste right after a copy elsewhere, and more often with a
-clipboard manager, which re-takes the selection after every copy. The app cannot
-tell: `SystemClipboard::Read` gets well-formed text. The fix is SDL's: match the
-SelectionNotify to the request (its target and property), and delete or clear
-the property before converting. Report upstream; the QA scenario settles 0.5 s
-before pasting meanwhile, as a person does.
-
 ### TD-2026-11-11-444 — a cold structural refinement of a heavily churned file costs several times the old intraline pass. [OPEN]
 
 `microide_diff_bench`, min of runs, interleaved with `main` on the same machine,
@@ -354,26 +309,6 @@ that CONTAIN lists (link `[text](url)` pairs, parentheses in prose), so the
 remaining leads are (2) and (3), plus a profile: `perf` needs
 `kernel.perf_event_paranoid` <= 2 on this machine (it is 4) and valgrind is not
 installed, so the next pass should start by getting one of them.
-
-### TD-2026-11-11-440 — the structural diff reads a lexer's tree, not a grammar's. [OPEN]
-
-The compare view's structural refinement (`src/compare/DiffSyntax.*`,
-`StructuralDiff.*`, openspec `structural-diff`) builds each hunk side's syntax
-forest from a language-aware lexer plus bracket matching, with the rules
-(`DiffSyntax`) derived from the language contract: comment tokens and bracket
-pairs. difftastic parses with tree-sitter, so its lists are real syntax nodes --
-an `if` owns its condition and its block, a call owns its callee. Here those are
-siblings inside the enclosing brackets, which makes some matches coarser than
-difftastic's: a novel `if (x) {` head is three atoms and a list rather than one
-node, and the graph search cannot prefer "the same statement, edited" over "a
-different statement" beyond what bracket nesting says.
-
-Deliberately not taken now: a grammar per language is a C dependency plus one
-generated parser per language (several MB each), and the lexer covers every
-language the editor knows. The seam is ready for it: `BuildDiffSyntaxTree` is the
-only producer of a `DiffSyntaxTree`, and the search reads nothing but nodes,
-tokens and content ids. A grammar-backed builder for the top languages, with the
-lexer kept as the fallback, is the follow-up; gate it on `microide_diff_bench`.
 
 ### TD-2026-11-09-436 — soak triage, 2026-11-09: what the first four hours left open. [OPEN]
 
@@ -749,7 +684,8 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   `2026-11-03-resolved-debt-ledger.md` (every TD id from 2026-08-04 to 2026-11-02 not listed
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
-  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441 to 443, 445 onward)
+  `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441 to 443, 445 onward) and
+  `2026-11-25-resolved-debt-ledger.md` (TD-440, 449, 451)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 
