@@ -240,7 +240,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
       CompareInteractionCoordinator::Operations{
           .show_compare_picker_overlay = [this]() { ShowOverlay(OverlayMode::CommitPicker); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
-          .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
+          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
           .reveal_compare_picker_selection =
               [this]() {
                 if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
@@ -328,7 +328,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               [this](MergeTabState& merge_tab, const std::vector<std::string>& replacement_lines) {
                 UpdateMergeMaxVisualColumns(merge_tab, replacement_lines);
               },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .request_tab_strip_redraw = [this]() { RequestPreparedFrame(); },
           .write_clipboard_text =
               [this](std::string_view text) { return WriteClipboardText(text); },
           .open_working_tree_comparison =

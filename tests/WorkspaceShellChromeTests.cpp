@@ -52,37 +52,6 @@ void EnsureDummySdlVideo() {
   Expect(initialized, "SDL should initialize with the dummy video driver");
 }
 
-
-void RenderRetainedInvalidation(WorkspaceShell& shell,
-                                SoftwareCanvas& canvas,
-                                int width,
-                                int height,
-                                const WorkspaceShell::RenderInvalidation& redraw) {
-  if (redraw.full || redraw.rects.empty()) {
-    shell.Render(canvas.renderer(), width, height);
-    return;
-  }
-
-  shell.PrepareRenderFrame(canvas.renderer(), width, height);
-  bool rendered_partial = false;
-  for (const SDL_FRect& rect : redraw.rects) {
-    const SDL_Rect clip_rect =
-        InflateClipRect(rect, shell.PartialRedrawClipPadding(), width, height);
-    if (clip_rect.w <= 0 || clip_rect.h <= 0) {
-      continue;
-    }
-    Expect(SDL_SetRenderClipRect(canvas.renderer(), &clip_rect),
-           "workspace redraw regression test should set a retained-scene clip rect");
-    shell.RenderPrepared(canvas.renderer(), width, height);
-    rendered_partial = true;
-  }
-  Expect(SDL_SetRenderClipRect(canvas.renderer(), nullptr),
-         "workspace redraw regression test should clear the retained-scene clip rect");
-  if (!rendered_partial) {
-    shell.RenderPrepared(canvas.renderer(), width, height);
-  }
-}
-
 #endif
 
 void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
@@ -609,6 +578,37 @@ void TestWorkspaceShellPopupRowHoverOwesAFrame() {
          "popup row hover should owe a frame and name no rect of its own");
 }
 
+// A pointer move's repaint, as the app paints it: a frame painted first (the
+// derived surfaces compare with it), the motion handled, then what the frame it
+// owes repaints -- the event's own rects and what preparing the frame derives.
+// The hovered element, the tooltip and each surface's hover are derived units.
+struct HoverRepaint {
+  bool handled = false;
+  bool owes_frame = false;
+  microide::workspace::RenderInvalidation damage;
+};
+HoverRepaint PaintThenMovePointer(WorkspaceShell& shell, float x, float y) {
+  SoftwareCanvas canvas{1280, 720};
+  shell.Render(canvas.renderer(), 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = x;
+  motion_event.motion.y = y;
+  const auto result = shell.HandleEvent(motion_event);
+  return HoverRepaint{.handled = result.handled,
+                      .owes_frame = result.redraw.frame || result.redraw.HasDamage(),
+                      .damage = FrameDamage(shell, canvas, 1280, 720, result.redraw)};
+}
+
+float DamagedArea(const microide::workspace::RenderInvalidation& damage) {
+  float area = 0.0f;
+  for (const SDL_FRect& rect : damage.rects) {
+    area += rect.w * rect.h;
+  }
+  return area;
+}
+
 void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -636,23 +636,16 @@ void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   Expect(departed_tooltip.has_value(),
          "an icon-only sidebar mode tab should name itself on hover");
 
-  SDL_Event motion_event{};
-  motion_event.type = SDL_EVENT_MOUSE_MOTION;
-  motion_event.motion.x = collapse_rect.x + collapse_rect.w * 0.5f;
-  motion_event.motion.y = collapse_rect.y + collapse_rect.h * 0.5f;
-  const auto hover_result = shell.HandleEvent(motion_event);
-  Expect(hover_result.handled, "switching tree header hover should be handled");
-  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
-         "tree header hover should stay on a partial redraw path");
-  // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
-  Expect(hover_result.redraw.rects.size() <= 4,
-         "tree header hover should only dirty the affected controls and tooltips");
-  Expect(AnyRectCovers(hover_result.redraw.rects, mode_rect),
-         "tree header hover should redraw the previously hovered control");
-  Expect(AnyRectCovers(hover_result.redraw.rects, collapse_rect),
-         "tree header hover should redraw the newly hovered control");
-  Expect(AnyRectCovers(hover_result.redraw.rects, *departed_tooltip),
+  const HoverRepaint hover = PaintThenMovePointer(shell, collapse_rect.x + collapse_rect.w * 0.5f,
+                                                  collapse_rect.y + collapse_rect.h * 0.5f);
+  Expect(hover.handled && hover.owes_frame, "switching tree header hover should be handled and owe a frame");
+  Expect(!hover.damage.full && !hover.damage.rects.empty(), "tree header hover should stay on a partial redraw path");
+  Expect(AnyRectCovers(hover.damage.rects, mode_rect), "tree header hover should redraw the previously hovered control");
+  Expect(AnyRectCovers(hover.damage.rects, collapse_rect), "tree header hover should redraw the newly hovered control");
+  Expect(AnyRectCovers(hover.damage.rects, *departed_tooltip),
          "leaving a mode tab should repaint the tooltip card it was showing");
+  Expect(DamagedArea(hover.damage) < 0.05f * 1280.0f * 720.0f,
+         "tree header hover should only repaint the affected controls");
 }
 
 void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
@@ -674,21 +667,15 @@ void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
                          mode_rect.y + mode_rect.h * 0.5f, 0),
          "priming the search mode hover should be handled");
 
-  SDL_Event motion_event{};
-  motion_event.type = SDL_EVENT_MOUSE_MOTION;
-  motion_event.motion.x = case_rect.x + case_rect.w * 0.5f;
-  motion_event.motion.y = case_rect.y + case_rect.h * 0.5f;
-  const auto hover_result = shell.HandleEvent(motion_event);
-  Expect(hover_result.handled, "switching search header hover should be handled");
-  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
-         "search header hover should stay on a partial redraw path");
-  // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
-  Expect(hover_result.redraw.rects.size() <= 4,
-         "search header hover should only dirty the affected controls and tooltips");
-  Expect(AnyRectCovers(hover_result.redraw.rects, mode_rect),
+  const HoverRepaint hover =
+      PaintThenMovePointer(shell, case_rect.x + case_rect.w * 0.5f, case_rect.y + case_rect.h * 0.5f);
+  Expect(hover.handled && hover.owes_frame, "switching search header hover should be handled and owe a frame");
+  Expect(!hover.damage.full && !hover.damage.rects.empty(), "search header hover should stay on a partial redraw path");
+  Expect(AnyRectCovers(hover.damage.rects, mode_rect),
          "search header hover should redraw the previously hovered control");
-  Expect(AnyRectCovers(hover_result.redraw.rects, case_rect),
-         "search header hover should redraw the newly hovered control");
+  Expect(AnyRectCovers(hover.damage.rects, case_rect), "search header hover should redraw the newly hovered control");
+  Expect(DamagedArea(hover.damage) < 0.05f * 1280.0f * 720.0f,
+         "search header hover should only repaint the affected controls");
 }
 
 void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
@@ -716,27 +703,22 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
                          top_action_rects[0].y + top_action_rects[0].h * 0.5f, 0),
          "priming the git stage-all hover should be handled");
 
-  SDL_Event motion_event{};
-  motion_event.type = SDL_EVENT_MOUSE_MOTION;
-  motion_event.motion.x = top_action_rects[2].x + top_action_rects[2].w * 0.5f;
-  motion_event.motion.y = top_action_rects[2].y + top_action_rects[2].h * 0.5f;
-  const auto hover_result = shell.HandleEvent(motion_event);
-  Expect(hover_result.handled, "switching git header hover should be handled");
-  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
-         "git header hover should stay on a partial redraw path");
-  // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
-  Expect(hover_result.redraw.rects.size() <= 4,
-         "git header hover should only dirty the affected controls and tooltips");
-  Expect(AnyRectCovers(hover_result.redraw.rects, top_action_rects[0]),
+  const HoverRepaint hover = PaintThenMovePointer(shell, top_action_rects[2].x + top_action_rects[2].w * 0.5f,
+                                                  top_action_rects[2].y + top_action_rects[2].h * 0.5f);
+  Expect(hover.handled && hover.owes_frame, "switching git header hover should be handled and owe a frame");
+  Expect(!hover.damage.full && !hover.damage.rects.empty(), "git header hover should stay on a partial redraw path");
+  Expect(DamagedArea(hover.damage) < 0.05f * 1280.0f * 720.0f,
+         "git header hover should only repaint the affected controls");
+  Expect(AnyRectCovers(hover.damage.rects, top_action_rects[0]),
          "git header hover should redraw the previously hovered control");
-  Expect(AnyRectCovers(hover_result.redraw.rects, top_action_rects[2]),
+  Expect(AnyRectCovers(hover.damage.rects, top_action_rects[2]),
          "git header hover should redraw the newly hovered control");
   // Arriving on Refresh has to paint its tooltip; the git sidebar tooltip used to
   // be absent from motion change-detection, so the card only appeared if the
   // sidebar happened to repaint for some other reason.
   const auto arrived_tooltip = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(arrived_tooltip.has_value(), "hovering git Refresh should resolve a tooltip");
-  Expect(AnyRectCovers(hover_result.redraw.rects, *arrived_tooltip),
+  Expect(AnyRectCovers(hover.damage.rects, *arrived_tooltip),
          "arriving on git Refresh should repaint its tooltip card");
 }
 
@@ -1590,18 +1572,13 @@ void TestWorkspaceShellFindWidgetHoverRepaintsTheCard() {
                          fw.search_field.y + fw.search_field.h * 0.5f, 0),
          "priming the find widget hover should be handled");
 
-  SDL_Event motion_event{};
-  motion_event.type = SDL_EVENT_MOUSE_MOTION;
-  motion_event.motion.x = fw.toggle_buttons[0].x + fw.toggle_buttons[0].w * 0.5f;
-  motion_event.motion.y = fw.toggle_buttons[0].y + fw.toggle_buttons[0].h * 0.5f;
-  const auto hover_result = shell.HandleEvent(motion_event);
-  Expect(hover_result.handled, "moving onto a find widget button should be handled");
+  const HoverRepaint hover = PaintThenMovePointer(shell, fw.toggle_buttons[0].x + fw.toggle_buttons[0].w * 0.5f,
+                                                  fw.toggle_buttons[0].y + fw.toggle_buttons[0].h * 0.5f);
   // The buttons only started lifting under the pointer when the rest of the shell
-  // already did; without this invalidation the highlight would wait for an
-  // unrelated repaint.
-  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
-         "find widget hover should stay on a partial redraw path");
-  Expect(AnyRectCovers(hover_result.redraw.rects, fw.toggle_buttons[0]),
+  // already did; without a frame the highlight would wait for an unrelated repaint.
+  Expect(hover.handled && hover.owes_frame, "moving onto a find widget button should be handled and owe a frame");
+  Expect(!hover.damage.full && !hover.damage.rects.empty(), "find widget hover should stay on a partial redraw path");
+  Expect(AnyRectCovers(hover.damage.rects, fw.toggle_buttons[0]),
          "entering a find widget button should repaint the card it is on");
 }
 
@@ -1819,7 +1796,7 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
   }
   invalidation.Merge(WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
   Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "the click should open the File menu");
-  Expect(invalidation.HasDamage(), "opening a menu must repaint something");
+  Expect(invalidation.HasDamage() || invalidation.frame, "opening a menu must ask for a frame");
 
   pin_caret();
   PaintInvalidation(shell, canvas, kWidth, kHeight, invalidation);
@@ -4102,7 +4079,7 @@ void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender()
   hover_event.motion.y = project_tab_rect.y + project_tab_rect.h * 0.5f;
   const auto hover_result = retained_shell.HandleEvent(hover_event);
   Expect(hover_result.handled, "hovering a project tab tooltip fixture should be handled");
-  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+  PaintInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
                              hover_result.redraw);
   Expect(WorkspaceShellTestAccess::HoveredTooltipRect(retained_shell).has_value(),
          "hovering a project tab should expose a tooltip rect");
@@ -4115,7 +4092,7 @@ void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender()
   const auto dismiss_result = retained_shell.HandleEvent(dismiss_event);
   Expect(dismiss_result.handled,
          "moving away from a project tab tooltip should stay on a handled redraw path");
-  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+  PaintInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
                              dismiss_result.redraw);
 
   WorkspaceShell reference_shell;
@@ -4905,7 +4882,7 @@ void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
   Expect(AnyRectIntersects(redraw.rects, layout.sidebar),
          "switching sidebar modes should invalidate the sidebar surface");
 
-  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
+  PaintInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
 
   WorkspaceShell reference_shell;
   configure_shell(reference_shell);
@@ -4944,10 +4921,13 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
   static constexpr int kCanvasWidth = 1280;
   static constexpr int kCanvasHeight = 720;
 
+  // A project open in the window: a strip paints its tabs only for one
+  // (TabStripPaint::shown).
   const auto configure_shell = [&](WorkspaceShell& shell) {
-    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+           "tab redraw regression fixture should open its project");
     WorkspaceShellTestAccess::SetWindowSize(shell, kCanvasWidth, kCanvasHeight);
-    WorkspaceShellTestAccess::OpenFile(shell, alpha);
+    WorkspaceShellTestAccess::OpenSingleEditorTab(shell, alpha);
     (void)shell.ConsumePendingRenderInvalidation();
   };
 
@@ -4972,7 +4952,7 @@ void TestWorkspaceShellOpenFileInNewTabRetainedRedrawMatchesFullRender() {
   Expect(AnyRectIntersects(redraw.rects, layout.editor_surface),
          "opening a file in a new tab should invalidate the editor surface");
 
-  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
+  PaintInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
 
   WorkspaceShell reference_shell;
   configure_shell(reference_shell);
@@ -5027,7 +5007,7 @@ void TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender()
   Expect(!redraw.full && !redraw.rects.empty(),
          "compare-gate redraw fixture should produce a partial redraw");
 
-  RenderRetainedInvalidation(shell, canvas, kCanvasWidth, kCanvasHeight, redraw);
+  PaintInvalidation(shell, canvas, kCanvasWidth, kCanvasHeight, redraw);
   Expect(WorkspaceShellTestAccess::RenderCompareSurfaceInvocationCount(shell) == 0,
          "partial redraw with no compare tab active should not call RenderCompareSurface");
 }
@@ -5171,7 +5151,7 @@ void TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender() {
   WorkspaceShellTestAccess::SetFocusSidebar(retained_shell);
   WorkspaceShellTestAccess::SetFocusSidebar(reference_shell);
 
-  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
+  PaintInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
                              retained_result.redraw);
   reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
 
@@ -5261,7 +5241,7 @@ void TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender() {
   Expect(resized_layout.sidebar.w > initial_layout.sidebar.w,
          "sidebar resize regression should widen the sidebar after dragging right");
 
-  RenderRetainedInvalidation(
+  PaintInvalidation(
       retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, retained_drag.redraw);
   Expect(!retained_shell.ConsumePostRenderRedrawRequest().has_value(),
          "sidebar resize should not require terminal settle redraws");
@@ -5370,7 +5350,7 @@ void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
   Expect(redraw.full,
          "bottom-panel resize should promote to a full redraw for correctness");
 
-  RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
+  PaintInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
   const auto first_settle = retained_shell.ConsumePostRenderRedrawRequest();
   Expect(first_settle.has_value(),
          "bottom-panel resize should schedule a follow-up redraw after the first full render");

@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -94,6 +95,10 @@ class PaintFingerprint {
     return Mix(bits);
   }
   PaintFingerprint& Add(bool value) { return Mix(value ? 1u : 2u); }
+  // A C string would bind to Add(bool) -- a pointer-to-bool conversion beats the
+  // user-defined one to string_view -- and fold "not null" instead of its text.
+  // Pass a std::string_view.
+  PaintFingerprint& Add(const char*) = delete;
   template <typename T>
     requires(std::is_integral_v<T> || std::is_enum_v<T>)
   PaintFingerprint& Add(T value) {
@@ -181,11 +186,22 @@ class DerivedDamage {
             collected.Add(rect);
           }
         };
-        if (was != nullptr && was->rect.w > 0.0f && was->rect.h > 0.0f) {
+        const bool had = was != nullptr && was->rect.w > 0.0f && was->rect.h > 0.0f;
+        const bool has = now != nullptr && now->rect.w > 0.0f && now->rect.h > 0.0f;
+        if (had && has && !RectsEqual(now->rect, was->rect)) {
+          // A unit that slid along one axis -- a divider dragged a few pixels, a
+          // strip that grew -- with its old and new rect overlapping or touching:
+          // their union is exactly the pixels the two cover, one rect instead of
+          // two (a frame's damage list stays in its inline storage).
+          if (const std::optional<SDL_FRect> joined = ExactUnion(was->rect, now->rect); joined.has_value()) {
+            add(*joined);
+            continue;
+          }
+        }
+        if (had) {
           add(was->rect);
         }
-        if (now != nullptr && now->rect.w > 0.0f && now->rect.h > 0.0f &&
-            (was == nullptr || !RectsEqual(now->rect, was->rect))) {
+        if (has && (was == nullptr || !RectsEqual(now->rect, was->rect))) {
           add(now->rect);
         }
       }
@@ -197,6 +213,21 @@ class DerivedDamage {
 
 
  private:
+  // The union of two rects when it covers no pixel outside them: the same span
+  // on one axis, and overlapping or touching on the other. Nullopt otherwise.
+  static std::optional<SDL_FRect> ExactUnion(const SDL_FRect& a, const SDL_FRect& b) {
+    const auto joins = [](float a0, float a1, float b0, float b1) { return a0 <= b1 && b0 <= a1; };
+    if (a.y == b.y && a.h == b.h && joins(a.x, a.x + a.w, b.x, b.x + b.w)) {
+      const float left = std::min(a.x, b.x);
+      return SDL_FRect{left, a.y, std::max(a.x + a.w, b.x + b.w) - left, a.h};
+    }
+    if (a.x == b.x && a.w == b.w && joins(a.y, a.y + a.h, b.y, b.y + b.h)) {
+      const float top = std::min(a.y, b.y);
+      return SDL_FRect{a.x, top, a.w, std::max(a.y + a.h, b.y + b.h) - top};
+    }
+    return std::nullopt;
+  }
+
   // The rects one Commit damages: kept apart up to the cap, their bounding rect
   // past it. Fixed storage: a frame's commit allocates nothing.
   class RectCollector {

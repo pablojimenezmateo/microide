@@ -102,7 +102,7 @@ void DrawDiagnosticGutterMarker(SDL_Renderer* renderer,
   const SDL_FRect rect = DiagnosticGutterMarkerRect(gutter_x, y, gutter_width, line_height);
   const SDL_Color color = DiagnosticSeverityColor(theme, severity);
   render::SetDrawColor(renderer, color);
-  SDL_RenderFillRect(renderer, &rect);
+  render::FillRectInDrawColor(renderer, rect);
 }
 
 namespace {

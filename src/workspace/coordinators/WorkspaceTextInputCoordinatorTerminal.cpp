@@ -252,7 +252,7 @@ bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
   const bool shift = (modifiers & SDL_KMOD_SHIFT) != 0;
   const bool alt = (modifiers & SDL_KMOD_ALT) != 0;
   const auto handled = [this]() {
-    RequestBottomPanelContentRedraw();
+    RequestPreparedFrame();
     return true;
   };
 
@@ -311,7 +311,7 @@ bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
     // keyboard, matching the in-file find widget.
     if (terminal_find_service_.focused()) {
       terminal_find_service_.SetFocused(false);
-      RequestBottomPanelContentRedraw();
+      RequestPreparedFrame();
     }
     return false;
   }
@@ -331,7 +331,7 @@ bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
   if (terminal_find_service_.visible()) {
     terminal_find_service_.SetFocused(true);
   }
-  RequestBottomPanelContentRedraw();
+  RequestPreparedFrame();
   return true;
 }
 
@@ -344,11 +344,11 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
       context_.text_input,
       TextInputCoordinator::Operations{
           .current_text_input_surface = [this]() { return CurrentTextInputSurface(); },
-          .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
-          .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
-          .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
+          .request_prompt_redraw = [this]() { RequestPreparedFrame(); },
+          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
+          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
           .refresh_quick_pick = [this]() { quick_pick_service_.Refilter(); },
           .refresh_command_palette = [this]() { RefreshCommandPalette(); },
@@ -395,7 +395,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this]() {
                 settings_overlay_service_.SyncQueryFromEditor();
                 RefreshSettingsOverlayCatalog();
-                RequestOverlayRedraw();
+                RequestPreparedFrame();
               },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
@@ -429,7 +429,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .append_terminal_pending_input =
               [this](std::string_view input) { AppendTerminalPendingInput(input); },
           .request_bottom_panel_content_redraw =
-              [this]() { RequestBottomPanelContentRedraw(); },
+              [this]() { RequestPreparedFrame(); },
           .terminal_has_selection =
               [this]() { return TerminalPanelService::HasSelection(context_.current_project_state); },
           .selected_terminal_text =

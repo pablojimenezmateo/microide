@@ -49,6 +49,68 @@ inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color
   SDL_RenderRect(renderer, &rect);
 }
 
+// The renderer's draw calls for paint that batches or sets its own draw colour
+// (a row's coalesced fills, a glyph's geometry, an image), reported to the
+// paint-overrun recorder as FillRect is: while it records, each draw's extent is
+// checked against the element and the paint pass it lands in (PaintElement,
+// PaintPassScope). Off, a report is one flag test. Paint draws through these or
+// the primitives above, never SDL_Render* itself (CheckSdlDrawCallsStayInTheAllowlist).
+inline void FillRectInDrawColor(SDL_Renderer* renderer, const SDL_FRect& rect) {
+  NotePaint(renderer, rect);
+  SDL_RenderFillRect(renderer, &rect);
+}
+
+inline void FillRectsInDrawColor(SDL_Renderer* renderer, const SDL_FRect* rects, int count) {
+  if (PaintOverrunRecordingEnabled()) {
+    for (int i = 0; i < count; ++i) {
+      NotePaint(renderer, rects[i]);
+    }
+  }
+  SDL_RenderFillRects(renderer, rects, count);
+}
+
+inline void OutlineRectInDrawColor(SDL_Renderer* renderer, const SDL_FRect& rect) {
+  NotePaint(renderer, rect);
+  SDL_RenderRect(renderer, &rect);
+}
+
+// The box a run of points spans: what a polyline or a geometry submission covers.
+template <typename PointOf>
+inline SDL_FRect BoundsOf(int count, PointOf&& point_of) {
+  if (count <= 0) {
+    return SDL_FRect{};
+  }
+  SDL_FPoint low = point_of(0);
+  SDL_FPoint high = low;
+  for (int i = 1; i < count; ++i) {
+    const SDL_FPoint p = point_of(i);
+    low = SDL_FPoint{std::min(low.x, p.x), std::min(low.y, p.y)};
+    high = SDL_FPoint{std::max(high.x, p.x), std::max(high.y, p.y)};
+  }
+  return SDL_FRect{low.x, low.y, high.x - low.x + 1.0f, high.y - low.y + 1.0f};
+}
+
+inline void DrawPolyline(SDL_Renderer* renderer, const SDL_FPoint* points, int count) {
+  if (PaintOverrunRecordingEnabled()) {
+    NotePaint(renderer, BoundsOf(count, [points](int i) { return points[i]; }));
+  }
+  SDL_RenderLines(renderer, points, count);
+}
+
+inline void DrawGeometry(SDL_Renderer* renderer, SDL_Texture* texture, const SDL_Vertex* vertices, int vertex_count,
+                         const int* indices, int index_count) {
+  if (PaintOverrunRecordingEnabled()) {
+    NotePaint(renderer, BoundsOf(vertex_count, [vertices](int i) { return vertices[i].position; }));
+  }
+  SDL_RenderGeometry(renderer, texture, vertices, vertex_count, indices, index_count);
+}
+
+inline void DrawTexture(SDL_Renderer* renderer, SDL_Texture* texture, const SDL_FRect* source,
+                        const SDL_FRect& destination) {
+  NotePaint(renderer, destination);
+  SDL_RenderTexture(renderer, texture, source, &destination);
+}
+
 inline SDL_Color CardBackground(const Theme& theme, CardStyle style) {
   switch (style) {
     case CardStyle::Overlay:

@@ -256,3 +256,37 @@ typing_small_file                           2.67      2.70   +1.1%        98    
 The 6edafb798 run's other scenarios (git sidebar, menu hover, compare and merge scrolls, indent
 guides, whitespace, tab drag) were within budget before the harness fix; the fix can only lower a
 frame-only scenario's cost. Verdict: stage 2 within budget; typing paints a row, 71% faster.
+
+## Review passes' perf A/B (2026-11-25)
+
+Base b1ac9f6d0 vs head (the two review passes, uncommitted), RelWithDebInfo `microide_perf`, 3 interleaved rounds (order flipped), median of the rounds' p50 wall, both from the main checkout. Same harness on both sides: `editor_split_grid_workout` and `editor_tab_drag_burst` pump each event's frame (`PumpPartialFrame` now returns the frame's damage) -- they summed the events' own rects, which a frame-owing event no longer names (base failed `editor_tab_drag_burst` on that already). Base's split divider-drag bound raised for the measurement only: base repaints 9.0 pane areas per drag frame (head within 5.5).
+
+```
+scenario                              base ms  head ms     d%  alloc b  alloc h
+compare_scroll_selection               149.95   151.76    1.2   1419.0   1419.0
+compare_type_in_wrapped_diff           111.99   111.97   -0.0    701.0    701.0
+editor_indent_guides_paint             114.52   114.15   -0.3    425.5    425.5
+editor_render_whitespace_paint         129.41   130.41    0.8    526.5    526.5
+editor_soft_wrap_long_line_typing       95.01    94.87   -0.2    373.5    373.5
+editor_split_grid_workout              523.64   507.41   -3.1  11506.5  11519.0
+editor_sticky_scroll_scroll            146.55   146.00   -0.4    454.0    454.0
+editor_tab_drag_burst                   96.22    95.22   -1.0   9258.0   9255.0
+editor_typing_paint                    220.38   220.74    0.2   1159.0   1159.0
+git_sidebar_activate                    11.63    11.65    0.2    839.0    839.0
+lsp_publish_diagnostics_parse           24.02    22.94   -4.5 211203.0 211203.0
+menu_hover_paint                        83.34    83.92    0.7    170.0    169.0
+menu_hover_switch                        1.07     1.07   -0.0      5.0      5.0
+menu_popup_hover_rows                    1.04     1.03   -1.2     15.0     15.0
+merge_edit_result_then_scroll          227.01   226.11   -0.4   2584.0   2584.0
+merge_scroll_interleaved_hunks         173.87   173.22   -0.4   2190.0   2190.0
+multi_tab_cycle                        136.60   136.53   -0.1   3886.5   3885.5
+scroll_large_file                       62.32    62.68    0.6    129.0    129.0
+settings_change_many_tabs                8.09     8.08   -0.1  13241.0  13239.0
+terminal_mouse_owner_hover             253.42   251.11   -0.9   1154.0   1154.0
+terminal_paint_colored_selection        21.28    21.12   -0.7    876.0    876.0
+terminal_stream_chunked_output           7.51     7.54    0.3   3580.0   3580.0
+typing_large_file                        3.40     3.35   -1.4    103.5    103.5
+typing_small_file                        2.72     2.69   -1.1     98.5     98.5
+```
+
+Verdict: within budget -- no p50 above +1.2%, allocations equal (split +2 over 240 drag frames: one-time snapshot growth). The split drag repaints 66% fewer pixels (redraw_rect_pixels 2.20e9 -> 0.75e9) and is 3.1% faster; at 8 inline rects its precise damage spilled once per drag frame, so `kInlineRedrawRects` is 16 and a sliding unit's old and new rect merge into their exact union (`DerivedDamage::Commit`).

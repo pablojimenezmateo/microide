@@ -27,8 +27,4 @@ void PrepareNotificationToastsFrame(PreparedFrameState& frame, SDL_Renderer* ren
 void PaintNotificationToasts(SDL_Renderer* renderer, const PreparedFrameState& frame, const render::Theme& theme,
                              const render::TextRenderer& text_renderer);
 
-// The rect the toasts cover together (empty without any): what a change the
-// units cannot see yet -- a hover moving between them -- asks to repaint.
-SDL_FRect NotificationToastsBounds(const NotificationsViewModel& toasts);
-
 }  // namespace microide::workspace

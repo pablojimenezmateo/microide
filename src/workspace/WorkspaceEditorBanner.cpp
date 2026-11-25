@@ -128,7 +128,7 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
         };
         (void)MakeCompareMergeService().diff_tabs().OpenPlainComparison(std::move(*on_disk), std::move(unsaved));
       }
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
       return;
     }
     case EditorBannerAction::Reload:
@@ -139,7 +139,7 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       if (!MakeEditorTabService().OverwriteEditorTabsForPath(path)) {
         // Refused (a read-only file swaps in its own banner) or nothing written:
         // the banner left up is the one that still applies.
-        RequestEditorSurfaceRedraw();
+        RequestPreparedFrame();
         return;
       }
       break;
@@ -151,8 +151,8 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       // first try was. A failure lands back here through the completion.
       MakeEditorTabService().RetryFailedOpen(path);
       SyncActiveEditorTabMetadata();
-      RequestEditorSurfaceRedraw();
-      RequestTabStripRedraw();
+      RequestPreparedFrame();
+      RequestPreparedFrame();
       return;
     }
     case EditorBannerAction::OverwriteReadOnly:
@@ -165,16 +165,16 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       }
       DismissEditorBannerForPath(context_.current_project_state, path);
       (void)ExecuteCommandName("save", {}, ActionSource::Menu, nullptr);
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
       return;
     case EditorBannerAction::SaveAs:
       DismissEditorBannerForPath(context_.current_project_state, path);
       (void)ExecuteCommandName("save-as", {}, ActionSource::Menu, nullptr);
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
       return;
   }
   DismissEditorBannerForPath(context_.current_project_state, path);
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 }  // namespace microide::workspace

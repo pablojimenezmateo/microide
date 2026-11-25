@@ -49,7 +49,6 @@ class WorkspaceEditService {
     // A frame owed: the editor, compare and merge surfaces derive their damage
     // (RequestPreparedFrame); a request names no rect.
     std::function<void()> request_frame;
-    std::function<void(bool include_tree_sidebar)> request_active_tab_redraw;
     // Ask the user to confirm the pending rename; `detail` says what it changes.
     std::function<void(std::string detail)> confirm_rename_save;
     std::function<void(std::string message)> notify_error;

@@ -373,7 +373,7 @@ void ScenarioContext::PumpFrames(std::size_t count) {
   }
 }
 
-void ScenarioContext::PumpPartialFrame(
+ScenarioContext::PumpedFrameDamage ScenarioContext::PumpPartialFrame(
     const workspace::WorkspaceShell::RenderInvalidation& event_damage) {
   BumpHarnessCounter(HarnessCounter::kFramesPumped);
   // Mirror Application::Render's frame decision exactly: gather the frame's
@@ -412,7 +412,11 @@ void ScenarioContext::PumpPartialFrame(
   // An owed frame whose prep derived nothing paints and presents nothing, as the
   // app returns before presenting.
   if (!requested_full && partial_dirty_rects_.empty()) {
-    return;
+    return PumpedFrameDamage{};
+  }
+  PumpedFrameDamage damage{.full = requested_full};
+  for (const SDL_FRect& rect : partial_dirty_rects_) {
+    damage.area += static_cast<double>(rect.w) * static_cast<double>(rect.h);
   }
   // Kept across frames, as Application keeps its own: a steady frame allocates nothing here.
   app::AnalyzeDirtyRegions(partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080, SDL_FPoint{1.0f, 1.0f},
@@ -445,6 +449,10 @@ void ScenarioContext::PumpPartialFrame(
     util::PerformanceTrace::Scope scope("PerfHarness::PumpPartialFrames::Present");
     SDL_RenderPresent(renderer_);
   }
+  if (damage.full) {
+    damage.area = 1920.0 * 1080.0;
+  }
+  return damage;
 }
 
 void ScenarioContext::PumpPartialFrames(std::size_t count) {

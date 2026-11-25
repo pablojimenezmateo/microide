@@ -342,7 +342,15 @@ class ScenarioContext {
   // event-driven scenario must hand that result's damage to the pump — the
   // count form only sees damage queued OUTSIDE event handling (render-path
   // re-requests, wake work) and paints a full frame when there is none.
-  void PumpPartialFrame(const workspace::WorkspaceShell::RenderInvalidation& event_damage);
+  // What a pumped frame repainted: the whole window, or the area of the rects it
+  // damaged -- the event's own, the queued ones and what preparing it derived --
+  // before coalescing. A scenario bounding an event's repaint scope reads this:
+  // the event's rects alone miss every surface whose damage prep derives.
+  struct PumpedFrameDamage {
+    bool full = false;
+    double area = 0.0;
+  };
+  PumpedFrameDamage PumpPartialFrame(const workspace::WorkspaceShell::RenderInvalidation& event_damage);
   void PumpPartialFrames(std::size_t count);
   void PumpEvents();
   bool Open(const std::filesystem::path& project_root);

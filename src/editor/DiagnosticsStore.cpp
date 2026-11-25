@@ -258,10 +258,12 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
     // New path (find above returned end): emplace constructs the entry in place,
     // skipping the default-construct + move-assign of the heavy FileDiagnostics
     // value that operator[] would do (mirrors PluginDecorationStore::RebuildPath).
-    merged_by_path_.emplace(std::string(path_key), std::move(merged));
     revision_.Bump();
+    merged.changed_at = revision_.value();
+    merged_by_path_.emplace(std::string(path_key), std::move(merged));
     return;
   }
+  merged.changed_at = existing->second.changed_at;  // compare the lists, not the stamps
   if (existing->second == merged) {
     return;
   }
@@ -272,8 +274,9 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   } else if (!existing->second.truncated && merged.truncated) {
     ++truncated_file_count_;
   }
-  existing->second = std::move(merged);
   revision_.Bump();
+  merged.changed_at = revision_.value();
+  existing->second = std::move(merged);
 }
 
 bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
@@ -413,6 +416,14 @@ void DiagnosticsStore::Clear() {
   hint_count_ = 0;
   truncated_file_count_ = 0;
   revision_.Bump();
+}
+
+std::uint64_t DiagnosticsStore::PathRevisionByKey(std::string_view path_key) const {
+  if (merged_by_path_.empty()) {
+    return 0;
+  }
+  const auto it = merged_by_path_.find(path_key);
+  return it == merged_by_path_.end() ? 0 : it->second.changed_at;
 }
 
 const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPathKey(

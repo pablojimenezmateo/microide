@@ -131,23 +131,4 @@ void PaintNotificationToasts(SDL_Renderer* renderer, const PreparedFrameState& f
   }
 }
 
-SDL_FRect NotificationToastsBounds(const NotificationsViewModel& toasts) {
-  SDL_FRect bounds{};
-  bool any = false;
-  for (const NotificationEntryViewModel& entry : toasts.entries) {
-    const SDL_FRect& rect = entry.layout.rect;
-    if (!any) {
-      bounds = rect;
-      any = true;
-      continue;
-    }
-    const float left = std::min(bounds.x, rect.x);
-    const float top = std::min(bounds.y, rect.y);
-    const float right = std::max(bounds.x + bounds.w, rect.x + rect.w);
-    const float bottom = std::max(bounds.y + bounds.h, rect.y + rect.h);
-    bounds = SDL_FRect{left, top, right - left, bottom - top};
-  }
-  return bounds;
-}
-
 }  // namespace microide::workspace

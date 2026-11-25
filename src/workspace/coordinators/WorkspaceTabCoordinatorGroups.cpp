@@ -107,7 +107,7 @@ bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
   // source's cached widths whenever the two happen to agree.
   operations_.invalidate_tab_strip_geometry();
   EnsureEveryGroupActiveTabVisible();
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -172,7 +172,7 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
   HydrateGroupActiveTab(state_.editor_groups[state_.clamped_focused_group_index()]);
   operations_.invalidate_tab_strip_geometry();
   EnsureEveryGroupActiveTabVisible();
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -249,7 +249,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   state_.surface.focus = FocusTarget::Editor;
   operations_.invalidate_tab_strip_geometry();
   EnsureEveryGroupActiveTabVisible();
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -284,7 +284,7 @@ bool TabCoordinator::FocusOtherGroup() {
   state_.focused_group_index =
       (state_.clamped_focused_group_index() + 1) % state_.editor_groups.size();
   state_.surface.focus = FocusTarget::Editor;
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -294,7 +294,7 @@ bool TabCoordinator::FocusEditorGroupAt(std::size_t index) {
   }
   state_.focused_group_index = index;
   state_.surface.focus = FocusTarget::Editor;
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -318,7 +318,7 @@ bool TabCoordinator::FocusEditorGroupInDirection(EditorGroupDirection direction)
   }
   state_.focused_group_index = target;
   state_.surface.focus = FocusTarget::Editor;
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -363,7 +363,7 @@ bool TabCoordinator::RelocateEditorGroup(std::size_t from,
   HydrateGroupActiveTab(state_.editor_groups[landed]);
   operations_.invalidate_tab_strip_geometry();
   EnsureEveryGroupActiveTabVisible();
-  RefreshFocusedGroupActiveTab(true);
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 
@@ -376,9 +376,9 @@ void TabCoordinator::EnsureEveryGroupActiveTabVisible() {
   } else util::InvokeIfSet(operations_.ensure_active_tab_visible);
 }
 
-void TabCoordinator::RefreshFocusedGroupActiveTab(bool editor_redraw) {
+void TabCoordinator::RefreshFocusedGroupActiveTab() {
   operations_.ensure_active_tab_visible();
-  operations_.request_active_tab_redraw(editor_redraw);
+  operations_.request_frame();
 }
 
 void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
@@ -483,8 +483,7 @@ bool TabCoordinator::CloseEditorGroup() {
     }
   }
   CollapseFocusedGroup();
-  const editor::TextViewport* active_vp = ActiveEditorViewport();
-  RefreshFocusedGroupActiveTab(active_vp != nullptr && !active_vp->path().empty());
+  RefreshFocusedGroupActiveTab();
   return true;
 }
 

@@ -35,7 +35,7 @@ void DrawCaret(SDL_Renderer* renderer, float caret_x, float y, float line_height
                SDL_Color cursor) {
   const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, line_height};
   render::SetDrawColor(renderer, cursor);
-  SDL_RenderFillRect(renderer, &caret);
+  render::FillRectInDrawColor(renderer, caret);
 }
 
 // Full-width row background highlight (execution line / selected row), inset 1px
@@ -92,7 +92,7 @@ void DrawFoldGutterMarker(SDL_Renderer* renderer,
   const float mid_y = std::floor(rect.y + (rect.h - thickness) * 0.5f);
   const SDL_FRect horizontal =
       SDL_FRect{rect.x + 2.0f, mid_y, std::max(1.0f, rect.w - 4.0f), thickness};
-  SDL_RenderFillRect(renderer, &horizontal);
+  render::FillRectInDrawColor(renderer, horizontal);
   if (!collapsed) {
     return;
   }
@@ -100,7 +100,7 @@ void DrawFoldGutterMarker(SDL_Renderer* renderer,
   const float mid_x = std::floor(rect.x + (rect.w - thickness) * 0.5f);
   const SDL_FRect vertical =
       SDL_FRect{mid_x, rect.y + 2.0f, thickness, std::max(1.0f, rect.h - 4.0f)};
-  SDL_RenderFillRect(renderer, &vertical);
+  render::FillRectInDrawColor(renderer, vertical);
 }
 
 void DrawPlaceholderView(SDL_Renderer* renderer,
@@ -557,7 +557,7 @@ void EditorViewRenderer::RenderStickyRows(const FramePaint& frame,
   render::SetDrawColor(renderer, theme.border);
   const SDL_FRect sticky_divider =
       SDL_FRect{rect.x, metrics.first_line_y - 1.0f, rect.w, 1.0f};
-  SDL_RenderFillRect(renderer, &sticky_divider);
+  render::FillRectInDrawColor(renderer, sticky_divider);
 }
 
 void EditorViewRenderer::Render(SDL_Renderer* renderer,
@@ -586,7 +586,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   util::PerformanceTrace::Scope trace_scope("EditorViewRenderer::Render");
   render::SetDrawColor(renderer, theme.editor_background);
-  SDL_RenderFillRect(renderer, &rect);
+  render::FillRectInDrawColor(renderer, rect);
 
   if (viewport.is_placeholder()) {
     if (welcome_view != nullptr) {
@@ -608,11 +608,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       ComputeMetrics(text_renderer, viewport, rect, sticky_row_count, show_line_numbers);
   const SDL_FRect gutter = SDL_FRect{rect.x, rect.y, metrics.gutter_width, rect.h};
   render::SetDrawColor(renderer, theme.gutter_background);
-  SDL_RenderFillRect(renderer, &gutter);
+  render::FillRectInDrawColor(renderer, gutter);
   const SDL_FRect gutter_divider =
       SDL_FRect{gutter.x + gutter.w - 1.0f, gutter.y, 1.0f, gutter.h};
   render::SetDrawColor(renderer, theme.border);
-  SDL_RenderFillRect(renderer, &gutter_divider);
+  render::FillRectInDrawColor(renderer, gutter_divider);
 
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 

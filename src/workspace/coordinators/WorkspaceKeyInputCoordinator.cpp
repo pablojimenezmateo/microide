@@ -527,12 +527,12 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
       notification_service_,
       KeyInputCoordinator::Operations{
           .damage_generation = [this]() { return MarkDamage(); },
-          .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
-          .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
-          .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
+          .request_prompt_redraw = [this]() { RequestPreparedFrame(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
+          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
+          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
           .request_bottom_panel_content_redraw =
-              [this]() { RequestBottomPanelContentRedraw(); },
+              [this]() { RequestPreparedFrame(); },
           .scroll_bottom_panel_rows =
               [this](int row_delta) {
                 if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
@@ -795,7 +795,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 InitializeCommitWorkflowService();
                 commit_workflow_service_.OnDraftEdited(workflow);
                 ResetCaretBlink();
-                RequestSidebarRedraw();
+                RequestPreparedFrame();
               },
           .commit_body_write_clipboard_text =
               [this](std::string_view text) { return WriteClipboardText(text); },

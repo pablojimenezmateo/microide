@@ -26,7 +26,7 @@ PromptSurfaceService& WorkspaceShell::MakePromptSurfaceService() {
       context_.current_project_state,
       context_.prompts,
       PromptSurfaceService::Operations{
-          .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
+          .request_prompt_redraw = [this]() { RequestPreparedFrame(); },
       });
   return *glue_->prompt_surface_service;
 }
@@ -811,7 +811,7 @@ void WorkspaceShell::CommitWatchExpressionPrompt() {
   } else if (!text.empty()) {
     debug_service_.AddWatch(text);
   }
-  RequestDebugPaneRedraw();  // the Watch list is the debug dock's (it named the bottom panel)
+  RequestPreparedFrame();  // the Watch list is the debug dock's (it named the bottom panel)
 }
 
 void WorkspaceShell::OpenDebugReplPrompt() {

@@ -120,7 +120,7 @@ void WorkspaceShell::ApplyLanguageModeToActiveEditor(const std::string& language
     NotifyPluginBufferOpen(path);
     NotifyLspBufferOpen(path);
   }
-  RequestWindowRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
@@ -141,7 +141,7 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
   text_renderer_.SetFontFamily(font_family);
   NoteLayoutInputsChanged();
   tab_strip_service_.InvalidateTabStripGeometry();
-  RequestWindowRedraw();
+  RequestPreparedFrame();
   // Apply to EVERY editor group, not just the focused one: preference fields (tab_size,
   // soft_wrap, auto_close, smart_indent, save-trim, …) live on each per-tab TextViewport,
   // so a split's non-focused pane would otherwise keep the stale config and render/behave
@@ -219,7 +219,7 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
   // fold the chord had just closed (QA edit-folding, on a driver with no delay
   // between the two).
   if (SettleFoldReveal(editor_tab, viewport)) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
   return model;
 }
@@ -275,7 +275,7 @@ void WorkspaceShell::RefreshEditorFoldingModels() {
     // This runs before the frame's layout, so the scroll and the repaint both
     // land in this frame.
     if (SettleFoldReveal(editor_tab, viewport)) {
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
     }
   }
 }
@@ -413,7 +413,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
   }
   SyncActiveEditorTabMetadata();
   ResetCaretBlink();
-  RequestActiveTabRedraw(!editor_tab->viewport.path().empty());
+  RequestPreparedFrame();
   return true;
 }
 
@@ -545,7 +545,7 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
     ReloadCleanEditorTabsForPath(path);
   }
   if (noted_any) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 }
 

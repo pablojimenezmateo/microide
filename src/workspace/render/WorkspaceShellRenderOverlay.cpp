@@ -104,7 +104,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     SDL_FRect row_rect = ScrollableListRowRect(list_layout, static_cast<int>(row));
     // Keyboard selection keeps the accent strip; the pointer hovering a different
     // row still lifts that row's background so the click target is obvious.
-    const bool emphasized = selected || PointerOver(row_rect);
+    const bool emphasized =
+        selected || (row < frame_state_.overlay_pointer.row_hovered.size() && frame_state_.overlay_pointer.row_hovered[row]);
     DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_raised, emphasized,
                                 selected);
     if (selected) {
@@ -131,7 +132,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
           list_layout.visible_units, static_cast<float>(overlay_vm.scroll_row));
       geometry.has_value()) {
     DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb,
-                  context_.interaction_state.drag_target == DragTarget::OverlayScrollbar);
+                  frame_state_.overlay_pointer.scrollbar_dragged);
   }
 }
 
@@ -159,7 +160,8 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
   };
 
   enum class Icon { Prev, Next, Close };
-  const auto icon_button = [&](const SDL_FRect& rect, Icon icon, bool enabled) {
+  const PreparedFrameState::OverlayPointerPaint& pointer = frame_state_.overlay_pointer;
+  const auto icon_button = [&](const SDL_FRect& rect, Icon icon, bool enabled, bool pointer_over) {
     if (rect.w <= 0.0f) {
       return;  // not laid out: the card had no room for it (ComputeFindWidgetLayout)
     }
@@ -169,7 +171,7 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
     // them already turned into a hand.
     const ButtonColors colors = ResolveButtonColors(
         theme_, tone,
-        ButtonVisualState{.enabled = enabled, .hovered = enabled && PointerOver(rect)});
+        ButtonVisualState{.enabled = enabled, .hovered = enabled && pointer_over});
     FillRect(renderer, rect, colors.fill);
     OutlineRect(renderer, rect, colors.border);
     switch (icon) {
@@ -197,7 +199,7 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
                        fw_vm.toggles[index].label,
                        fw_vm.toggles[index].active ? ButtonTone::Accent : ButtonTone::Neutral,
                        ButtonVisualState{.enabled = true,
-                                         .hovered = PointerOver(fw.toggle_buttons[index]),
+                                         .hovered = pointer.toggle_hovered[index],
                                          .active = fw_vm.toggles[index].active});
   }
 
@@ -207,21 +209,20 @@ void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
                        theme_.overlay_background, fw_vm.count_text);
   }
 
-  icon_button(fw.prev_button, Icon::Prev, fw_vm.has_matches);
-  icon_button(fw.next_button, Icon::Next, fw_vm.has_matches);
-  icon_button(fw.close_button, Icon::Close, true);
+  icon_button(fw.prev_button, Icon::Prev, fw_vm.has_matches, pointer.prev_hovered);
+  icon_button(fw.next_button, Icon::Next, fw_vm.has_matches, pointer.next_hovered);
+  icon_button(fw.close_button, Icon::Close, true, pointer.close_hovered);
 
   if (fw_vm.replace_mode) {
     draw_field(fw.replace_field, fw_vm.replace_focused, fw_vm.replace_display_text);
     DrawButtonCentered(text_renderer_, renderer, theme_, fw.replace_button, "Replace",
                        ButtonTone::Neutral,
                        ButtonVisualState{.enabled = fw_vm.has_matches,
-                                         .hovered = fw_vm.has_matches &&
-                                                    PointerOver(fw.replace_button)});
+                                         .hovered = fw_vm.has_matches && pointer.replace_hovered});
     DrawButtonCentered(
         text_renderer_, renderer, theme_, fw.replace_all_button, "All", ButtonTone::Neutral,
         ButtonVisualState{.enabled = fw_vm.has_query,
-                          .hovered = fw_vm.has_query && PointerOver(fw.replace_all_button)});
+                          .hovered = fw_vm.has_query && pointer.replace_all_hovered});
   }
 }
 

@@ -7,7 +7,7 @@ index bff685995..a9930bada 100644
    // fold the chord had just closed (QA edit-folding, on a driver with no delay
    // between the two).
 -  if (SettleFoldReveal(editor_tab, viewport)) {
--    RequestEditorSurfaceRedraw();
+-    RequestPreparedFrame();
 -  }
    return model;
  }

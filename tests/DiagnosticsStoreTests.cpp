@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/DiagnosticsStore.h"
+#include "editor/PathKey.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -415,6 +416,37 @@ void TestDiagnosticsStoreCapsMergedMultiOwnerCount() {
          "an aggregate-capped merged view must be flagged truncated");
 }
 
+// A file's stamp moves when its own merged list changes, and only then: another
+// file's diagnostics, an owner republishing the same list, and an untouched file
+// leave it. A list cleared reads 0, and coming back takes a later stamp than any
+// it had, so a key on it never sees the old value again.
+void TestDiagnosticsStorePathRevisionMovesWithItsOwnFileOnly() {
+  DiagnosticsStore store;
+  const std::filesystem::path main = "/tmp/project/main.cpp";
+  const std::filesystem::path other = "/tmp/project/other.cpp";
+  const std::string main_key = microide::editor::NormalizedPathKey(main);
+  Expect(store.PathRevisionByKey(main_key) == 0, "a file with no diagnostics reads 0");
+
+  (void)store.ReplaceForOwnerFile("lsp", main, {MakeDiagnostic(0, 0, 0, 3, DiagnosticSeverity::Error, "a")});
+  const std::uint64_t first = store.PathRevisionByKey(main_key);
+  Expect(first != 0, "publishing a list stamps the file");
+
+  (void)store.ReplaceForOwnerFile("lsp", other, {MakeDiagnostic(1, 0, 1, 3, DiagnosticSeverity::Warning, "b")});
+  Expect(store.PathRevisionByKey(main_key) == first, "another file's diagnostics leave the stamp");
+
+  (void)store.ReplaceForOwnerFile("lsp", main, {MakeDiagnostic(0, 0, 0, 3, DiagnosticSeverity::Error, "a")});
+  Expect(store.PathRevisionByKey(main_key) == first, "the same list republished leaves the stamp");
+
+  (void)store.ReplaceForOwnerFile("lsp", main, {MakeDiagnostic(0, 0, 0, 3, DiagnosticSeverity::Error, "c")});
+  const std::uint64_t second = store.PathRevisionByKey(main_key);
+  Expect(second > first, "a changed message moves the stamp");
+
+  (void)store.ClearOwnerFile("lsp", main);
+  Expect(store.PathRevisionByKey(main_key) == 0, "a cleared file reads 0");
+  (void)store.ReplaceForOwnerFile("lsp", main, {MakeDiagnostic(0, 0, 0, 3, DiagnosticSeverity::Error, "a")});
+  Expect(store.PathRevisionByKey(main_key) > second, "a list that comes back takes a later stamp");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
@@ -435,6 +467,8 @@ void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
           TestDiagnosticsStoreRetargetsPathPrefixes);
   AddTest(tests, "DiagnosticsStore/ClearsPathPrefixes",
           TestDiagnosticsStoreClearsPathPrefixes);
+  AddTest(tests, "DiagnosticsStore/PathRevisionMovesWithItsOwnFileOnly",
+          TestDiagnosticsStorePathRevisionMovesWithItsOwnFileOnly);
   AddTest(tests, "DiagnosticsStore/TracksSeverityCountsAndRevision",
           TestDiagnosticsStoreTracksSeverityCountsAndRevision);
 }

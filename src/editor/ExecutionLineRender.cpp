@@ -53,7 +53,7 @@ void DrawExecutionLineGutterMarker(SDL_Renderer* renderer, const render::Theme& 
     spans.push_back(SDL_FRect{base_x, row_y, right - base_x, 1.0f});
   }
   if (!spans.empty()) {
-    SDL_RenderFillRects(renderer, spans.data(), static_cast<int>(spans.size()));
+    render::FillRectsInDrawColor(renderer, spans.data(), static_cast<int>(spans.size()));
   }
 }
 

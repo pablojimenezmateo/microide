@@ -83,25 +83,15 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
 // moves into the primitives; an entry that no longer draws (or no longer exists)
 // fails, so the list cannot go stale.
 namespace {
-constexpr std::array<std::string_view, 16> kSdlDrawAllowlist = {
-    // Hooked primitives (NotePaint) and the text front end's backends.
-    "src/workspace/render/WorkspaceShellRenderPrimitives.h",
+constexpr std::array<std::string_view, 5> kSdlDrawAllowlist = {
+    // The hooked primitives (NotePaint) -- the batched, geometry, texture and
+    // polyline forms included (FillRectsInDrawColor, DrawGeometry, DrawTexture,
+    // DrawPolyline) -- and the text front end's backends, whose strings and runs
+    // TextRenderer reports.
     "src/render/SurfacePrimitives.h",
     "src/render/ClipStableLine.h",
     "src/render/SdlTtfTextBackend.cpp",
     "src/render/DebugTextBackend.cpp",
-    "src/render/PluginDisplayListRenderer.cpp",
-    "src/editor/DecoratedTextGridRenderer.cpp",
-    // The editor path: derived-damage's owner takes these off with its editor stage.
-    "src/editor/EditorViewRenderer.cpp",
-    "src/editor/GutterIconRegistry.cpp",
-    "src/editor/BreakpointRender.cpp",
-    "src/editor/DiagnosticsRender.cpp",
-    "src/editor/ExecutionLineRender.cpp",
-    // Workspace render TUs whose calls move into primitives as their stages land.
-    "src/workspace/render/OverviewRuler.cpp",
-    "src/workspace/render/WorkspaceShellRenderBottomPanel.cpp",
-    "src/workspace/render/WorkspaceShellRenderFrame.cpp",
     // Presenting the finished scene texture: not an element's paint.
     "src/app/Application.cpp",
 };

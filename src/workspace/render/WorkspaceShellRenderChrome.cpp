@@ -33,7 +33,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // slid rects, the tab a drag lifted out, what the pointer lights -- no hover
   // from a pointer a drag holds still, none while the tabs slide after a release
   // (soak 38f44bf79ca8) -- and their titles, all settled once at frame prep.
-  const TabDragState& tab_drag = context_.interaction_state.tab_drag;
+  // Everything else it paints, as frame prep settled it (window_chrome).
+  const PreparedFrameState::WindowChromePaint& chrome = frame_state_.window_chrome;
   const auto draw_strip_tabs = [&](const PreparedFrameState::TabStripPaint& strip, const StripTabStyle& style,
                                    const StripTabPalette& palette, std::string_view element_name) {
     for (const PreparedFrameState::PanelTabPaint& tab : strip.tabs) {
@@ -53,14 +54,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                strip.overflow_right.hidden, strip.overflow_right.hovered);
   };
 
-  const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
-  const auto window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
-  for (const VisibleMenuBarItem& item : visible_menu_items) {
-    const MenuSpec* menu = FindMenuSpec(item.id);
-    if (menu == nullptr) {
-      continue;
-    }
-    const bool hovered = !item.active && PointerOver(item.rect);
+  for (const PreparedFrameState::WindowChromePaint::MenuItem& item : chrome.menu_items) {
+    const bool hovered = item.hovered;
     const SDL_Color background = item.active ? theme_.chrome_active
                                 : hovered    ? theme_.row_highlight
                                              : theme_.chrome_background;
@@ -72,11 +67,11 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
     DrawVCenteredTextOn(text_renderer_, renderer, item.rect, 10.0f,
                         item.active || hovered ? theme_.chrome_active_text : theme_.chrome_text,
-                        background, menu->label);
+                        background, item.label);
   }
 
-  if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value()) {
-    const bool hovered = PointerOver(*chevron);
+  if (const std::optional<SDL_FRect>& chevron = chrome.chevron; chevron.has_value()) {
+    const bool hovered = chrome.chevron_hovered;
     const SDL_Color background = hovered ? theme_.row_highlight : theme_.chrome_background;
     const SDL_Color glyph = hovered ? theme_.text_primary : theme_.chrome_text_secondary;
     DrawFilledRect(renderer, *chevron, background);
@@ -89,30 +84,26 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
   }
 
-  if (CurrentWindowChromeState().custom_enabled) {
-    const std::string_view title = frame_state_.window_title;
-    if (const auto title_rect =
-            WindowTitleRect(layout.menu_bar, visible_menu_items, window_buttons, text_renderer_.MeasureWidth(title));
-        title_rect.has_value()) {
-      DrawVCenteredTextOn(text_renderer_, renderer, *title_rect, 0.0f, theme_.chrome_text_secondary,
-                          theme_.chrome_background, title);
-    }
+  if (chrome.title_rect.has_value()) {
+    DrawVCenteredTextOn(text_renderer_, renderer, *chrome.title_rect, 0.0f, theme_.chrome_text_secondary,
+                        theme_.chrome_background, frame_state_.window_title);
   }
 
-  for (const VisibleWindowControlButton& button : window_buttons) {
-    // PointerOver, not the layout's raw-pointer `hovered`: under a modal the window
-    // controls do not light up (QA monkey: a maximize button hovered under a prompt).
-    const bool hovered = PointerOver(button.rect);
+  for (const PreparedFrameState::WindowChromePaint::WindowButton& button : chrome.window_buttons) {
+    // Lit by PointerOver at prep, not the layout's raw-pointer `hovered`: under a
+    // modal the window controls do not light up (QA monkey: a maximize button
+    // hovered under a prompt).
+    const bool hovered = button.hovered;
+    const auto id = static_cast<WindowControlButtonId>(button.id);
     SDL_Color background = hovered ? theme_.row_highlight : theme_.chrome_background;
     SDL_Color glyph = hovered ? theme_.text_primary : theme_.chrome_text_secondary;
-    if (button.id == WindowControlButtonId::Close && hovered) {
+    if (id == WindowControlButtonId::Close && hovered) {
       background = theme_.diff_deleted;
       glyph = theme_.text_primary;
     }
 
     DrawFilledRect(renderer, button.rect, background);
-    DrawWindowControlGlyph(renderer, button.rect, button.id, glyph,
-                           CurrentWindowChromeState().Expanded());
+    DrawWindowControlGlyph(renderer, button.rect, id, glyph, chrome.expanded);
   }
 
   // The project strip, when it shows (prep settles nothing for a hidden one).
@@ -135,15 +126,14 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // Each editor group owns its own tab strip. For a single group this is the
   // global tab-strip band (filled in the frame pass); a pane stacked below
   // another synthesizes its strip inside the editor area, filled here.
-  const EditorGroupRectsLayout editor_group_rects = ComputeEditorGroupRectsForState(layout);
 
   // Drag-to-split feedback (VS Code's drop overlay). Painted before the strips so
   // the floating ghost and the tab strips stay on top of it, and after the editor
   // panes (window chrome runs later in the frame) so it tints the buffer it will
   // replace. The rect was resolved on the motion event that produced it; nothing
   // is recomputed per frame.
-  if (tab_drag.body_drop() && tab_drag.dragging) {
-    const SDL_FRect& region = tab_drag.body_drop_rect;
+  if (chrome.tab_body_drop.has_value()) {
+    const SDL_FRect& region = *chrome.tab_body_drop;
     DrawFilledRect(renderer, region,
                    SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
     render::OutlineRect(renderer, region, theme_.accent);
@@ -163,9 +153,9 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       .inactive_glyph = chrome_tab_palette.inactive_glyph,
       .active_accent = render::BlendColors(theme_.accent, theme_.chrome_background, 0.6f),
   };
-  const std::size_t focused_group_index = FocusedEditorGroupIndex();
-  for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
-    const SDL_FRect group_tab_strip = editor_group_rects.groups[gi].tab_strip;
+  const std::size_t focused_group_index = chrome.focused_group;
+  for (std::size_t gi = 0; gi < chrome.groups.size(); ++gi) {
+    const SDL_FRect group_tab_strip = chrome.groups[gi].tab_strip;
     // A collapsed strip (the maximized panel owns the window) paints nothing: not
     // its tabs, not the "Welcome" placeholder an empty strip otherwise shows, not
     // its overflow chevrons. They all size off a floor and would land over the
@@ -175,10 +165,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
     // A single pane is always the focused one; only a split can hold a stale tab.
     const StripTabPalette& group_tab_palette =
-        (editor_group_rects.groups.size() > 1 && gi != focused_group_index)
+        (chrome.groups.size() > 1 && gi != focused_group_index)
             ? unfocused_group_tab_palette
             : chrome_tab_palette;
-    if (editor_group_rects.groups.size() > 1) {
+    if (chrome.groups.size() > 1) {
       DrawFilledRect(renderer, group_tab_strip, theme_.chrome_background);
       DrawFilledRect(renderer,
                      MakeRect(group_tab_strip.x,
@@ -228,17 +218,17 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
   }
 
-  const auto status_items = ComputeVisibleStatusItems(layout.breadcrumb);
-  for (const VisibleStatusItem& item : status_items) {
+  const auto& status_items = chrome.status_items;
+  for (const PreparedFrameState::WindowChromePaint::StatusItem& item : status_items) {
     // Tone tints the item background even when not hovered (so a warning/error
     // status reads at a glance); hover still lifts it to row_highlight.
     const SDL_Color tone_fill =
-        StatusToneColor(theme_, item.item.tone, theme_.chrome_background);
-    const bool has_tone = item.item.tone != StatusTone::Default;
+        StatusToneColor(theme_, item.tone, theme_.chrome_background);
+    const bool has_tone = item.tone != StatusTone::Default;
     // Only command-bound items are clickable, so only they earn the hover lift.
     // A bare path/status segment must not advertise clickability it doesn't have
     // (this also keeps the breadcrumb's hover/cursor/click regions in agreement).
-    const bool hovered = item.hovered && !item.item.command.empty();
+    const bool hovered = item.hovered;  // prep lights only command-bound items
     const SDL_Color text_color = hovered ? theme_.text_primary : theme_.text_muted;
     if (hovered) {
       DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.chrome_background, true);
@@ -253,8 +243,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
     float text_x = item.rect.x + 8.0f;
     // Leading icon, if the contributed name resolves to a built-in shape.
-    if (!item.item.icon.empty()) {
-      if (const auto shape = editor::GutterIconRegistry::ResolveShape(item.item.icon)) {
+    if (!item.icon.empty()) {
+      if (const auto shape = editor::GutterIconRegistry::ResolveShape(item.icon)) {
         const SDL_Color icon_color = has_tone ? tone_fill : theme_.accent;
         editor::GutterIconRegistry::Draw(renderer, *shape, icon_color, text_x, item.rect.y, 14.0f,
                                          item.rect.h);
@@ -263,7 +253,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     }
     // Trailing progress bar, if the item declares one.
     float text_right = item.rect.x + item.rect.w - 8.0f;
-    if (item.item.progress >= 0.0f) {
+    if (item.progress >= 0.0f) {
       constexpr float kBarW = 28.0f;
       const float bar_x = item.rect.x + item.rect.w - kBarW - 6.0f;
       const float bar_h = 4.0f;
@@ -271,7 +261,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       const SDL_FRect track{bar_x, bar_y, kBarW, bar_h};
       const SDL_Color track_color = render::BlendColors(row_bg, theme_.border, 0.6f);
       DrawFilledRect(renderer, track, SDL_Color{track_color.r, track_color.g, track_color.b, 0xff});
-      const SDL_FRect fill{bar_x, bar_y, kBarW * std::clamp(item.item.progress, 0.0f, 1.0f), bar_h};
+      const SDL_FRect fill{bar_x, bar_y, kBarW * std::clamp(item.progress, 0.0f, 1.0f), bar_h};
       const SDL_Color fill_color = has_tone ? tone_fill : theme_.accent;
       DrawFilledRect(renderer, fill, SDL_Color{fill_color.r, fill_color.g, fill_color.b, 0xff});
       text_right = bar_x - 6.0f;
@@ -279,7 +269,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     const SDL_FRect text_rect =
         MakeRect(text_x, item.rect.y, std::max(0.0f, text_right - text_x), item.rect.h);
     DrawVCenteredTextOn(text_renderer_, renderer, text_rect, 0.0f, text_color, row_bg,
-                        item.item.text);
+                        item.text);
   }
 
   // The breadcrumb is per PANE, not per window: a pane at the top of the editor
@@ -289,37 +279,36 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // the right column was showing. Panes below the top row have no band of their
   // own (`breadcrumb.w == 0`); their column's band belongs to the pane it sits
   // over. For a single pane this is byte-identical to the old full-width band.
-  for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
-    const SDL_FRect band = editor_group_rects.groups[gi].breadcrumb;
+  for (std::size_t gi = 0; gi < chrome.groups.size(); ++gi) {
+    const SDL_FRect band = chrome.groups[gi].breadcrumb;
     if (band.w <= 0.0f || band.h <= 0.0f) {
       continue;
     }
     const auto [breadcrumb_text_x, breadcrumb_text_right] = BreadcrumbTextSpan(
-        band, status_items, [](const VisibleStatusItem& item) { return item.item.alignment == StatusAlignment::Left; });
+        band, status_items,
+        [](const PreparedFrameState::WindowChromePaint::StatusItem& item) { return item.left_aligned; });
     const float breadcrumb_text_width = std::max(0.0f, breadcrumb_text_right - breadcrumb_text_x);
     DrawVCenteredTextOn(text_renderer_, renderer,
                         MakeRect(breadcrumb_text_x, band.y, breadcrumb_text_width, band.h), 0.0f,
                         theme_.chrome_text, theme_.chrome_background,
-                        TruncateLabelView(BreadcrumbLabel(gi), breadcrumb_text_width));
+                        TruncateLabelView(chrome.groups[gi].breadcrumb_label, breadcrumb_text_width));
   }
 
   // The tree drag (PathDragState): the drop preview over what the release would
   // drop on -- a pane or the half an edge drop carves, a folder's row, the
   // terminal -- and the dragged name riding beside the pointer. Both are Chrome
   // units (PrepareFrameOnce), so the motion that moves them owes a frame.
-  const PathDragState& path_drag = context_.interaction_state.path_drag;
-  if (path_drag.dragging) {
-    if (path_drag.target != PathDragState::Target::None) {
-      DrawFilledRect(renderer, path_drag.drop_rect,
-                     SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
-      render::OutlineRect(renderer, path_drag.drop_rect, theme_.accent);
-    }
-    const SDL_FRect ghost = PathDragGhostRect(path_drag, text_renderer_);
+  if (chrome.path_drop.has_value()) {
+    DrawFilledRect(renderer, *chrome.path_drop, SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
+    render::OutlineRect(renderer, *chrome.path_drop, theme_.accent);
+  }
+  if (chrome.path_ghost.has_value()) {
+    const SDL_FRect& ghost = *chrome.path_ghost;
     DrawFilledRect(renderer, ghost, theme_.surface_raised);
     render::OutlineRect(renderer, ghost, theme_.border);
     DrawVCenteredTextOn(text_renderer_, renderer, ghost, kPathDragGhostPaddingPx, theme_.text_primary,
                         theme_.surface_raised,
-                        TruncateLabelView(path_drag.label, ghost.w - 2.0f * kPathDragGhostPaddingPx));
+                        TruncateLabelView(chrome.path_label, ghost.w - 2.0f * kPathDragGhostPaddingPx));
   }
 }
 

@@ -279,12 +279,6 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   QueueEditorHoverRefresh();
 }
 
-// "Anything in the window may have changed." What the window paints is derived --
-// the chrome and its style, the panes, the panels, every sidebar view, the cards
-// and menus -- so that owes a frame, and the frame repaints what did change. This
-// named the window: every click or wheel no handler damaged repainted all of it.
-void WorkspaceShell::RequestWindowRedraw() { RequestPreparedFrame(); }
-
 void WorkspaceShell::RequestCursorPresent() {
   // Not damage: nothing in the scene changed, the compositor just has to commit a
   // frame so it re-latches the hardware cursor plane and an event-time cursor
@@ -292,6 +286,15 @@ void WorkspaceShell::RequestCursorPresent() {
   pending_render_invalidation_.present = true;
 }
 
+// "Something on screen may have changed": the one way to ask for a repaint.
+// Everything the window paints is a derived surface (openspec derived-damage) --
+// the chrome and its style, the strips and bands, the editor, compare and merge
+// panes, the sidebar's views, the bottom panel and the debug pane, the overlays,
+// prompts, menus, cards and toasts -- so a change names no rect: the frame lays
+// out each surface's units, damages the ones whose fingerprint or rect moved, and
+// paints nothing when none did. Each area once had its own request naming a rect
+// (the window, the sidebar, the editor surface, the panel, the strip...), and the
+// stale pixels were the rects someone forgot.
 void WorkspaceShell::RequestPreparedFrame() {
   // A frame whose damage frame prep derives (RenderInvalidation::frame). It is a
   // request like any rect: an EnsureRedraw fallback after it must not fire, or a
@@ -305,20 +308,13 @@ void WorkspaceShell::RequestPreparedFrame() {
   InvalidateCursorKindFingerprint();
 }
 
-// "The sidebar changed." Every view is derived -- its mode row, and its own
-// surface's rows, buttons and scrollbar -- so this owes a frame. With the sidebar
-// hidden the frame still runs what rode on the rect this asked for then: the
-// status bar's branch and counts, re-derived at prep, and project search shown in
-// the overlay.
-void WorkspaceShell::RequestSidebarRedraw() { RequestPreparedFrame(); }
-
 void WorkspaceShell::RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
                                                     SDL_FRect WorkspaceLayout::*first,
                                                     SDL_FRect WorkspaceLayout::*second) {
   NoteLayoutInputsChanged();
   const auto current_layout = CurrentWorkspaceLayout();
   if (!current_layout.has_value()) {
-    RequestWindowRedraw();
+    RequestPreparedFrame();
     return;
   }
   if (RectsEqual(previous_layout.*first, (*current_layout).*first) &&
@@ -336,24 +332,6 @@ void WorkspaceShell::RequestSidebarLayoutChangeRedraw(
   RequestOuterLayoutChangeRedraw(previous_layout, &WorkspaceLayout::sidebar,
                                  &WorkspaceLayout::content);
 }
-
-// The tab strips and breadcrumb bands of every pane are Chrome units keyed on what
-// they paint -- each tab shown, its title, dirty mark and badge, the hovered tab,
-// the overflow chevrons, the slide and a drag's ghost -- and the window title the
-// active tab names is the menu bar's. A change to any of them owes a frame; these
-// named the top strip (or each row of strips in a split, or the menu bar under a
-// maximized panel), and a strip they missed kept its old tabs.
-void WorkspaceShell::RequestBreadcrumbRedraw() { RequestPreparedFrame(); }
-
-void WorkspaceShell::RequestTabStripRedraw() { RequestPreparedFrame(); }
-
-// Everything the editor area paints is derived: each pane's rows (EditorRowUnits),
-// a compare's and a merge's rows and bars, the find widget and the completion card
-// (DerivedSurface::Overlay), the hover and signature cards, the debug toolbar, the
-// banner strip, the split dividers and a tab drag's drop region (Chrome units). So
-// "the editor area changed" owes a frame, and the frame repaints the parts that
-// did; this named the whole area.
-void WorkspaceShell::RequestEditorSurfaceRedraw() { RequestPreparedFrame(); }
 
 // An edit was applied to the active editable surface (an editor, a diff's
 // working side, a merge result): everything that holds coordinates into its text
@@ -391,14 +369,6 @@ void WorkspaceShell::NoteActiveEditableEdit() {
   (void)debug_service_.ShiftBreakpointsForViewportEdit(*viewport);
 }
 
-// The active tab changed: its strip, its breadcrumb, its pane and the tree's row
-// for its file are all derived, so this owes one frame. (The parameter asked for
-// the sidebar's rect; it is unused and goes with its callers' arguments.)
-void WorkspaceShell::RequestActiveTabRedraw(bool include_tree_sidebar) {
-  (void)include_tree_sidebar;
-  RequestPreparedFrame();
-}
-
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                                        const std::vector<std::string>& after_lines) {
   SyncLspForActiveEditableChange(before_lines, after_lines);
@@ -408,60 +378,11 @@ void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::st
   RequestPreparedFrame();
 }
 
-void WorkspaceShell::RequestBottomPanelRedraw() {
-  // "The bottom panel changed." What it shows is derived, whoever changed it: its
-  // header's tabs and buttons, an output channel's rows, the terminal's chrome,
-  // each pane's rows (a unit each: PrepareTerminalGridFrame), its find bar, and
-  // the body itself when another kind of content or another terminal tab takes
-  // it, or a plugin's surface changing (the chrome's body unit). So the change
-  // owes a frame. It named the panel's rect -- for every chunk of terminal
-  // output, whichever tab was in front -- and, with the panel closed, the WHOLE
-  // WINDOW (as the hidden sidebar's fallback did, TD-2026-10-15-341): nothing of
-  // a closed panel is on screen, and the regions it takes or leaves are units.
-  RequestPreparedFrame();
-}
-
-void WorkspaceShell::RequestDebugPaneRedraw() {
-  // The debug surfaces (Call Stack / Variables / Watch / Breakpoints) are the
-  // right-side dock, a derived surface (DerivedSurface::DebugPane): a DAP callback
-  // that changed one of its models owes a frame, and frame prep repaints the rows
-  // that changed. This named the dock's rect -- and, with the dock hidden, the
-  // whole window: every stop, step, variables and stack reply of a session
-  // repainted the window while the pane was closed.
-  RequestPreparedFrame();
-}
-
 void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
     const WorkspaceLayout& previous_layout) {
   RequestOuterLayoutChangeRedraw(previous_layout, &WorkspaceLayout::content,
                                  &WorkspaceLayout::bottom_panel);
 }
-
-void WorkspaceShell::RequestBottomPanelContentRedraw() {
-  // "The panel's body changed": a key sent to the terminal, a scroll, an edit in
-  // its find bar. All of it is derived -- the grid's rows, the find bar, the
-  // caret, an output channel's rows -- so it owes a frame. It named the body's
-  // rect: every key typed into a terminal repainted all its rows, then the echo
-  // repainted them again. A plugin's surface is the body's unit, keyed on what
-  // it holds, its scroll and its images.
-  RequestPreparedFrame();
-}
-
-void WorkspaceShell::RequestOverlayRedraw() {
-  // Every overlay is derived: Settings and Help & About (SettingsCardPaint.h: the
-  // card's chrome, each rail and value row), and the others (PrepareOverlayUnits:
-  // the card, each visible row and the scrollbar, or the find widget's fields and
-  // buttons), with the backdrop they dim the window with a Chrome unit. So an
-  // overlay opening, filtering, scrolling, lit or closing owes a frame; these
-  // named the card and the region it dims, or the window when the card had gone.
-  RequestPreparedFrame();
-}
-
-// The prompts are derived: each dialog is a Chrome unit keyed on all it paints,
-// the backdrop that dims the window under it is another, and its caret a third.
-// A prompt's change owes a frame; it used to name its card, or the whole window
-// when it opened or closed (the backdrop's unit repaints the window then anyway).
-void WorkspaceShell::RequestPromptRedraw() { RequestPreparedFrame(); }
 
 void WorkspaceShell::QueueEditorHoverRefresh() {
   // A card pinned to the caret (Show Hover) refreshes with no pointer at all.
@@ -996,7 +917,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
     if (search.editing && search.edit_field != ProjectSearchEditField::Replace) {
       ProjectSearchFieldEditor(search, search.edit_field).SetText(search.edit_buffer.text());
       RefreshProjectSearch();
-      RequestSidebarRedraw();
+      RequestPreparedFrame();
     }
   }
   // "After delay" autosave fires once the debounce elapses. Disarm before saving so a
@@ -1189,12 +1110,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
         (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
       }
     }
-    return EventResult{
-        .handled = true,
-        .redraw = layout.has_value()
-                      ? RenderInvalidation{.full = false, .rects = {layout->editor_surface}}
-                      : RenderInvalidation{.full = true, .rects = {}},
-    };
+    // The scroll and the selection are in the panes' row keys: the frame repaints
+    // the rows they moved, not the editor area.
+    return EventResult{.handled = true, .redraw = RenderInvalidation{.frame = true}};
   }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }
@@ -1210,8 +1128,8 @@ WorkspaceShell::ConsumePostRenderRedrawRequest() {
   // shows. It used to force two whole-window redraws per reflow, which on the
   // startup path — a restored terminal tab is re-gridded on the first prepared
   // frame — meant two more full renders of a frame the user was already looking
-  // at. Scope them to the panel; RequestBottomPanelRedraw falls back to a window
-  // repaint when the panel is not laid out or not visible.
+  // at. Scope them to the panel, or the window when the panel is not laid out or
+  // not visible.
   RenderInvalidation invalidation;
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
     invalidation.Add(layout->bottom_panel);

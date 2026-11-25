@@ -95,7 +95,7 @@
   }
   static bool BottomPanelVisible(const WorkspaceShell& shell) { return shell.BottomPanelVisible(); }
   // "The bottom panel changed", as the services that own its content say it.
-  static void RequestBottomPanelRedraw(WorkspaceShell& shell) { shell.RequestBottomPanelRedraw(); }
+  static void RequestPreparedFrame(WorkspaceShell& shell) { shell.RequestPreparedFrame(); }
   static void HideBottomPanel(WorkspaceShell& shell) {
     shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::None;
   }

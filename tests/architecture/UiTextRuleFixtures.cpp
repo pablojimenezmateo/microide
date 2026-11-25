@@ -74,6 +74,28 @@ void RunDerivedSurfacePaintRuleFixtures() {
   Expect(!flags("  const PreparedFrameState& frame = frame_state_;  // not context_ here\n"
                 "  DrawFilledRect(r, frame.status_bar.rect, theme_.chrome_background);"),
          "the derived-paint rule must pass a paint that reads only the prepared frame");
+  // What the paint CALLS: a shell member it reaches, however deep, reads nothing
+  // live either (the blame card's paint was clean and asked the blame service
+  // through a helper).
+  const std::filesystem::path helpers = root / "src/workspace/render/ProbeHelpers.cpp";
+  const auto calls = [&](const std::string& helper_text) {
+    WriteFile(helpers, helper_text);
+    WriteFile(file, "void WorkspaceShell::RenderStatusBar(SDL_Renderer* r, const WorkspaceLayout& l) const {\n"
+                    "  DrawProbe(r);\n}\n");
+    const bool flagged = !CheckDerivedSurfacePaintReadsOnlyItsSnapshot(root).violations.empty();
+    std::filesystem::remove(helpers);
+    return flagged;
+  };
+  Expect(calls("void WorkspaceShell::DrawProbe(SDL_Renderer* r) const {\n  if (context_.prompts.dirty_visible) {}\n}\n"),
+         "the derived-paint rule must flag a member the paint calls that reads live state");
+  Expect(calls("void WorkspaceShell::DrawProbe(SDL_Renderer* r) const {\n  LabelOf(r);\n}\n"
+               "std::string_view WorkspaceShell::LabelOf(SDL_Renderer*) const {\n"
+               "  return editor_blame_overlay_service_.Label();\n}\n"),
+         "the derived-paint rule must flag a live read two calls down");
+  Expect(!calls("void WorkspaceShell::DrawProbe(SDL_Renderer* r) const {\n"
+                "  DrawFilledRect(r, frame_state_.status_bar.rect, theme_.border);  // not context_\n}\n"
+                "void Unrelated() { context_.x(); }\n"),
+         "the derived-paint rule must pass a member the paint calls that reads only the prepared frame");
   // What the function is HANDED: a parameter that is a live source, and one
   // reached through the fields of a prepared-inputs struct, however deep.
   const std::filesystem::path header = root / "src/workspace/render/ProbeInputs.h";

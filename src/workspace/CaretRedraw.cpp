@@ -53,16 +53,16 @@ void WorkspaceShell::RequestSingleLineDragSurfaceRedraw(DamageMark mark,
                                                         TextInputSurface surface) {
   switch (surface) {
     case TextInputSurface::PromptInput:
-      EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::SidebarSearchInclude:
     case TextInputSurface::SidebarSearchExclude:
-      EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       break;
     default:
-      EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       break;
   }
 }

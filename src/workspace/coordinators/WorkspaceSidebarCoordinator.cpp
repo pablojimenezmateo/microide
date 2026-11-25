@@ -286,8 +286,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return OpenProjectTab(root, restore_persistence, log_feedback);
               },
           .stop_project_search = [this]() { StopProjectSearch(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
-          .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
+          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .consume_git_refresh_snapshot =
@@ -508,7 +508,7 @@ void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
       context_.current_project_state.root, context_.current_project_state.launcher(), scope,
       context_.current_project_state.sidebar.git.outgoing_base_choice,
       context_.current_project_state.sidebar.git.tree_git_badges_materialized);
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
@@ -528,9 +528,9 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
 void WorkspaceShell::OnFramePresented() {
   MaybeRequestTreeGitBadgesAfterFirstPaint();
   // A compare/merge tokenizer still catching up: the next frame takes its next
-  // step (see PreparedFrameState::syntax_catch_up_rect).
-  if (const std::optional<SDL_FRect> rect = std::exchange(frame_state_.syntax_catch_up_rect, std::nullopt)) {
-    RequestRedrawRect(*rect);
+  // step (see PreparedFrameState::syntax_catch_up_owed).
+  if (std::exchange(frame_state_.syntax_catch_up_owed, false)) {
+    RequestPreparedFrame();
   }
   // Run any LSP hydration deferred by a tab switch now that the tab-switch frame
   // is on screen (TD-2026-07-17A-033). No-op when nothing was scheduled.
@@ -679,7 +679,7 @@ bool WorkspaceShell::RefreshTestsSidebarState() {
   RevealSelectedTestsSidebarLine();
   if (context_.current_project_state.sidebar.visible &&
       ActiveSidebarMode() == SidebarMode::Tests) {
-    RequestSidebarRedraw();
+    RequestPreparedFrame();
   }
   return !context_.current_project_state.sidebar.tests.entries.empty();
 }

@@ -96,25 +96,21 @@ std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayo
   return below;
 }
 
-void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceLayout& layout,
-                                        bool session_stopped,
-                                        std::optional<float> avoid_below_y) const {
-  if (renderer == nullptr) {
-    return;
-  }
-  const DebugToolbarLayout tb =
-      ComputeDebugToolbarLayout(ActiveTabSurface(layout), avoid_below_y, DebugSupportsReverse());
-  if (tb.widget.w <= 0.0f || tb.widget.h <= 0.0f) {
+// The toolbar as frame prep laid it out (PreparedFrameState::debug_toolbar).
+void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer) const {
+  const PreparedFrameState::DebugToolbarPaint& toolbar = frame_state_.debug_toolbar;
+  const DebugToolbarLayout& tb = toolbar.layout;
+  const bool session_stopped = toolbar.stopped;
+  if (renderer == nullptr || !toolbar.visible || tb.widget.w <= 0.0f || tb.widget.h <= 0.0f) {
     return;
   }
 
   // Floating card only — the editor stays visible/usable underneath.
   render::DrawCardFrame(renderer, theme_, tb.widget, render::CardStyle::Overlay);
 
-  // PointerOver, not the raw pointer: under a modal nothing outside it hovers, and
-  // the toolbar lit a button through the Add Watch prompt in full frames only
-  // (QA dbg-stepping on the CI ASan lane).
-  const auto is_hovered = [&](const SDL_FRect& rect) { return PointerOver(rect); };
+  // Hover as prep resolved it with PointerOver, not the raw pointer: under a modal
+  // nothing outside it hovers, and the toolbar lit a button through the Add Watch
+  // prompt in full frames only (QA dbg-stepping on the CI ASan lane).
 
   const auto button_enabled = [&](DebugToolbarButton button) {
     return IsStepButton(button) ? session_stopped : true;
@@ -128,7 +124,7 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
     const DebugToolbarButton button = tb.kinds[i];
     const SDL_FRect& rect = tb.buttons[i];
     const bool enabled = button_enabled(button);
-    const bool pointer_over = is_hovered(rect);
+    const bool pointer_over = toolbar.pointer_over[i];
     const bool hovered = enabled && pointer_over;
     if (hovered) {
       hovered_index = i;
@@ -262,7 +258,7 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
         break;
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
     return true;
   }
 

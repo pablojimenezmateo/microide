@@ -28,6 +28,8 @@
 #include "editor/EditorViewRenderer.h"
 #include "terminal/TerminalCell.h"
 #include "workspace/render/DerivedDamage.h"
+#include "workspace/render/HoverCardPaint.h"
+#include "workspace/StatusTone.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/render/TerminalRowPaint.h"
 #include "workspace/EditorHoverTypes.h"
@@ -294,6 +296,96 @@ struct DiffSurfacePaint {
   const editor::FileDecorations* decorations = nullptr;
 };
 
+// The paint passes RenderClip skips for a clip that touches nothing they paint.
+// Everything else (the frame base, the overlays, menus, status bar, prompts,
+// toasts) runs for every clip.
+enum class PaintPass : std::uint8_t { Editor, WindowChrome, Sidebar, RightPane, BottomPanel, Count };
+// Who paints a Chrome unit: one of the skippable passes, or a pass that runs for
+// every clip (`Always`: the frame base, the floating cards and dialogs).
+enum class ChromePainter : std::uint8_t { Editor, WindowChrome, Sidebar, RightPane, BottomPanel, Always };
+static_assert(static_cast<int>(ChromePainter::Editor) == static_cast<int>(PaintPass::Editor) &&
+                  static_cast<int>(ChromePainter::WindowChrome) == static_cast<int>(PaintPass::WindowChrome) &&
+                  static_cast<int>(ChromePainter::Sidebar) == static_cast<int>(PaintPass::Sidebar) &&
+                  static_cast<int>(ChromePainter::RightPane) == static_cast<int>(PaintPass::RightPane) &&
+                  static_cast<int>(ChromePainter::BottomPanel) == static_cast<int>(PaintPass::BottomPanel) &&
+                  static_cast<int>(ChromePainter::Always) == static_cast<int>(PaintPass::Count),
+              "a skippable painter is its pass");
+
+// The rects one skippable pass paints in a frame (PreparedFrameState::paint_pass_extents).
+// Kept apart up to the capacity; past it, the rest join one bounding rect, so a
+// pass is never skipped for a clip over something it paints.
+class PaintPassExtent {
+ public:
+  static constexpr std::size_t kSeparateRects = 24;
+  void Clear() {
+    rects_.clear();
+    spill_.reset();
+  }
+  void Add(const SDL_FRect& rect) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f) {
+      return;
+    }
+    if (rects_.size() < kSeparateRects) {
+      rects_.push_back(rect);
+      return;
+    }
+    if (!spill_.has_value()) {
+      spill_ = rect;
+      return;
+    }
+    const float left = std::min(spill_->x, rect.x);
+    const float top = std::min(spill_->y, rect.y);
+    const float right = std::max(spill_->x + spill_->w, rect.x + rect.w);
+    const float bottom = std::max(spill_->y + spill_->h, rect.y + rect.h);
+    spill_ = SDL_FRect{left, top, right - left, bottom - top};
+  }
+  // Whether a clip over `clip` reaches anything this pass paints.
+  bool Touches(const SDL_FRect& clip) const {
+    const auto overlaps = [&clip](const SDL_FRect& r) {
+      return clip.x < r.x + r.w && r.x < clip.x + clip.w && clip.y < r.y + r.h && r.y < clip.y + clip.h;
+    };
+    return std::any_of(rects_.begin(), rects_.end(), overlaps) || (spill_.has_value() && overlaps(*spill_));
+  }
+  bool Empty() const { return rects_.size() == 0 && !spill_.has_value(); }
+  // Whether one rect the pass declared holds `drawn` (a logical pixel of slack for
+  // device snapping): what render::PaintPassScope checks each of its draws with.
+  bool Covers(const SDL_FRect& drawn) const {
+    constexpr float kSlack = 1.0f;
+    const auto holds = [&drawn](const SDL_FRect& r) {
+      return drawn.x >= r.x - kSlack && drawn.y >= r.y - kSlack && drawn.x + drawn.w <= r.x + r.w + kSlack &&
+             drawn.y + drawn.h <= r.y + r.h + kSlack;
+    };
+    return std::any_of(rects_.begin(), rects_.end(), holds) || (spill_.has_value() && holds(*spill_));
+  }
+  // The render layer's form of Covers (render::PaintPassScope::Covers).
+  static bool CoversThunk(const void* extent, const SDL_FRect& drawn) {
+    return static_cast<const PaintPassExtent*>(extent)->Covers(drawn);
+  }
+
+ private:
+  util::InlineVector<SDL_FRect, kSeparateRects> rects_;
+  std::optional<SDL_FRect> spill_;
+};
+
+struct PaintPassExtents {
+  // A pass whose layout region is empty (the layout collapsed or hid it) paints
+  // nothing, hinted or not.
+  std::array<bool, static_cast<std::size_t>(PaintPass::Count)> region_shown{};
+  std::array<PaintPassExtent, static_cast<std::size_t>(PaintPass::Count)> extents;
+  void Clear() {
+    region_shown.fill(false);
+    for (PaintPassExtent& extent : extents) {
+      extent.Clear();
+    }
+  }
+  PaintPassExtent& operator[](PaintPass pass) { return extents[static_cast<std::size_t>(pass)]; }
+  // Whether `pass` runs for a clip over `hint` (nullopt: a full frame).
+  bool Runs(PaintPass pass, const std::optional<SDL_FRect>& hint) const {
+    const std::size_t i = static_cast<std::size_t>(pass);
+    return region_shown[i] && (!hint.has_value() || extents[i].Touches(*hint));
+  }
+};
+
 struct PreparedFrameState {
   // ---- decided once per prepared frame ---------------------------------
   // The caret blink phase. Paint sites read this, never the clock.
@@ -320,11 +412,136 @@ struct PreparedFrameState {
   // enabled flag read twice in one frame could differ (a terminal's exit lands on
   // its reader thread), and the partial frame and a full render of it disagreed.
   std::array<MenuPopupPaint, static_cast<std::size_t>(MenuPopupSlot::Count)> menu_popups{};
-  // This frame's editor hover card layout (none: no card), laid out at prep;
-  // its paint reads it and its Chrome unit keys on its rect.
-  std::optional<EditorHoverPopupLayout> hover_popup;
-  // This frame's signature-help card rect (none: hidden), laid out at prep.
-  std::optional<SDL_FRect> signature_help_rect;
+  // The floating cards, laid out whole at prep (HoverCardPaint.h): what their
+  // paint draws, and what their Chrome units key on.
+  CardPaint editor_hover_card;
+  CardPaint signature_card;
+  CardPaint tooltip_card;
+  // The window chrome as RenderWindowChrome paints it, beside the strips' own
+  // snapshots: the menu bar (its items, the overflow chevron, the title, the
+  // window buttons), each editor group's strip and band and the breadcrumb it
+  // names, the plugin status items, and the two drags' previews. Settled at prep,
+  // where each Chrome unit keys on its part.
+  struct WindowChromePaint {
+    struct MenuItem {
+      SDL_FRect rect{};
+      std::string_view label;  // the menu spec's static label
+      bool active = false;
+      bool hovered = false;
+    };
+    struct WindowButton {
+      SDL_FRect rect{};
+      int id = 0;  // WorkspaceShell::WindowControlButtonId
+      bool hovered = false;
+    };
+    struct Group {
+      SDL_FRect tab_strip{};
+      SDL_FRect breadcrumb{};
+      std::string breadcrumb_label;
+    };
+    struct StatusItem {
+      SDL_FRect rect{};
+      std::string text;
+      std::string icon;
+      StatusTone tone = StatusTone::Default;
+      float progress = -1.0f;
+      bool hovered = false;    // lit: under the pointer and clickable
+      bool left_aligned = false;
+    };
+    std::vector<MenuItem> menu_items;
+    std::optional<SDL_FRect> chevron;
+    bool chevron_hovered = false;
+    std::optional<SDL_FRect> title_rect;  // the title, when the custom chrome shows one
+    std::vector<WindowButton> window_buttons;
+    bool expanded = false;
+    std::vector<Group> groups;
+    std::size_t focused_group = 0;
+    std::vector<StatusItem> status_items;
+    std::optional<SDL_FRect> tab_body_drop;  // a tab dragged over a pane's body
+    std::optional<SDL_FRect> path_drop;      // a tree drag's drop preview
+    std::optional<SDL_FRect> path_ghost;     // and the name riding the pointer
+    std::string path_label;
+  };
+  WindowChromePaint window_chrome;
+  // What the editor pass paints in each pane, in its order: every diff or merge in
+  // front of a pane (in the group's editor surface), then every editor pane (from
+  // its EditorPanePaint). RenderActiveWorkspaceSurface dispatches on this alone.
+  struct EditorPassPane {
+    enum class Kind : std::uint8_t { Editor, Compare, Merge };
+    Kind kind = Kind::Editor;
+    std::size_t group = 0;
+    SDL_FRect area{};
+    bool focused = false;  // the focused group's (a diff's caret, its merge's focus)
+    bool active = false;   // the active pane's (an editor's caret)
+    CompareTabState* compare = nullptr;
+    MergeTabState* merge = nullptr;
+  };
+  std::vector<EditorPassPane> editor_pass_panes;
+  // What the overlay card's paint lights by the pointer, resolved with PointerOver
+  // when its units are keyed (PrepareOverlayUnits): each visible row, the find
+  // widget's buttons, and the scrollbar while dragged.
+  struct OverlayPointerPaint {
+    std::vector<bool> row_hovered;
+    bool scrollbar_dragged = false;
+    std::array<bool, kFindWidgetMaxToggles> toggle_hovered{};
+    bool prev_hovered = false;
+    bool next_hovered = false;
+    bool close_hovered = false;
+    bool replace_hovered = false;
+    bool replace_all_hovered = false;
+  };
+  OverlayPointerPaint overlay_pointer;
+  // What the editor pass paints around its panes (PaintEditorAreaChrome): the split
+  // dividers, lit while dragged; the external-change banner over the focused
+  // editor, its message and buttons, lit under the pointer; the editor's focus ring.
+  struct EditorAreaChromePaint {
+    struct Divider {
+      SDL_FRect rect{};
+      bool lit = false;
+    };
+    struct Banner {
+      bool shown = false;
+      SDL_FRect strip{};
+      std::string message;
+      EditorBannerButtonLayout buttons;
+      std::array<bool, kMaxEditorBannerButtons> hovered{};
+      bool dismiss_hovered = false;
+    };
+    std::vector<Divider> dividers;
+    Banner banner;
+    bool focus_ring = false;
+  };
+  EditorAreaChromePaint editor_area_chrome;
+  // What the frame base paints beyond the layout (RenderFrameBase): which side
+  // regions show, and the sidebar's divider lit while it is dragged.
+  struct FrameBasePaint {
+    bool sidebar_visible = false;
+    bool bottom_panel_visible = false;
+    bool sidebar_divider_lit = false;
+  };
+  FrameBasePaint frame_base;
+  // A prompt dialog as its paint draws it (RenderPromptSurface for the prompt,
+  // RenderDirtyPromptSurface for the unsaved-changes one): its texts, its input
+  // field's displayed text, its buttons' labels, hover and selection. Its unit
+  // keys on all of it (FingerprintOf).
+  struct PromptDialogPaint {
+    bool shown = false;
+    std::string title;
+    std::string message;
+    std::string detail;
+    bool text_input = false;
+    std::string input_text;
+    int laid_out_buttons = 0;     // the count the button rects are laid out for
+    std::size_t button_count = 0;  // the buttons drawn: rects and labels both
+    std::array<std::string_view, 4> labels{};  // static labels
+    std::array<bool, 4> hovered{};
+    int selected = -1;
+  };
+  PromptDialogPaint prompt_dialog;
+  PromptDialogPaint dirty_prompt_dialog;
+  // The focused single-line field's selection and IME preedit, and its caret.
+  CardPaint text_input_marks;
+  CardPaint text_input_caret;
   // The plugin status items' hash, which the breadcrumb bands' units key on.
   std::uint64_t status_items_hash = 0;
   // This frame's menu-bar popup, submenu and context menu rects (none: closed),
@@ -346,12 +563,14 @@ struct PreparedFrameState {
   // -- CompareRowUnits, derived-damage 2.5 -- and every diff pane's scrollbars
   // are Chrome units, laid out with the panes.)
   // A compare or merge surface whose syntax tokenizer is still behind its visible
-  // window after this frame's capped step: OnFramePresented requests it, so the
-  // NEXT frame takes the next step. Damage requested during prep belongs to the
+  // window after this frame's capped step: OnFramePresented asks for a frame, so
+  // the NEXT frame takes the next step. A request made during prep belongs to the
   // frame being prepared, so prep cannot schedule a following frame itself -- the
   // catch-up stalled after one step, and the rows it then reached on some later
   // frame were never repainted highlighted (QA monkey, commands profile, seed 61).
-  std::optional<SDL_FRect> syntax_catch_up_rect;
+  // A frame, not the surface's rect: each row keys on its tokens
+  // (CompareRowUnits), so a step repaints the rows it coloured.
+  bool syntax_catch_up_owed = false;
   // The focused pane's frame inputs its rows key on (EditorRowUnits): its
   // bracket-match pair and its occurrence highlights, one (line, hash of that
   // line's ranges) per line, sorted.
@@ -369,15 +588,16 @@ struct PreparedFrameState {
   // run state its Continue/Pause button and step buttons draw. A session that
   // stopped or resumed repainted the debug pane and the menu bar but not the
   // toolbar, so its first button kept reading Pause over a stopped program.
-  struct DebugToolbar {
+  // The debug toolbar as RenderDebugToolbar paints it: its layout, the run state
+  // that enables the step buttons and picks the play or pause glyph, and which
+  // button the pointer is over.
+  struct DebugToolbarPaint {
     bool visible = false;
     bool stopped = false;
-    SDL_FRect rect{};
-    bool operator==(const DebugToolbar& o) const {
-      return visible == o.visible && stopped == o.stopped && rect.x == o.rect.x &&
-             rect.y == o.rect.y && rect.w == o.rect.w && rect.h == o.rect.h;
-    }
+    DebugToolbarLayout layout;
+    std::array<bool, static_cast<std::size_t>(DebugToolbarButton::Count)> pointer_over{};
   };
+  DebugToolbarPaint debug_toolbar;
 
   // ---- derived damage (openspec derived-damage) -------------------------
   // Each migrated surface's units as last painted; prep compares and damages.
@@ -730,6 +950,15 @@ struct PreparedFrameState {
   // instead of in paint; its views point into the service's rows, alive for the
   // frame. PaintNotificationToasts draws only this.
   NotificationsViewModel notification_toasts;
+
+  // ---- what each skippable paint pass draws (RenderClip) ----
+  // A partial frame runs a pass only when its clip touches something the pass
+  // paints. What it paints is prepared here, not listed by RenderClip from live
+  // state: the pass's layout region, and the rect of every Chrome unit the pass
+  // draws, which names its pass where it is keyed (FramePrepPass::ChromeUnit) --
+  // the strips and bands over the editor column, a tab or tree drag's preview
+  // over a pane, the split dividers above the editor surface, the hover cards.
+  PaintPassExtents paint_pass_extents;
 };
 
 // The fingerprint of everything a status-bar segment paints. The structured
@@ -766,9 +995,132 @@ inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelTabPaint& tab,
       .value();
 }
 
+// The window chrome's parts, each the key of the Chrome unit that paints it.
+inline std::uint64_t FingerprintOf(const PreparedFrameState::WindowChromePaint::MenuItem& item) {
+  const auto& [rect, label, active, hovered] = item;
+  return PaintFingerprint().Add(rect).Add(label).Add(active).Add(hovered).value();
+}
+inline std::uint64_t FingerprintOf(const PreparedFrameState::WindowChromePaint::WindowButton& button, bool expanded) {
+  const auto& [rect, id, hovered] = button;
+  return PaintFingerprint().Add(rect).Add(id).Add(hovered).Add(expanded).value();
+}
+inline std::uint64_t FingerprintOf(const PreparedFrameState::WindowChromePaint::StatusItem& item) {
+  const auto& [rect, text, icon, tone, progress, hovered, left_aligned] = item;
+  return PaintFingerprint()
+      .Add(rect)
+      .Add(std::string_view(text))
+      .Add(std::string_view(icon))
+      .Add(tone)
+      .Add(progress)
+      .Add(hovered)
+      .Add(left_aligned)
+      .value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::EditorAreaChromePaint::Banner& banner) {
+  const auto& [shown, strip, message, buttons, hovered, dismiss_hovered] = banner;
+  PaintFingerprint key;
+  key.Add(shown);
+  if (!shown) {
+    return key.value();
+  }
+  key.Add(strip).Add(std::string_view(message)).Add(buttons.buttons.size()).Add(buttons.dismiss).Add(dismiss_hovered);
+  for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
+    key.Add(buttons.rects[i]).Add(buttons.buttons[i].label).Add(buttons.buttons[i].destructive).Add(hovered[i]);
+  }
+  return key.value();
+}
+
+// The overlay card as its paint draws it, all but its rows (each row is a unit of
+// its own; folding them here would repaint the card for every row that changed).
+// The structured bindings name every field: one added stops this compiling until
+// it is folded in or named here as left out.
+inline void AddFindWidget(PaintFingerprint& key, const OverlayFindWidgetViewModel& find) {
+  const auto& [fw, replace_mode, search_focused, replace_focused, toggles, has_matches, has_query,
+               search_display_text, replace_display_text, count_text] = find;
+  key.Add(fw.widget).Add(fw.search_field).Add(fw.replace_field).Add(fw.count_rect).Add(fw.toggle_count);
+  key.Add(fw.prev_button).Add(fw.next_button).Add(fw.close_button).Add(fw.replace_button).Add(fw.replace_all_button);
+  key.Add(fw.replace_mode).Add(replace_mode).Add(search_focused).Add(replace_focused);
+  for (std::size_t i = 0; i < toggles.size(); ++i) {
+    key.Add(fw.toggle_buttons[i]).Add(toggles[i].label).Add(toggles[i].active);
+  }
+  key.Add(has_matches).Add(has_query).Add(search_display_text).Add(replace_display_text).Add(count_text);
+}
+inline std::uint64_t FingerprintOfOverlayCard(const OverlaySurfaceViewModel& vm) {
+  const auto& [visible, mode, scroll_row, current_surface, buffer_search_query_text, caret_anchored, overlay_rect,
+               list_layout, total_rows, selected_row, title, note, note_x, context_label, has_query_field,
+               query_surface, query_row_y, query_display_text, summary_line, summary_y, hint, hint_x, error_line,
+               error_at_title_row, empty_label, rows, find_widget, label_storage] = vm;
+  (void)rows;           // units of their own
+  (void)label_storage;  // the views into it are folded
+  PaintFingerprint key;
+  key.Add(visible).Add(mode).Add(scroll_row).Add(current_surface).Add(buffer_search_query_text);
+  key.Add(caret_anchored).Add(overlay_rect).Add(list_layout.list_rect).Add(list_layout.row_height);
+  key.Add(list_layout.row_step).Add(list_layout.visible_units).Add(total_rows).Add(selected_row);
+  key.Add(title).Add(note).Add(note_x).Add(context_label).Add(has_query_field).Add(query_surface);
+  key.Add(query_row_y).Add(query_display_text).Add(summary_line).Add(summary_y).Add(hint).Add(hint_x);
+  key.Add(error_line).Add(error_at_title_row).Add(empty_label);
+  AddFindWidget(key, find_widget);
+  return key.value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::DebugToolbarPaint& toolbar) {
+  const auto& [visible, stopped, layout, pointer_over] = toolbar;
+  PaintFingerprint key;
+  key.Add(visible);
+  if (!visible) {
+    return key.value();
+  }
+  key.Add(stopped).Add(layout.widget).Add(layout.button_count);
+  for (std::size_t i = 0; i < layout.button_count; ++i) {
+    key.Add(layout.buttons[i]).Add(layout.kinds[i]).Add(pointer_over[i]);
+  }
+  return key.value();
+}
+
+inline std::uint64_t FingerprintOf(const PreparedFrameState::PromptDialogPaint& dialog) {
+  const auto& [shown, title, message, detail, text_input, input_text, laid_out_buttons, button_count, labels, hovered,
+               selected] = dialog;
+  PaintFingerprint key;
+  key.Add(shown);
+  if (!shown) {
+    return key.value();
+  }
+  key.Add(std::string_view(title)).Add(std::string_view(message)).Add(std::string_view(detail));
+  key.Add(text_input).Add(std::string_view(input_text)).Add(laid_out_buttons).Add(button_count).Add(selected);
+  for (std::size_t i = 0; i < labels.size(); ++i) {
+    key.Add(labels[i]).Add(hovered[i]);
+  }
+  return key.value();
+}
+
 inline std::uint64_t FingerprintOf(const PreparedFrameState::PanelButtonPaint& button, std::uint64_t palette) {
   const auto& [rect, hovered, hidden] = button;
   return PaintFingerprint().Add(rect).Add(hovered).Add(hidden).Add(palette).value();
+}
+
+// A tab strip as RenderWindowChrome paints it: each tab, the chevrons, and a
+// drag's ghost -- the lifted tab of `drag_tabs`, where the pointer holds it. The
+// structured binding names every field, as for the panel tab.
+inline std::uint64_t FingerprintOf(const PreparedFrameState::TabStripPaint& strip, std::uint64_t palette) {
+  const auto& [shown, placeholder, tabs, text, overflow_left, overflow_right, dragging, drag_tabs, drag_tabs_strip,
+               drag_source, drag_pointer_x, drag_grab_offset_x] = strip;
+  (void)text;  // the tabs' views into it are folded through each tab
+  PaintFingerprint key;
+  key.Add(shown).Add(placeholder).Add(tabs.size());
+  for (const PreparedFrameState::PanelTabPaint& tab : tabs) {
+    key.Add(FingerprintOf(tab, palette));
+  }
+  key.Add(FingerprintOf(overflow_left, palette)).Add(FingerprintOf(overflow_right, palette)).Add(dragging);
+  if (dragging) {
+    key.Add(drag_tabs_strip).Add(drag_source).Add(drag_pointer_x).Add(drag_grab_offset_x);
+    if (const VisibleStripTab* ghost = DraggedStripTab(drag_tabs, drag_source); ghost != nullptr) {
+      key.Add(ghost->rect).Add(std::string_view(ghost->display_title)).Add(std::string_view(ghost->badge_text));
+      key.Add(ghost->badge_color).Add(ghost->show_badge).Add(ghost->remote_state.has_value());
+      key.Add(ghost->remote_state.value_or(editor::WelcomeStageState::Done));
+    }
+  }
+  return key.value();
 }
 
 // An Output row: its geometry, the entry's serial for its text (see

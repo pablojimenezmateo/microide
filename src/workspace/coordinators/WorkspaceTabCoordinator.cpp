@@ -176,7 +176,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   // The tab's dirty marker is gone. The deferred completion repaints the strip;
   // a save that wrote at once must too, or a save no keystroke made (the command
   // line, a menu path that damages nothing else) leaves "*name" on screen.
-  operations_.request_tab_strip_redraw();
+  operations_.request_frame();
   AfterFileSaved(normalized_path);
   return true;
 }
@@ -279,9 +279,7 @@ void TabCoordinator::Activate(std::size_t index) {
     SyncActiveEditorTabMetadata();
     state_.surface.focus = FocusTarget::Editor;
     operations_.reset_caret_blink();
-    const editor::TextViewport* active_vp = ActiveEditorViewport();
-    operations_.request_active_tab_redraw(active_tab.kind == TabEntry::Kind::Editor &&
-                                          active_vp != nullptr && !active_vp->path().empty());
+    operations_.request_frame();
     return;
   }
 
@@ -329,8 +327,7 @@ void TabCoordinator::Activate(std::size_t index) {
       operations_.schedule_lsp_buffer_open) {
     operations_.schedule_lsp_buffer_open(active_vp_path);
   }
-  operations_.request_active_tab_redraw(tab.kind == TabEntry::Kind::Editor &&
-                                        !active_vp_path.empty());
+  operations_.request_frame();
 }
 
 void TabCoordinator::SyncActiveEditorTab() {
@@ -484,7 +481,7 @@ bool TabCoordinator::OpenUntitled() {
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(false);
+  operations_.request_frame();
   return true;
 }
 const editor::TextViewport* TabCoordinator::FindOpenEditorViewOfPath(
@@ -617,7 +614,7 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   if (read_id == 0) {
     operations_.notify_plugin_buffer_open(normalized_path);
   }
-  operations_.request_active_tab_redraw(true);
+  operations_.request_frame();
   return true;
 }
 bool TabCoordinator::ReopenEditor(DeferredTabHandle view) {
@@ -698,7 +695,7 @@ bool TabCoordinator::OpenNewBufferInNewTab(const std::filesystem::path& path) {
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
   operations_.notify_plugin_buffer_open(normalized_path);
-  operations_.request_active_tab_redraw(true);
+  operations_.request_frame();
   return true;
 }
 
@@ -746,7 +743,7 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(false);
+  operations_.request_frame();
   return true;
 }
 void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
@@ -778,7 +775,7 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
   }
 
   if (reloaded_any) {
-    operations_.request_active_tab_redraw(false);
+    operations_.request_frame();
   }
 }
 std::filesystem::path TabCoordinator::LspCloseCandidatePath(const TabEntry& tab) const {
@@ -905,7 +902,6 @@ void TabCoordinator::Close(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;
   }
-  const bool closing_active = index == state_.focused_group().active_tab_index;
   const TabEntry& closing_tab = state_.focused_group().open_tabs[index];
 
   // No SyncActiveEditorTab() here: closing a non-active tab does not change the
@@ -926,9 +922,8 @@ void TabCoordinator::Close(std::size_t index) {
     // group takes the full editor area.
     if (state_.editor_groups.size() >= 2) {
       CollapseFocusedGroup();
-      const editor::TextViewport* active_vp = ActiveEditorViewport();
       operations_.ensure_active_tab_visible();
-      operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
+      operations_.request_frame();
       return;
     }
     state_.focused_group().active_tab_index = 0;
@@ -937,7 +932,7 @@ void TabCoordinator::Close(std::size_t index) {
                                             "Project loaded.\n"
                                             "Use the sidebar to open files.\n");
     state_.surface.focus = FocusTarget::Editor;
-    operations_.request_active_tab_redraw(false);
+    operations_.request_frame();
     return;
   }
 
@@ -969,12 +964,7 @@ void TabCoordinator::Close(std::size_t index) {
   state_.focused_group().tab_scroll_index = std::clamp(state_.focused_group().tab_scroll_index, 0,
                                        std::max(0, static_cast<int>(state_.focused_group().open_tabs.size()) - 1));
   operations_.ensure_active_tab_visible();
-  if (closing_active) {
-    const editor::TextViewport* active_vp = ActiveEditorViewport();
-    operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
-  } else {
-    operations_.request_tab_strip_redraw();
-  }
+  operations_.request_frame();
 }
 bool TabCoordinator::MoveActiveTo(std::size_t index) {
   if (!ReorderActive(state_.focused_group().open_tabs, state_.focused_group().active_tab_index, index)) {
@@ -982,7 +972,7 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   }
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
-  operations_.request_tab_strip_redraw();
+  operations_.request_frame();
   return true;
 }
 

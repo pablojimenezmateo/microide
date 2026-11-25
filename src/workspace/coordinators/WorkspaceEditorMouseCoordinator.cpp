@@ -788,7 +788,7 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
           .note_active_editable_edit =
               [this]() { NoteActiveEditableEdit(); },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .request_tab_strip_redraw = [this]() { RequestPreparedFrame(); },
           .clear_drag_state = [this]() { ClearDragState(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },

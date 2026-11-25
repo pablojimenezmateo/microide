@@ -21,7 +21,13 @@ namespace microide::workspace {
 // `workspace.redraw_rect_spills` — so if a new surface starts queuing more, the
 // wrong guess is visible in the gate rather than silently costing a malloc per
 // event again.
-inline constexpr std::size_t kInlineRedrawRects = 8;
+//
+// Sixteen since derived damage made a split divider drag precise (2026-11-25): a
+// frame dragging a four-pane grid's divider damages each pane's rows and tail,
+// strips, bands and dividers -- more than 8 rects, where the old whole-column rect
+// swallowed them all (and painted 2.9x the pixels). `editor_split_grid_workout`
+// spilled once per drag frame at 8 and not at 16.
+inline constexpr std::size_t kInlineRedrawRects = 16;
 
 struct RenderInvalidation {
   bool full = false;

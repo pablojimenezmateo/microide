@@ -258,12 +258,26 @@ void TextRenderer::DrawString(SDL_Renderer* renderer,
   backend_->DrawString(renderer, texture_cache_, x, y, color, text);
 }
 
+// Each run's box, measured only while overruns are recorded (PaintElement,
+// PaintPassScope): the editor's and the terminal's text are drawn as runs.
+void TextRenderer::NoteRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) const {
+  if (!PaintOverrunRecordingEnabled()) {
+    return;
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    if (!runs[i].text.empty()) {
+      NotePaint(renderer, SDL_FRect{runs[i].x, runs[i].y, MeasureWidth(runs[i].text), LineHeight()});
+    }
+  }
+}
+
 void TextRenderer::DrawRuns(SDL_Renderer* renderer, const TextRun* runs,
                             std::size_t count) const {
   if (renderer == nullptr || runs == nullptr || count == 0) {
     return;
   }
   ValidateCaches();
+  NoteRuns(renderer, runs, count);
   backend_->DrawRuns(renderer, texture_cache_, runs, count);
 }
 
@@ -273,6 +287,7 @@ void TextRenderer::DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs
     return;
   }
   ValidateCaches();
+  NoteRuns(renderer, runs, count);
   backend_->DrawEphemeralRuns(renderer, texture_cache_, runs, count);
 }
 

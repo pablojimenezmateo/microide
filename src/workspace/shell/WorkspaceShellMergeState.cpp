@@ -306,7 +306,7 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
   // (Rows this step reached repaint in this frame through their own units: each
   // source row keys on its tokens, CompareRowUnits.)
   // Capped per frame, so a window deep in a long file takes several: the next frame
-  // takes the next step (PreparedFrameState::syntax_catch_up_rect). The merge
+  // takes the next step (PreparedFrameState::syntax_catch_up_owed). The merge
   // surface had no catch-up at all, so rows past the cap stayed plain until
   // something else repainted. Against each window's own row count: one never
   // sized walks nothing, and would otherwise ask forever.
@@ -314,7 +314,7 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
     return window.frontier() < std::min(visible_end_row, window.line_count());
   };
   if (behind(merge_tab.incoming_token_window) || behind(merge_tab.current_token_window)) {
-    frame_state_.syntax_catch_up_rect = rect;
+    frame_state_.syntax_catch_up_owed = true;
   }
 }
 

@@ -64,7 +64,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                 // token/inlay work runs post-present in OnFramePresented so a large
                 // buffer's hydration never blocks the tab switch (TD-2026-07-17A-033).
                 lsp_service_.ScheduleBufferOpen(path);
-                RequestWindowRedraw();
+                RequestPreparedFrame();
               },
           .notify_lsp_buffer_close =
               [this](const std::filesystem::path& path) {
@@ -105,12 +105,10 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .ensure_all_active_tabs_visible =
               [this]() { tab_strip_chrome_.EnsureActiveTabVisibleForAllGroups(); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
-          .request_active_tab_redraw =
-              [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .request_frame = [this]() { RequestPreparedFrame(); },
           .invalidate_tab_strip_geometry =
               [this]() { tab_strip_service_.InvalidateTabStripGeometry(); },
-          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .request_editor_surface_redraw = [this]() { RequestPreparedFrame(); },
           .editor_group_rects =
               [this]() {
                 const auto layout = CurrentWorkspaceLayout();
@@ -124,7 +122,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](const std::filesystem::path& path) {
                 SetEditorBanner(context_.current_project_state,
                                 EditorBannerState::Kind::ExternalChange, path);
-                RequestEditorSurfaceRedraw();
+                RequestPreparedFrame();
               },
           .notify_save_failed =
               [this](const std::filesystem::path& path, std::string_view reason) {
@@ -353,7 +351,7 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
                    ? std::string("A save participant failed; not saved")
                    : "A save participant failed; not saved: " + completion.error_text);
         MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, false);
-        RequestTabStripRedraw();
+        RequestPreparedFrame();
         return;
       }
       if (completion.participants_timed_out) {
@@ -385,8 +383,8 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       // A compare/merge save reports its own failure as the blocking path did.
       const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::SkipTransforms);
       MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
-      RequestEditorSurfaceRedraw();
-      RequestTabStripRedraw();
+      RequestPreparedFrame();
+      RequestPreparedFrame();
       return;
     }
   }
@@ -444,7 +442,7 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         // (TD-2026-09-29-315).
         SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::OpenFailed, path,
                         std::move(reason));
-        RequestEditorSurfaceRedraw();
+        RequestPreparedFrame();
         return;
       }
       // The loaded view replaces the empty read-only stand-in wholesale, and then
@@ -482,8 +480,8 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         lsp_service_.ScheduleBufferOpen(path);
       }
       ShareLoadedBufferWithWaitingTabs(path, editor_state.viewport);
-      RequestEditorSurfaceRedraw();
-      RequestTabStripRedraw();
+      RequestPreparedFrame();
+      RequestPreparedFrame();
       return;
     }
   }
@@ -944,7 +942,7 @@ void WorkspaceShell::FocusEditorGroup(std::size_t group_index) {
   }
   state.focused_group_index = group_index;
   state.surface.focus = FocusTarget::Editor;
-  RequestEditorSurfaceRedraw();  // (the window title follows the group: the bar's unit keys on it)
+  RequestPreparedFrame();  // (the window title follows the group: the bar's unit keys on it)
 }
 
 bool WorkspaceShell::CloseEditorGroup() {

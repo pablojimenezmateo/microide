@@ -26,7 +26,8 @@ bool Same(const SDL_FRect& a, const SDL_FRect& b) {
 }
 
 // The mechanism, on its own: the first frame damages nothing (it paints whole),
-// an unchanged frame nothing, a changed unit its rect, a moved one both rects, and
+// an unchanged frame nothing, a changed unit its rect, a moved one both rects (one
+// when they slid along an axis and touch), and
 // one that appeared or went away its own rect.
 void TestDerivedDamageRepaintsWhatChanged() {
   DerivedDamage damage;
@@ -38,10 +39,22 @@ void TestDerivedDamageRepaintsWhatChanged() {
   auto changed = Commit(damage, {{a, 1}, {b, 3}});
   Expect(changed.size() == 1 && Same(changed[0], b), "a changed unit damages its rect, and only it");
 
+  // A unit that slid along one axis, its rects overlapping: one rect, their exact
+  // union (a divider dragged a few pixels).
   const SDL_FRect b_moved{12, 0, 10, 10};
   auto moved = Commit(damage, {{a, 1}, {b_moved, 3}});
-  Expect(moved.size() == 2 && Same(moved[0], b) && Same(moved[1], b_moved),
-         "a unit that moved damages where it was and where it is");
+  Expect(moved.size() == 1 && Same(moved[0], SDL_FRect{10, 0, 12, 10}),
+         "a unit that slid damages where it was and where it is, as one rect");
+  // Moved far, or diagonally: the union would cover pixels neither held, so two.
+  const SDL_FRect b_far{60, 0, 10, 10};
+  auto far = Commit(damage, {{a, 1}, {b_far, 3}});
+  Expect(far.size() == 2 && Same(far[0], b_moved) && Same(far[1], b_far),
+         "a unit that moved away damages where it was and where it is");
+  const SDL_FRect b_diagonal{62, 2, 10, 10};
+  auto diagonal = Commit(damage, {{a, 1}, {b_diagonal, 3}});
+  Expect(diagonal.size() == 2 && Same(diagonal[0], b_far) && Same(diagonal[1], b_diagonal),
+         "a unit that moved on both axes damages its two rects, not their box");
+  (void)Commit(damage, {{a, 1}, {b_moved, 3}});
 
   const SDL_FRect c{30, 0, 10, 10};
   auto appeared = Commit(damage, {{a, 1}, {b_moved, 3}, {c, 4}});

@@ -334,7 +334,7 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
   }
   ApplyLiveSettings();
   NoteLayoutInputsChanged();
-  RequestWindowRedraw();
+  RequestPreparedFrame();
   return true;
 }
 
@@ -370,7 +370,7 @@ void WorkspaceShell::TogglePluginEnabled(std::string_view plugin_id) {
   MakePersistenceCoordinator().SaveUserConfig();
   ReloadPluginsForCurrentProject(PluginReloadRequest{});
   RefreshSettingsOverlayCatalog();
-  RequestWindowRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ApplyLiveSettings() {
@@ -446,7 +446,7 @@ void WorkspaceShell::ApplyLiveSettings() {
     // Whole-tree file-index rescan runs off the shell thread; the finder/search
     // invalidation happens when it applies (TD-2026-07-17-081/082).
     RequestFileIndexRefresh();
-    RequestSidebarRedraw();
+    RequestPreparedFrame();
   }
   // Editing the exclude globs changes what the tree grays and what the finder/index
   // walk skips, so re-apply and re-scan on an actual change (same cost rationale).
@@ -466,7 +466,7 @@ void WorkspaceShell::ApplyLiveSettings() {
     // the index/search state after the refresh above. Restart rebuilds the filter under a
     // fresh generation guard. (TD-2026-07-16-40.)
     StartFileIndexWatcherForCurrentProject();
-    RequestSidebarRedraw();
+    RequestPreparedFrame();
   }
 
   LiveSettingsEditorSnapshot snapshot;
@@ -564,7 +564,7 @@ bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope
   }
   ApplyLiveSettings();
   NoteLayoutInputsChanged();
-  RequestWindowRedraw();
+  RequestPreparedFrame();
   return true;
 }
 
@@ -649,7 +649,7 @@ void WorkspaceShell::BeginSettingValueEdit(std::string_view id) {
     settings_overlay_service_.BeginValueEdit(std::string(id), GetSettingValue(id).value_or(""));
   }
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::MoveSettingsFontPicker(int delta) {
@@ -658,7 +658,7 @@ void WorkspaceShell::MoveSettingsFontPicker(int delta) {
   }
   settings_overlay_service_.MovePickerHighlight(delta);
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ApplySettingsFontPickerIndex(int dropdown_index) {
@@ -670,7 +670,7 @@ void WorkspaceShell::ApplySettingsFontPickerIndex(int dropdown_index) {
     settings_overlay_service_.CancelValueEdit();
     OpenNativeFontFilePicker(id);  // writes + refreshes on completion
     InvalidateCursorKindFingerprint();
-    RequestOverlayRedraw();
+    RequestPreparedFrame();
     return;
   }
   const auto& filtered = settings_overlay_service_.FilteredFontFamilies();
@@ -682,7 +682,7 @@ void WorkspaceShell::ApplySettingsFontPickerIndex(int dropdown_index) {
   WriteSettingRespectingScope(id, value);
   RefreshSettingsOverlayCatalog();
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::CommitSettingValueEdit() {
@@ -706,7 +706,7 @@ void WorkspaceShell::CommitSettingValueEdit() {
     }
     RefreshSettingsOverlayCatalog();
     InvalidateCursorKindFingerprint();
-    RequestOverlayRedraw();
+    RequestPreparedFrame();
     return;
   }
   const std::string value = settings_overlay_service_.ValueEditText();
@@ -714,7 +714,7 @@ void WorkspaceShell::CommitSettingValueEdit() {
   WriteSettingRespectingScope(id, value);
   RefreshSettingsOverlayCatalog();
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::CancelSettingValueEdit() {
@@ -723,7 +723,7 @@ void WorkspaceShell::CancelSettingValueEdit() {
   }
   settings_overlay_service_.CancelValueEdit();
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
@@ -849,14 +849,14 @@ void WorkspaceShell::OpenSettingsOverlay() {
   settings_overlay_service_.OpenSettings();
   RefreshSettingsOverlayCatalog();
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::OpenHelpAboutOverlay() {
   settings_overlay_service_.OpenHelpAbout();
   RefreshSettingsOverlayCatalog();
   InvalidateCursorKindFingerprint();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::CloseSettingsOverlay() {
@@ -911,7 +911,7 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
     set_scroll(std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
                               bar, my, context_.interaction_state.drag_scrollbar_offset))),
                           0, max_scroll));
-    RequestOverlayRedraw();
+    RequestPreparedFrame();
   };
   // Font-picker dropdown: a click on an item applies it (a family, or "Choose
   // file…" which launches the native picker); a click elsewhere inside the card is
@@ -972,7 +972,7 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   if (Contains(vm.filter_rect, mx, my)) {
     settings_overlay_service_.SetFocusedPane(SettingsPane::Filter);
     InvalidateCursorKindFingerprint();
-    RequestOverlayRedraw();
+    RequestPreparedFrame();
     return true;
   }
 
@@ -993,7 +993,7 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
       settings_overlay_service_.SetFocusedPane(SettingsPane::Categories);
       settings_overlay_service_.SetSelectedCategory(static_cast<int>(i));
       RefreshSettingsOverlayCatalog();
-      RequestOverlayRedraw();
+      RequestPreparedFrame();
       return true;
     }
   }
@@ -1037,7 +1037,7 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
       StepSetting(row.id, false);
     }
     RefreshSettingsOverlayCatalog();
-    RequestOverlayRedraw();
+    RequestPreparedFrame();
     return true;
   }
 

@@ -712,6 +712,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/WorkspaceShellRenderChrome.cpp
   src/workspace/render/WorkspaceShellRenderStatusBar.cpp
   src/workspace/render/NotificationToastPaint.cpp
+  src/workspace/render/HoverCardPaint.cpp
   src/workspace/render/WorkspaceShellRenderSettingsOverlay.cpp
   src/workspace/render/WorkspaceShellRenderTextInput.cpp
   src/workspace/render/SingleLineViewMetrics.cpp
@@ -1432,6 +1433,7 @@ add_executable(microide_tests
   tests/architecture/WorkspaceCoordinatorArchitectureRules.cpp
   tests/architecture/WorkspaceServiceArchitectureRules.cpp
   tests/architecture/WorkspaceViewModelArchitectureRules.cpp
+  tests/architecture/DerivedDamageArchitectureRules.cpp
   tests/architecture/WorkspaceFileSizeArchitectureRules.cpp
   tests/architecture/PluginArchitectureRules.cpp
   tests/architecture/KernelArchitectureRules.cpp
@@ -1571,6 +1573,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     tests/architecture/WorkspaceCoordinatorArchitectureRules.cpp
     tests/architecture/WorkspaceServiceArchitectureRules.cpp
     tests/architecture/WorkspaceViewModelArchitectureRules.cpp
+    tests/architecture/DerivedDamageArchitectureRules.cpp
     tests/architecture/WorkspaceFileSizeArchitectureRules.cpp
     tests/architecture/PluginArchitectureRules.cpp
     tests/architecture/KernelArchitectureRules.cpp

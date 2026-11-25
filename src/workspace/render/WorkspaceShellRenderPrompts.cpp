@@ -4,12 +4,11 @@ namespace microide::workspace {
 
 using namespace detail;
 
-void WorkspaceShell::RenderPromptSurface(
-    SDL_Renderer* renderer,
-    const WorkspaceLayout& layout,
-    const std::optional<TextInputVisual>& active_text_input_visual) const {
-  (void)active_text_input_visual;
-  if (!context_.prompts.surface_visible) {
+// The prompt dialog as frame prep resolved it (PreparedFrameState::prompt_dialog):
+// what it says, its field's displayed text, its buttons' hover and selection.
+void WorkspaceShell::RenderPromptSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) const {
+  const PreparedFrameState::PromptDialogPaint& prompt = frame_state_.prompt_dialog;
+  if (!prompt.shown) {
     return;
   }
 
@@ -19,26 +18,23 @@ void WorkspaceShell::RenderPromptSurface(
   const SDL_FRect header = DrawTitledCardFrame(renderer, theme_, dialog, 32.0f, CardStyle::Overlay);
   const SDL_FRect message_rect =
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 36.0f);
-  const auto buttons =
-      ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
+  const auto buttons = ComputePromptSurfaceButtonRects(dialog, prompt.laid_out_buttons);
   DrawVCenteredTextOn(text_renderer_, renderer, header, 16.0f, theme_.chrome_text,
-                      theme_.chrome_background, PromptSurfaceTitle());
+                      theme_.chrome_background, prompt.title);
   // The message wraps over the room down to the input field or the buttons (less
   // a line for the detail): drawn as one truncated line, "Renaming to 'x' changes
   // 2 files (1 not open). Apply…" lost its question over an empty card (QA
   // lsp-workspace-edits).
-  const std::string_view detail = PromptSurfaceDetail();
+  const std::string_view detail = prompt.detail;
   const float line_height = text_renderer_.LineHeight();
   const float content_bottom =
-      (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput
-           ? ComputePromptSurfaceInputRect(dialog).y
-           : buttons.front().y) -
+      (prompt.text_input ? ComputePromptSurfaceInputRect(dialog).y : buttons.front().y) -
       6.0f;
   const float room = std::max(line_height, content_bottom - message_rect.y -
                                                (detail.empty() ? 0.0f : line_height + 4.0f));
   const std::size_t message_lines = DrawWrappedPlaceholderIn(
       text_renderer_, renderer, MakeRect(message_rect.x, message_rect.y, message_rect.w, room),
-      theme_.text_muted, theme_.overlay_background, PromptSurfaceMessage(), kWrapAsTheBoxHolds);
+      theme_.text_muted, theme_.overlay_background, prompt.message, kWrapAsTheBoxHolds);
   if (!detail.empty()) {
     const float detail_y = message_rect.y +
                            static_cast<float>(std::max<std::size_t>(1, message_lines)) * line_height + 4.0f;
@@ -46,40 +42,30 @@ void WorkspaceShell::RenderPromptSurface(
                theme_.overlay_background, TruncateLabelView(detail, message_rect.w));
   }
 
-  if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
+  if (prompt.text_input) {
     const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
     DrawTextFieldFrame(renderer, theme_, input_rect, true);
-    const std::string_view prompt_text =
-        (active_text_input_visual.has_value() &&
-         active_text_input_visual->surface == TextInputSurface::PromptInput &&
-         !active_text_input_visual->displayed_text.empty())
-            ? std::string_view(active_text_input_visual->displayed_text)
-            : std::string_view(context_.prompts.surface.input.text());
     DrawSingleLineTextTail(renderer, input_rect.x + 6.0f, input_rect.y + 4.0f,
                            std::max(1.0f, input_rect.w - 12.0f), theme_.surface_text,
-                           theme_.surface_background, prompt_text);
+                           theme_.surface_background, prompt.input_text);
   }
 
-  const auto labels = PromptSurfaceActionLabels();
-  // Bounded by BOTH: the rects come from `button_count`, which is an int on the
-  // prompt state, while the labels are a fixed pair. They agree today because
-  // nothing sets button_count to anything but 2 -- a third button would have
-  // indexed past the labels.
-  const std::size_t drawn = std::min(buttons.size(), labels.size());
-  for (std::size_t i = 0; i < drawn; ++i) {
-    DrawButtonCentered(
-        text_renderer_, renderer, theme_, buttons[i], labels[i], ButtonTone::Neutral,
-        ButtonVisualState{
-            .enabled = true,
-            .hovered = PointerOver(buttons[i]),
-            .active = context_.prompts.surface.selected_button == static_cast<int>(i),
-        });
+  // As many buttons as prep resolved labels and rects for (it bounded them by both).
+  for (std::size_t i = 0; i < std::min(buttons.size(), prompt.button_count); ++i) {
+    DrawButtonCentered(text_renderer_, renderer, theme_, buttons[i], prompt.labels[i], ButtonTone::Neutral,
+                       ButtonVisualState{
+                           .enabled = true,
+                           .hovered = prompt.hovered[i],
+                           .active = prompt.selected == static_cast<int>(i),
+                       });
   }
 }
 
+// The unsaved-changes prompt as frame prep resolved it (dirty_prompt_dialog).
 void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
                                               const WorkspaceLayout& layout) const {
-  if (!context_.prompts.dirty_visible) {
+  const PreparedFrameState::PromptDialogPaint& dirty = frame_state_.dirty_prompt_dialog;
+  if (!dirty.shown) {
     return;
   }
 
@@ -91,7 +77,7 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 54.0f);
 
   DrawVCenteredTextOn(text_renderer_, renderer, header, 12.0f, theme_.chrome_text,
-                      theme_.chrome_background, DirtyPromptTitle());
+                      theme_.chrome_background, dirty.title);
   // Wrapped like the plain prompt's, over the room above the hint line and the
   // buttons ("Save the 2 affected dirty editors before renaming re…").
   const auto buttons = ComputeDirtyPromptButtonRects(dialog);
@@ -100,7 +86,7 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
       std::max(line_height, buttons.front().y - 6.0f - message_rect.y - (line_height + 4.0f));
   const std::size_t message_lines = DrawWrappedPlaceholderIn(
       text_renderer_, renderer, MakeRect(message_rect.x, message_rect.y, message_rect.w, room),
-      theme_.text_secondary, theme_.overlay_background, DirtyPromptMessage(), kWrapAsTheBoxHolds);
+      theme_.text_secondary, theme_.overlay_background, dirty.message, kWrapAsTheBoxHolds);
   const float hint_y =
       message_rect.y + static_cast<float>(std::max<std::size_t>(1, message_lines)) * line_height + 4.0f;
   // Constant hint line: spelled out rather than re-joined per frame. The joiner
@@ -114,17 +100,14 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
              theme_.overlay_background,
              std::string_view("Enter confirm · Left/Right choose · Esc cancel"));
 
-  const auto labels = DirtyPromptActionLabels();
-  const std::size_t drawn = std::min(buttons.size(), labels.size());
-  for (std::size_t i = 0; i < drawn; ++i) {
-    DrawButtonCentered(
-        text_renderer_, renderer, theme_, buttons[i], labels[i],
-        i == 1 ? ButtonTone::Destructive : ButtonTone::Neutral,
-        ButtonVisualState{
-            .enabled = true,
-            .hovered = PointerOver(buttons[i]),
-            .active = context_.prompts.dirty.selected_action == static_cast<int>(i),
-        });
+  for (std::size_t i = 0; i < std::min(buttons.size(), dirty.button_count); ++i) {
+    DrawButtonCentered(text_renderer_, renderer, theme_, buttons[i], dirty.labels[i],
+                       i == 1 ? ButtonTone::Destructive : ButtonTone::Neutral,
+                       ButtonVisualState{
+                           .enabled = true,
+                           .hovered = dirty.hovered[i],
+                           .active = dirty.selected == static_cast<int>(i),
+                       });
   }
 }
 

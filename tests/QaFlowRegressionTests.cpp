@@ -3097,6 +3097,167 @@ void TestEditorRowDamageFollowsEveryStateTransition() {
   }
 }
 
+// A settled frame derives no damage: once a state has been prepared and painted,
+// preparing it again with nothing changed must damage nothing. A unit whose key
+// moves every frame (a clock, an address of a buffer rebuilt per frame, an
+// unordered walk) repaints its rect on every frame some other change asks for --
+// CPU the user pays for and no pixel test sees -- and a prep phase that changes
+// state after a surface already committed paints the old state until some later
+// frame happens to come. Both show here as damage on the second prepare. A
+// surface fed by another thread (the terminal) may take a few frames to settle;
+// it must settle all the same.
+void TestASettledFrameDerivesNoDamage() {
+  FlowFixture fixture("alpha.cpp", "int alpha = 1;\nint beta = alpha + 1;\n",
+                      [](const std::filesystem::path& root) { WriteFile(root / "other.cpp", "int alpha = 2;\n"); });
+  const auto settles = [&](const std::string& what, int tries) {
+    for (int attempt = 0; attempt < tries; ++attempt) {
+      fixture.PinCaret();
+      fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+      (void)fixture.shell.ConsumePendingRenderInvalidation();
+      fixture.PinCaret();
+      (void)fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), fixture.width, fixture.height);
+      const workspace::RenderInvalidation again = fixture.shell.ConsumePendingRenderInvalidation();
+      if (!again.full && again.rects.empty()) {
+        return;
+      }
+      if (attempt + 1 == tries) {
+        std::string rects;
+        for (const SDL_FRect& r : again.rects) {
+          rects += " " + std::to_string(static_cast<int>(r.x)) + "," + std::to_string(static_cast<int>(r.y)) + " " +
+                   std::to_string(static_cast<int>(r.w)) + "x" + std::to_string(static_cast<int>(r.h));
+        }
+        Expect(false, what + ": preparing a settled frame again derived damage" + (again.full ? " (full)" : "") +
+                          rects);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  };
+  const auto run = [&](const char* command) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, command), std::string("the command runs: ") + command);
+  };
+  settles("the editor with the file tree", 1);
+  // The pointer at rest over the tree: hover state is in several keys.
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(60.0f, 120.0f)});
+  settles("the pointer resting over the file tree", 1);
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(640.0f, 200.0f)});
+  settles("the pointer resting over the editor", 1);
+  run("sidebar-show search");
+  settles("the Search view", 1);
+  run("search alpha");
+  settles("the find widget over the editor", 1);
+  run("sidebar-show problems");
+  settles("the Problems view", 1);
+  run("sidebar-show outline");
+  settles("the Outline view", 1);
+  run("split-right other.cpp");
+  settles("two editor groups", 1);
+  run("compare-files alpha.cpp other.cpp");
+  settles("a compare tab", 1);
+  run("settings");
+  settles("the Settings card", 1);
+  run("settings");
+  run("about");
+  settles("the Help & About card", 1);
+  run("about");
+  run("set-setting debug.enabled true");
+  run("debug-pane-toggle");
+  settles("the debug pane", 1);
+  run("term");
+  // The shell's prompt lands on its reader thread: a few frames, then nothing.
+  settles("a terminal", 100);
+  run("toggle-theme");
+  settles("the other theme", 1);
+}
+
+// The editor's hover card follows what is under a still pointer on every frame,
+// whatever asked for the frame. A diagnostic republished with another message over
+// the same range moves no row (rows key a squiggle's range and severity) and asks
+// only for a frame; the card resolved its target only when a damage request had
+// queued a refresh -- in practice when some surface committing before the hover
+// step changed -- so it kept saying the old message.
+void TestTheHoverCardFollowsARepublishedDiagnosticUnderAStillPointer() {
+  FlowFixture fixture("hover.cpp", "int alpha = 1;\nint beta = 2;\n");
+  const auto publish = [&](std::string message) {
+    (void)TestAccess::PublishDiagnostics(
+        fixture.shell, "qa", fixture.file,
+        {editor::Diagnostic{.range = editor::SelectionRange{.start = {.line = 0, .column = 4},
+                                                            .end = {.line = 0, .column = 9}},
+                            .severity = editor::DiagnosticSeverity::Warning,
+                            .message = std::move(message)}});
+  };
+  publish("first message");
+  fixture.shell.Render(fixture.canvas.renderer(), fixture.width, fixture.height);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const editor::EditorViewMetrics metrics = TestAccess::ActiveEditorMetrics(fixture.shell);
+  const float x = metrics.text_x + TestAccess::TextCharWidth(fixture.shell) * 6.0f;
+  const float y = metrics.first_line_y + metrics.line_height - 1.5f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}), "resting on the squiggle");
+  Expect(TestAccess::ActiveEditorDiagnosticHoverMessage(fixture.shell) == std::optional<std::string>("first message"),
+         "the card names the diagnostic under the pointer");
+
+  publish("second message");
+  TestAccess::RequestPreparedFrame(fixture.shell);  // what a publisher asks for
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the diagnostic republished");
+  Expect(TestAccess::ActiveEditorDiagnosticHoverMessage(fixture.shell) == std::optional<std::string>("second message"),
+         "the card follows the diagnostic republished under a still pointer");
+}
+
+// A pane's overview ruler draws its own file's diagnostics, so another file's
+// leave it alone. It keyed the store-wide revision, and every squiggle a language
+// server published anywhere repainted the ruler of every pane on screen.
+void TestADiagnosticInAnotherFileRepaintsNoEditorPane() {
+  std::string text;
+  for (int i = 0; i < 200; ++i) {
+    text += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  FlowFixture fixture("long.cpp", text);
+  (void)TestAccess::PublishDiagnostics(
+      fixture.shell, "qa", fixture.root / "elsewhere.cpp",
+      {editor::Diagnostic{.range = editor::SelectionRange{.start = {.line = 3, .column = 0},
+                                                          .end = {.line = 3, .column = 4}},
+                          .severity = editor::DiagnosticSeverity::Error,
+                          .message = "elsewhere"}});
+  TestAccess::RequestPreparedFrame(fixture.shell);
+  const workspace::RenderInvalidation damage = FrameDamage(fixture.shell, fixture.canvas, fixture.width,
+                                                           fixture.height, fixture.shell.ConsumePendingRenderInvalidation());
+  const SDL_FRect editor = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+  Expect(!damage.full && !AnyRectIntersects(damage.rects, editor),
+         "a diagnostic in a file no pane shows repaints no editor pane");
+  // And this file's own still repaints its ruler.
+  (void)TestAccess::PublishDiagnostics(
+      fixture.shell, "qa", fixture.file,
+      {editor::Diagnostic{.range = editor::SelectionRange{.start = {.line = 150, .column = 0},
+                                                          .end = {.line = 150, .column = 4}},
+                          .severity = editor::DiagnosticSeverity::Error,
+                          .message = "here"}});
+  TestAccess::RequestPreparedFrame(fixture.shell);
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "a diagnostic below the viewport");
+}
+
+// An IME preedit in a single-line field is a unit of its own, keyed on what it
+// draws. Its events ask only for a frame, and nothing keyed the preedit: one that
+// changed over an unchanged field ("ka" becoming "kat") kept its first text.
+void TestAnImePreeditRepaintsAsItChanges() {
+  FlowFixture fixture("ime.cpp", "int alpha = 1;\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search alpha"), "the find widget opens");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the find widget opened");
+  const auto preedit = [&](const char* text, int start) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_TEXT_EDITING;
+    event.edit.text = text;
+    event.edit.start = start;
+    event.edit.length = 0;
+    return DispatchEvents(fixture.shell, {event});
+  };
+  fixture.ExpectFresh(preedit("ka", 2), "a preedit starting");
+  fixture.ExpectFresh(preedit("kat", 3), "the preedit growing");
+  // Its caret moving inside the same text (not from its end, where it widens the
+  // overlay): the extent is the same, so only the key can say it changed.
+  fixture.ExpectFresh(preedit("kat", 1), "the preedit's caret moving in");
+  fixture.ExpectFresh(preedit("kat", 2), "the preedit's caret moving inside it");
+  fixture.ExpectFresh(preedit("", 0), "the preedit ending");
+}
+
 // derived-damage 3.1 / clip-discipline stage 3: the bottom panel's header is a
 // derived surface. A bell in a background terminal marks its tab whoever set it
 // -- here state changed with no damage request at all -- and the next partial
@@ -9307,7 +9468,7 @@ void TestAClosedBottomPanelAsksForNoWindow() {
   TestAccess::NoteLayoutInputsChanged(fixture.shell);
   const workspace::RenderInvalidation full{.full = true};
   fixture.ExpectFresh(full, "the panel closed");
-  TestAccess::RequestBottomPanelRedraw(fixture.shell);
+  TestAccess::RequestPreparedFrame(fixture.shell);
   const workspace::RenderInvalidation closed = fixture.shell.ConsumePendingRenderInvalidation();
   Expect(closed.frame && !closed.full && closed.rects.empty(),
          "a closed panel's change owes a frame and names no rect (rects=" + std::to_string(closed.rects.size()) + ")");
@@ -11326,6 +11487,12 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestMergeRowDamageFollowsEveryStateTransition);
   AddTest(tests, "QaFlowRegression/EditorRowDamageFollowsEveryStateTransition",
           TestEditorRowDamageFollowsEveryStateTransition);
+  AddTest(tests, "QaFlowRegression/ASettledFrameDerivesNoDamage", TestASettledFrameDerivesNoDamage);
+  AddTest(tests, "QaFlowRegression/AnImePreeditRepaintsAsItChanges", TestAnImePreeditRepaintsAsItChanges);
+  AddTest(tests, "QaFlowRegression/ADiagnosticInAnotherFileRepaintsNoEditorPane",
+          TestADiagnosticInAnotherFileRepaintsNoEditorPane);
+  AddTest(tests, "QaFlowRegression/TheHoverCardFollowsARepublishedDiagnosticUnderAStillPointer",
+          TestTheHoverCardFollowsARepublishedDiagnosticUnderAStillPointer);
   AddTest(tests, "QaFlowRegression/EditorRowsRepaintWhatChangedWithNoDamageRequest",
           TestEditorRowsRepaintWhatChangedWithNoDamageRequest);
   AddTest(tests, "QaFlowRegression/TheStatusBarRepaintsWhatChangedWithNoDamageRequest",

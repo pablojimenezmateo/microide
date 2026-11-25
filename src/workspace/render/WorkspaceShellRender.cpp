@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "render/PaintElement.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
@@ -14,25 +15,11 @@ namespace microide::workspace {
 
 namespace {
 
-bool RectsIntersect(const SDL_FRect& a, const SDL_FRect& b) {
-  return a.w > 0.0f && a.h > 0.0f && b.w > 0.0f && b.h > 0.0f &&
-         a.x < b.x + b.w && b.x < a.x + a.w &&
-         a.y < b.y + b.h && b.y < a.y + a.h;
-}
-
 bool RectContains(const SDL_FRect& outer, const SDL_FRect& inner) {
   return outer.w > 0.0f && outer.h > 0.0f &&
          inner.x >= outer.x && inner.y >= outer.y &&
          inner.x + inner.w <= outer.x + outer.w &&
          inner.y + inner.h <= outer.y + outer.h;
-}
-
-bool HasPositiveArea(const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; }
-
-// Returns true when the dirty rect, if provided, doesn't overlap `surface`.
-// A null hint means "render everything" (full redraw).
-bool DirtyHintSkips(const std::optional<SDL_FRect>& hint, const SDL_FRect& surface) {
-  return hint.has_value() && !RectsIntersect(*hint, surface);
 }
 
 }  // namespace
@@ -53,7 +40,9 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   static const bool menu_hover_trace =
       util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MENU_HOVER");
   const Uint64 trace_start_ns =
-      menu_hover_trace && context_.menu_state.menu_bar_open ? SDL_GetTicksNS() : 0;
+      menu_hover_trace && frame_state_.menu_popups[static_cast<std::size_t>(MenuPopupSlot::Popup)].visible
+          ? SDL_GetTicksNS()
+          : 0;
 
   // "WorkspaceRootView::Render" is trace vocabulary, not a class reference: the
   // WorkspaceRootView indirection this clip path replaced is gone, but every perf
@@ -62,109 +51,41 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   util::PerformanceTrace::Scope trace_scope("WorkspaceRootView::Render");
   util::AddPerformanceCounter(util::PerfCounterId::RenderClipInvocations);
   const WorkspaceLayout& layout = *prepared_frame_layout_;
-  std::optional<SDL_FRect> active_editor_pane_rect;
 
   EnsureClipFrameAndOverlayViewModels(layout);
-  // Heavy subsystems (editor surface, sidebar, bottom panel, settings overlay)
-  // walk their own scenes top-to-bottom even when SDL clip rects would mask the
-  // pixels. Threading the dirty rect lets us short-circuit these on partial
-  // redraws — most importantly during menu hover, where the dirty rects sit in
-  // the popup region and the editor render dominates per-event CPU.
-  // Layout zeroes the sidebar/bottom panel rects when they're hidden, so
-  // RectsIntersect (which requires positive w and h) already short-circuits
-  // those — no need to peek at project state from a render TU.
-  // A surface the layout collapsed (zero area) paints nothing, hinted or not: under
-  // a maximized panel the editor column collapses, and an unhinted full render
-  // painted the editor at its collapsed rect anyway, leaving marks under the menu
-  // bar that a hinted pass (which skips it) never drew (QA redraw verifier).
-  bool skip_editor_surface = DirtyHintSkips(dirty_rect_hint, layout.editor_surface) ||
-                             !HasPositiveArea(layout.editor_surface);
-  bool skip_sidebar = DirtyHintSkips(dirty_rect_hint, layout.sidebar) ||
-                      !HasPositiveArea(layout.sidebar);
-  bool skip_right_pane = DirtyHintSkips(dirty_rect_hint, layout.right_pane) ||
-                         !HasPositiveArea(layout.right_pane);
-  bool skip_bottom_panel = DirtyHintSkips(dirty_rect_hint, layout.bottom_panel) ||
-                           !HasPositiveArea(layout.bottom_panel);
-  // Window chrome spans menu bar, project/editor tab strips, and the
-  // breadcrumb row. Skip the whole chrome pass when none intersect — popup
-  // hover dirty rects sit below the chrome strip and don't touch it.
-  bool skip_window_chrome =
-      DirtyHintSkips(dirty_rect_hint, layout.menu_bar) &&
-      DirtyHintSkips(dirty_rect_hint, layout.project_tab_strip) &&
-      DirtyHintSkips(dirty_rect_hint, layout.tab_strip) &&
-      DirtyHintSkips(dirty_rect_hint, layout.breadcrumb);
-  // With the editor split, every pane carries its own tab strip and breadcrumb,
-  // drawn by the chrome pass too; `layout.tab_strip` is only the top row's. A clip
-  // touching a lower pane's strip (a caret blink in that pane, grown by the clip
-  // padding) painted the frame base over the strip and skipped the chrome that
-  // draws it (found by the QA redraw verifier: a 1-px row at the lower pane's top).
-  //
-  // The split dividers are the editor pass's, and they run the editor AREA's full
-  // height -- from above the breadcrumb row, where the surfaces' rects do not
-  // reach -- so a clip that touches only a divider's top (a pane's tab strip,
-  // grown by the padding) painted the frame base over it and skipped the pass
-  // that draws it (QA monkey: a 6x2 notch at the divider's top).
-  if (dirty_rect_hint.has_value() && (skip_window_chrome || skip_editor_surface)) {
-    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
-    for (const EditorGroupRects& group : group_rects.groups) {
-      if (!DirtyHintSkips(dirty_rect_hint, group.tab_strip) ||
-          !DirtyHintSkips(dirty_rect_hint, group.breadcrumb)) {
-        skip_window_chrome = false;
-        break;
-      }
-    }
-    if (HasPositiveArea(layout.editor_surface)) {
-      for (const EditorSplitDividerRect& divider : group_rects.dividers) {
-        if (!DirtyHintSkips(dirty_rect_hint, divider.rect)) {
-          skip_editor_surface = false;
-          break;
-        }
-      }
-    }
-  }
-  // A tab dragged over a pane body paints VS Code's drop preview over that pane
-  // -- from the chrome pass, so the floating ghost and the strips stay above it.
-  // A clip that missed every strip skipped that pass and repainted the pane
-  // without the preview: on screen it never appeared (QA flow wb-editor-groups).
-  if (skip_window_chrome && dirty_rect_hint.has_value()) {
-    const TabDragState& drag = context_.interaction_state.tab_drag;
-    if (drag.dragging && drag.body_drop() && !DirtyHintSkips(dirty_rect_hint, drag.body_drop_rect)) {
-      skip_window_chrome = false;
-    }
-    // A tree drag's drop preview and ghost are drawn by the same pass, and are
-    // units of their own: a clip over the pane they tint, or under the ghost, that
-    // missed the strips repainted the pane bare (QA tree-drag, tree-dotdot-folder).
-    const PathDragState& path_drag = context_.interaction_state.path_drag;
-    if (path_drag.dragging &&
-        ((path_drag.target != PathDragState::Target::None &&
-          !DirtyHintSkips(dirty_rect_hint, path_drag.drop_rect)) ||
-         !DirtyHintSkips(dirty_rect_hint, detail::PathDragGhostRect(path_drag, text_renderer_)))) {
-      skip_window_chrome = false;
-    }
-  }
-  // Popups float over the editor area (they drop down from the menu bar),
-  // so an intersection check against editor_surface alone would still drag
-  // in the editor render every time a popup row dirty rect lands below the
-  // chrome strip. When the dirty rect sits fully inside ONE piece of open chrome
-  // (the bar, a popup, a submenu), only that piece needs repainting — the
-  // editor/sidebar/panel contents underneath are already retained in the scene
-  // texture, and the piece is opaque over them. One piece, not their bounding
-  // box: the bar spans the window, so the box of bar + a tall menu covers the
-  // whole editor, and a caret blink under an open Edit menu painted the window
-  // background over it (see CurrentChromeRects).
-  // (Window chrome stays gated by its own intersection check above so
-  // menu-bar item highlight changes still trigger a chrome repaint.)
+  // Heavy subsystems (editor surface, window chrome, sidebar, debug pane, bottom
+  // panel) walk their own scenes even when the SDL clip would mask their pixels,
+  // so a partial clip runs only the passes that paint something it touches --
+  // above all during menu hover, where the clips sit in the popup and the editor
+  // render dominated per-event CPU. What each pass paints is prepared
+  // (PreparedFrameState::paint_pass_extents): its layout region and every Chrome
+  // unit it draws, the unit naming its pass where it is keyed. This was a list of
+  // rects RenderClip assembled from live state -- the strips of each pane, a tab
+  // drag's drop preview, a tree drag's ghost, the split dividers' tops -- each one
+  // added after the QA verifier caught a pass skipped under a clip it painted.
+  // A collapsed surface paints nothing, hinted or not (PaintPassExtents::Runs).
+  const PaintPassExtents& passes = frame_state_.paint_pass_extents;
+  bool skip_editor_surface = !passes.Runs(PaintPass::Editor, dirty_rect_hint);
+  const bool skip_window_chrome = !passes.Runs(PaintPass::WindowChrome, dirty_rect_hint);
+  bool skip_sidebar = !passes.Runs(PaintPass::Sidebar, dirty_rect_hint);
+  bool skip_right_pane = !passes.Runs(PaintPass::RightPane, dirty_rect_hint);
+  bool skip_bottom_panel = !passes.Runs(PaintPass::BottomPanel, dirty_rect_hint);
+  // A clip wholly inside one open menu's card repaints the card alone: the card
+  // is opaque over the editor, sidebar and panel, whose pixels the scene texture
+  // keeps. One card, not their bounding box: a tall menu's box with the bar's
+  // covers the editor, and a caret blink under an open Edit menu painted the
+  // window background over it. The cards as this frame paints them (MenuPopupPaint).
   bool contained_in_chrome_union = false;
   std::optional<SDL_FRect> traced_chrome_union;
   if (dirty_rect_hint.has_value()) {
-    for (const SDL_FRect& piece : CurrentChromeRects()) {
-      if (RectContains(piece, *dirty_rect_hint)) {
+    for (const MenuPopupPaint& popup : frame_state_.menu_popups) {
+      if (popup.visible && RectContains(popup.rect, *dirty_rect_hint)) {
         skip_editor_surface = true;
         skip_sidebar = true;
         skip_right_pane = true;
         skip_bottom_panel = true;
         contained_in_chrome_union = true;
-        traced_chrome_union = piece;
+        traced_chrome_union = popup.rect;
         break;
       }
     }
@@ -176,30 +97,41 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   // says only "painting is slow".
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::FrameBase");
-    RenderFrameBase(renderer, layout, *clip_cached_frame_vm_);
+    RenderFrameBase(renderer, layout);
   }
+  // Each skippable pass draws inside what it declared (render::PaintPassScope,
+  // checked while overrun recording is on: the QA redraw verifier and the redraw
+  // tests). A draw outside it is a pixel a clip that skipped the pass leaves stale.
+  const auto pass_scope = [&](PaintPass paint_pass, std::string_view name) {
+    return render::PaintPassScope(renderer, name, &PaintPassExtent::CoversThunk,
+                                  &passes.extents[static_cast<std::size_t>(paint_pass)]);
+  };
   if (!skip_editor_surface) {
+    const render::PaintPassScope pass = pass_scope(PaintPass::Editor, "editor");
     {
       util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::EditorSurface");
-      RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
-                                   &active_editor_pane_rect, *clip_cached_frame_vm_);
+      RenderActiveWorkspaceSurface(renderer, layout, prepared_frame_draw_editor_caret_);
     }
-    RenderEditorHoverPopup(renderer);
-    RenderSignatureHelpPopup(renderer);
+    PaintCard(renderer, frame_state_.editor_hover_card, theme_, text_renderer_);
+    PaintCard(renderer, frame_state_.signature_card, theme_, text_renderer_);
   }
   if (!skip_window_chrome) {
+    const render::PaintPassScope pass = pass_scope(PaintPass::WindowChrome, "window-chrome");
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::WindowChrome");
     RenderWindowChrome(renderer, layout);
   }
   if (!skip_sidebar) {
+    const render::PaintPassScope pass = pass_scope(PaintPass::Sidebar, "sidebar");
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::Sidebar");
     RenderSidebarSurface(renderer, layout);
   }
   if (!skip_right_pane) {
+    const render::PaintPassScope pass = pass_scope(PaintPass::RightPane, "right-pane");
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::DebugPane");
     RenderDebugPaneSurface(renderer, layout);
   }
   if (!skip_bottom_panel) {
+    const render::PaintPassScope pass = pass_scope(PaintPass::BottomPanel, "bottom-panel");
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::BottomPanel");
     RenderBottomPanelSurface(renderer, layout);
   }
@@ -213,7 +145,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::TooltipAndMenus");
-    RenderHoverTooltip(renderer, layout);
+    PaintCard(renderer, frame_state_.tooltip_card, theme_, text_renderer_);
     RenderMenuPopups(renderer, layout);
   }
   {
@@ -227,19 +159,14 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::TextInputAndNotifications");
-    SDL_Window* render_window = SDL_GetRenderWindow(renderer);
-    const auto active_text_input_visual =
-        BuildActiveTextInputVisual(layout, active_editor_pane_rect);
-    RenderPromptSurface(renderer, layout, active_text_input_visual);
-    RenderSingleLineTextSelection(renderer, active_text_input_visual);
-    RenderActiveTextInputCaret(renderer, active_text_input_visual);
-    RenderTextComposition(renderer, active_text_input_visual);
-    UpdateTextInputArea(renderer, render_window, active_text_input_visual);
+    RenderPromptSurface(renderer, layout);
+    PaintCard(renderer, frame_state_.text_input_marks, theme_, text_renderer_);
+    PaintCard(renderer, frame_state_.text_input_caret, theme_, text_renderer_);
     RenderDirtyPromptSurface(renderer, layout);
     PaintNotificationToasts(renderer, frame_state_, theme_, text_renderer_);
   }
 
-  if (menu_hover_trace && context_.menu_state.menu_bar_open) {
+  if (trace_start_ns != 0) {
     const double elapsed_ms =
         static_cast<double>(SDL_GetTicksNS() - trace_start_ns) / 1'000'000.0;
     char hint_buf[96] = "(none)";

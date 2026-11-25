@@ -23,7 +23,7 @@ constexpr std::size_t kFileFinderRecentLimit = 8;
 }  // namespace
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
   InvalidateCursorKindFingerprint();
   // An opening overlay (completion, code actions, pickers) supersedes the
   // caret-anchored signature popup; drop it so the two never stack.
@@ -76,11 +76,11 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   }
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
   ResetOverlayScroll();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
   InvalidateCursorKindFingerprint();
   // Escape or a click outside: what the pick previewed goes back. After Enter
   // there is nothing to restore (Accept ends the preview).
@@ -100,7 +100,7 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
   context_.current_project_state.overlay.visible = false;
   context_.current_project_state.surface.focus =
       focus_editor ? FocusTarget::Editor : FocusAfterOverlay(context_.current_project_state);
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 std::string WorkspaceShell::SingleLineEditorSelectionSeed() const {
@@ -183,7 +183,7 @@ void WorkspaceShell::OpenBufferReplace() { OpenBufferSearchSurface(OverlayMode::
 
 void WorkspaceShell::ResetOverlayScroll() {
   context_.current_project_state.overlay.scroll_row = 0;
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 float WorkspaceShell::OverlayListStartOffset() const {
@@ -288,10 +288,10 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
       break;
     }
   }
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
   if (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
       context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 }
 
@@ -308,7 +308,7 @@ void WorkspaceShell::RevealOverlaySelection(const SDL_FRect& overlay) {
   const auto layout = ComputeOverlayListLayout(overlay);
   const int selected = static_cast<int>(std::min(OverlaySelectedIndex(), OverlayItemCount() - 1));
   context_.current_project_state.overlay.scroll_row = RevealScrollableListIndex(layout, selected);
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::ActivateOverlaySelection() {
@@ -526,7 +526,7 @@ void WorkspaceShell::RefreshCommandPalette() {
   palette.summary_line =
       BuildFilteredCountSummary(palette.matches.size(), palette.items.size(), "commands");
   ResetOverlayScroll();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::CommandPaletteQueryIsCommandLine() const {

@@ -189,7 +189,7 @@ void DrawLane(SDL_Renderer* renderer, const render::Theme& theme, const SDL_FRec
 
   for (const Marker& marker : markers) {
     render::SetDrawColor(renderer, marker.color);
-    SDL_RenderFillRect(renderer, &marker.rect);
+    render::FillRectInDrawColor(renderer, marker.rect);
   }
 }
 

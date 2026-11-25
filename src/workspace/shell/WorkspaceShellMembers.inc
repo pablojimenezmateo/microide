@@ -346,6 +346,7 @@
     std::size_t cursor_line = 0;
     std::size_t cursor_column = 0;
   };
+  void LayOutSignatureHelpCard(const SignatureHelpPopup& popup, const SDL_FRect& rect, CardPaint& card) const;
 
   // Recorded by the (const) debug-value hover resolver when it classifies a cache
   // MISS, and consumed by the non-const UpdateEditorHover to kick off the async
@@ -959,6 +960,8 @@
   void PreparePanelSurfaces(FramePrepPass& pass);
   void PrepareSidebarSurfaces(FramePrepPass& pass);
   void PrepareHoverFrame(FramePrepPass& pass);
+  void PrepareWindowChromeUnits(FramePrepPass& pass);
+  void PrepareTextInputOverlays(FramePrepPass& pass);
   // The surfaces those phases prepare, one each.
   void PrepareGitPanelSurface(FramePrepPass& pass);
   void PrepareTreeSidebarSurface(FramePrepPass& pass);
@@ -1105,12 +1108,15 @@
                                          std::size_t max_content_lines,
                                          const SDL_FRect& anchor_rect,
                                          const SDL_FRect& editor_surface) const;
-  void DrawTwoBlockHoverCard(SDL_Renderer* renderer,
-                             const SDL_FRect& area,
-                             std::string_view title,
-                             std::string_view content,
-                             std::size_t max_title_lines,
-                             std::size_t max_content_lines) const;
+  void LayOutTwoBlockHoverCard(CardPaint& card,
+                               const SDL_FRect& area,
+                               std::string_view title,
+                               std::string_view content,
+                               std::size_t max_title_lines,
+                               std::size_t max_content_lines) const;
+  // The editor's hover card and the signature-help card, laid out at frame prep
+  // into what their paint draws (HoverCardPaint.h).
+  void LayOutEditorHoverCard(const EditorHoverPopupLayout& popup, CardPaint& card) const;
   void UpdateEditorHover(float x, float y);
   // Signature-help popup (Phase C follow-up). ShowSignatureHelpPopup captures the
   // request position from the active editable viewport; MaybeExpireSignatureHelp
@@ -1118,7 +1124,6 @@
   // draws the prebuilt blocks anchored to the caret.
   void ShowSignatureHelpPopup(std::string signature, std::string documentation);
   void MaybeExpireSignatureHelp();
-  void RenderSignatureHelpPopup(SDL_Renderer* renderer) const;
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
   // True when the last-known pointer position is inside `rect`. Shared by render
   // paths that lift a surface to its hover style; centralizes the
@@ -1489,17 +1494,9 @@
   const ActionAvailability& MakeActionAvailability() const;
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
-  void RenderFrameBase(SDL_Renderer* renderer,
-                       const WorkspaceLayout& layout,
-                       const FrameSurfaceViewModel& frame_vm) const;
-  void RenderActiveWorkspaceSurface(SDL_Renderer* renderer,
-                                    const WorkspaceLayout& layout,
-                                    const FrameToken& frame_token,
-                                    bool draw_editor_caret,
-                                    std::optional<SDL_FRect>* active_editor_pane_rect,
-                                    const FrameSurfaceViewModel& frame_vm);
+  void RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderActiveWorkspaceSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout, bool draw_editor_caret);
   void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
-  void RenderHoverTooltip(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   void RenderOverlaySurface(SDL_Renderer* renderer,
                             const WorkspaceLayout& layout,
@@ -1513,8 +1510,8 @@
   // active. Mirrors the find-widget pattern. Defined in
   // WorkspaceShellDebugToolbar.cpp (not a render-named TU, so it may read state
   // for the hit-test alongside the render).
-  void RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceLayout& layout,
-                          bool session_stopped, std::optional<float> avoid_below_y) const;
+  void RenderDebugToolbar(SDL_Renderer* renderer) const;
+  void PaintEditorAreaChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   // y below which the toolbar must sit (find widget's bottom when the buffer
   // search/replace widget is visible), so the two floating bars stack instead of
   // overlapping. std::nullopt anchors the toolbar at the editor top.
@@ -1616,13 +1613,12 @@
   void ScrollSettingsOverlayRows(int delta);
   void RenderPromptSurface(
       SDL_Renderer* renderer,
-      const WorkspaceLayout& layout,
-      const std::optional<TextInputVisual>& active_text_input_visual) const;
+      const WorkspaceLayout& layout) const;
   void RenderDirtyPromptSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
-  void RenderActiveTextInputCaret(SDL_Renderer* renderer,
-                                  const std::optional<TextInputVisual>& visual) const;
-  void RenderSingleLineTextSelection(SDL_Renderer* renderer,
-                                     const std::optional<TextInputVisual>& visual) const;
+  // The focused single-line field's selection and IME preedit, and its caret, laid
+  // out at frame prep into what the text-input pass draws (HoverCardPaint.h).
+  void LayOutTextInputMarks(const std::optional<TextInputVisual>& visual, CardPaint& marks) const;
+  void LayOutTextInputCaret(const std::optional<TextInputVisual>& visual, CardPaint& caret) const;
   std::optional<TextInputVisual> BuildActiveTextInputVisual(
       const WorkspaceLayout& layout,
       const std::optional<SDL_FRect>& active_editor_pane_rect) const;
@@ -1668,9 +1664,6 @@
   void UpdateTextInputArea(SDL_Renderer* renderer,
                            SDL_Window* render_window,
                            const std::optional<TextInputVisual>& visual) const;
-  void RenderEditorHoverPopup(SDL_Renderer* renderer) const;
-  void RenderTextComposition(SDL_Renderer* renderer,
-                             const std::optional<TextInputVisual>& visual) const;
   // The shell's one hovered-tooltip answer (HoverTooltipSurface.cpp): the tab
   // strips, breadcrumb status items, sidebar mode row and view headers, the two
   // find widgets and the status bar all resolve through it, in that order, and it
@@ -1735,20 +1728,17 @@
   void RequestFullRedraw();
   void RequestPreparedFrame();
   void NoteActiveEditableEdit();
-  void RequestEditorSurfaceRedraw();
   // Post a transient notification toast and schedule a full redraw so it paints.
   // The single host-owned entry point for toasts (plugins + built-in callers).
   void Notify(NotificationService::Tone tone, std::string message);
   // The keyed/sticky/progress form. See NotificationService::Request.
   void Notify(NotificationService::Request request);
   void RequestRedrawRect(const SDL_FRect& rect);
-  void RequestWindowRedraw();
   // Request the smallest present that still re-latches the hardware cursor plane
   // after an event-time cursor change (see UpdateMouseCursor / the Wayland cursor
   // desync note). Not a visual repaint — just a commit so an idle compositor shows
   // the new shape.
   void RequestCursorPresent();
-  void RequestSidebarRedraw();
   // Repaint after a divider drag changed the outer geometry. Both the sidebar and
   // the bottom panel need the same rule — mark layout dirty, and if either of the
   // two rects the drag can move actually moved, fall back to a full redraw because
@@ -1757,17 +1747,9 @@
                                       SDL_FRect WorkspaceLayout::*first,
                                       SDL_FRect WorkspaceLayout::*second);
   void RequestSidebarLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
-  void RequestBreadcrumbRedraw();
-  void RequestTabStripRedraw();
-  void RequestActiveTabRedraw(bool include_tree_sidebar = false);
   void RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                          const std::vector<std::string>& after_lines);
-  void RequestBottomPanelRedraw();
-  void RequestDebugPaneRedraw();
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
-  void RequestBottomPanelContentRedraw();
-  void RequestOverlayRedraw();
-  void RequestPromptRedraw();
   // Repaint whichever surface owns a single-line drag selection. Used by both the
   // motion handler (while dragging) and the button-up handler (on release), which
   // must agree or a released selection repaints somewhere the drag did not.
@@ -2180,6 +2162,11 @@
   CrashSafetyFlushSchedule session_flush_;
   // What MaybeArmSessionFlushTimer last saw of every open editor document.
   std::uint64_t session_flush_content_fingerprint_ = 0;
+  // The focused text input's visual (its field's text, caret and selection, or the
+  // editor's caret for an IME preedit), resolved once per prepared frame: the
+  // prompt's field and the text-input overlays paint it, and the IME's area
+  // follows it.
+  std::optional<TextInputVisual> prepared_text_input_visual_;
   RenderInvalidation pending_render_invalidation_;
   // Bumped by every damage request, including one a pending full redraw absorbs;
   // see MarkDamage.

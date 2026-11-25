@@ -1558,13 +1558,18 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
-  if (update_editor_hover &&
-      (mouse_moved || editor_hover_refresh_pending_ || workspace_layout_recomputed)) {
-    util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateMouseCursor::UpdateEditorHover");
-    UpdateEditorHover(x, y);
-  } else if (!update_editor_hover) {
-    active_editor_hover_target_.reset();
-    editor_hover_refresh_pending_ = false;
+  // Frame prep resolved the editor hover already, at its one place in the frame
+  // (PrepareSidebarSurfaces), before the card's unit was keyed; resolving it again
+  // here, after every unit is committed, would paint a card the frame's damage
+  // never covered.
+  if (!during_frame_prepare) {
+    if (update_editor_hover && (mouse_moved || editor_hover_refresh_pending_ || workspace_layout_recomputed)) {
+      util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateMouseCursor::UpdateEditorHover");
+      UpdateEditorHover(x, y);
+    } else if (!update_editor_hover) {
+      active_editor_hover_target_.reset();
+      editor_hover_refresh_pending_ = false;
+    }
   }
 
   // Fast-path: skip the hit-test entirely when neither the pointer position nor any

@@ -43,17 +43,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
-  const auto invalidate_menu_blocked_hover_visuals = [this, &layout]() {
-    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
-      RequestRedrawRect(tooltip->rect);
-    }
-    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
-      RequestRedrawRect(popup->rect);
-    }
-  };
 
+  // (A menu that holds the pointer hides the tooltip and the editor's hover card:
+  // both resolve to nothing under it, and their Chrome units repaint where they were.)
   if (MenuSurfaceCapturingMouse()) {
-    invalidate_menu_blocked_hover_visuals();
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
     mark = MarkDamage();
     if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
@@ -87,7 +80,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         ActionCoordinator(MakeActionContext()).Execute(action->id, action->args,
                                                        ActionSource::Command);
       }
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
   }
@@ -112,7 +105,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       const editor::SelectionRange range = visible_hover_popup->diagnostic->range;
       active_editor_hover_target_.reset();
       assist_service_.code_actions().ShowOverlay(nullptr, &range);
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
@@ -149,14 +142,14 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
         // As the key path: a confirm that leaves the prompt up damaged the saved
         // tab's pane, not the prompt it re-selected (soak e93ce81f04ac).
         if (context_.prompts.dirty_visible) {
-          RequestPromptRedraw();
+          RequestPreparedFrame();
         } else {
-          EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+          EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         }
         return true;
       }
     }
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -170,15 +163,15 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
         if (event.button.button == SDL_BUTTON_LEFT) {
           ConfirmPromptSurface();
         }
-        EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         return true;
       }
     }
     if (HandleSingleLineInputMouseDown(event, layout)) {
-      EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -189,7 +182,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
       case TextInputSurface::SidebarSearchInclude:
       case TextInputSurface::SidebarSearchExclude:
       case TextInputSurface::CommitSubject:
-        EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         break;
       case TextInputSurface::FileFinder:
       case TextInputSurface::BufferSearch:
@@ -197,10 +190,10 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
       case TextInputSurface::BufferReplaceReplace:
       case TextInputSurface::ProjectSearchOverlay:
       case TextInputSurface::CommitPicker:
-        EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         break;
       default:
-        EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         break;
     }
     return true;
@@ -224,7 +217,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnModals(const SDL_Event& event, co
 std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, const WorkspaceLayout& layout,
                                                       DamageMark mark) {
   if (HandleSettingsOverlayButtonDown(event, layout)) {
-    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -271,33 +264,18 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
       }
       std::string error_message;
       ExecuteCommandName(command, args, ActionSource::Command, &error_message);
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
   }
 
 
-  const auto blocked_tooltip = HoveredTooltip(layout);
-  const auto blocked_editor_hover_popup_rect = [&]() -> std::optional<SDL_FRect> {
-    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
-      return popup->rect;
-    }
-    return std::nullopt;
-  }();
   if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
+    // A menu this opened hides the tooltip and the hover card under it: their
+    // Chrome units repaint where they were in the frame.
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     if (MenuSurfaceCapturingMouse()) {
-      // The fallback first: the hover cards the opened menu now hides are not
-      // the handler's damage and must not stand in for it.
-      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
-      if (blocked_tooltip.has_value()) {
-        RequestRedrawRect(blocked_tooltip->rect);
-      }
-      if (blocked_editor_hover_popup_rect.has_value()) {
-        RequestRedrawRect(*blocked_editor_hover_popup_rect);
-      }
       UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
-    } else {
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
     }
     return true;
   }
@@ -341,7 +319,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
       std::string error_message;
       (void)ExecuteCommandName("browse-folder", {(context_.current_project_state.root / *folder).string()},
                                ActionSource::Command, &error_message);
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
   }
@@ -367,7 +345,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnChrome(const SDL_Event& event, co
         std::string error_message;
         ExecuteCommandName(lens->command, {}, ActionSource::Command, &error_message);
       }
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
     if (editor_blame_overlay_service_.LineAtPosition(static_cast<float>(event.button.x),
@@ -416,7 +394,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
           kWorkspaceDefaultRightPaneWidth, window_width, resolved_sidebar_width);
       ClearDragState();
       NoteLayoutInputsChanged();
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
     context_.interaction_state.drag_target = DragTarget::RightPaneDivider;
@@ -436,7 +414,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
                                                                    divider.boundary);
           ClearDragState();
           NoteLayoutInputsChanged();
-          EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+          EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
           return true;
         }
         context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
@@ -448,7 +426,7 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
   }
 
   if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
-    EnsureRedraw(mark, [this]() { RequestDebugPaneRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -461,25 +439,25 @@ std::optional<bool> WorkspaceShell::MouseDownOnDividersAndPanels(const SDL_Event
       RequestBottomPanelLayoutChangeRedraw(layout);
       return true;
     }
-    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (MakeSidebarMouseCoordinator().HandleButtonDown(event, layout)) {
-    EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   {
     util::PerformanceTrace::Scope tab_scope("WorkspaceShell::HandleMouseButtonDown::Tabs");
     if (HandleTabMouseButtonDown(event, layout)) {
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
   }
 
   if (MakePanelMouseCoordinator().HandleButtonDown(event, layout)) {
-    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
   return std::nullopt;
@@ -530,7 +508,7 @@ std::optional<bool> WorkspaceShell::MouseDownOpensContextMenu(const SDL_Event& e
       if (pane_it->group_index != project_state.focused_group_index &&
           pane_it->group_index < project_state.editor_groups.size()) {
         project_state.focused_group_index = pane_it->group_index;
-        RequestTabStripRedraw();
+        RequestPreparedFrame();
       }
 
       editor::TextViewport* viewport = ActiveEditorViewport();
@@ -623,7 +601,7 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
   // Floating debug control bar sits over the top-right of the editor; intercept
   // its clicks before the editor coordinator turns them into text selection.
   if (HandleDebugToolbarButtonDown(event, layout)) {
-    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -688,7 +666,7 @@ bool WorkspaceShell::MouseDownOnEditorArea(const SDL_Event& event, const Workspa
                 .Execute(ActionId::RemoteReconnect, {welcome_model->remote.host}, ActionSource::Menu);
             break;
         }
-        EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         return true;
       }
     }
@@ -803,7 +781,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     if (event.button.button == SDL_BUTTON_LEFT) {
       AbandonPointerGestures();
     }
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -811,21 +789,21 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   // (the row opens). Ctrl copies what a folder drop would move, as in VS Code.
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.path_drag.armed) {
     (void)MakeSidebarMouseCoordinator().FinishPathDrag((context_.interaction_state.key_modifiers & SDL_KMOD_CTRL) != 0);
-    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.tab_drag.kind != TabDragKind::None) {
     if (HandleTabMouseButtonUp(event)) {
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
-    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (MakePanelMouseCoordinator().HandleButtonUp(event)) {
-    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -841,7 +819,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
       context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
       context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar) {
     ClearDragState();
-    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
   if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {
@@ -859,7 +837,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     context_.interaction_state.text_drag_has_drop = false;
     selection_autoscroll::Disarm(context_.interaction_state);
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
-    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
   const bool was_selecting = context_.interaction_state.mouse_selecting;

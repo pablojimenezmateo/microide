@@ -41,6 +41,28 @@ void NotePaint(SDL_Renderer* renderer, const SDL_FRect& logical);
 // The overruns noted since the last call, once per element name.
 std::vector<PaintOverrun> TakePaintOverruns();
 
+// A paint pass that a partial frame may skip (the workspace's RenderClip runs it
+// only for clips that touch what it declared it paints). While one is open and
+// recording is on, every draw it makes -- as far as the renderer's clip and the
+// innermost element let it show -- must fall inside a rect `covers` accepts; one
+// that does not is an overrun named "pass:<name>": a pixel a partial frame skipping
+// the pass would leave stale.
+class PaintPassScope {
+ public:
+  using Covers = bool (*)(const void* context, const SDL_FRect& visible);
+  PaintPassScope(SDL_Renderer* renderer, std::string_view name, Covers covers, const void* context);
+  ~PaintPassScope();
+  PaintPassScope(const PaintPassScope&) = delete;
+  PaintPassScope& operator=(const PaintPassScope&) = delete;
+  void Check(SDL_Renderer* renderer, const SDL_FRect& logical) const;
+
+ private:
+  std::string name_;
+  Covers covers_ = nullptr;
+  const void* context_ = nullptr;
+  PaintPassScope* parent_ = nullptr;
+};
+
 class PaintElement {
  public:
   PaintElement(SDL_Renderer* renderer, const SDL_FRect& rect, std::string_view name,

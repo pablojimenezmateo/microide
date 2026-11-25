@@ -1,3 +1,4 @@
+#include "render/SurfacePrimitives.h"
 #include "workspace/services/SidebarService.h"
 
 #include "workspace/OpenDocumentWatch.h"
@@ -232,7 +233,7 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
   overview::Marker caret_marker;
   if (overview::BuildMarker(inner_lane, total_rows, caret_input, caret_marker)) {
     render::SetDrawColor(renderer, caret_marker.color);
-    SDL_RenderFillRect(renderer, &caret_marker.rect);
+    render::FillRectInDrawColor(renderer, caret_marker.rect);
   }
 }
 
@@ -349,11 +350,20 @@ struct WorkspaceShell::FramePrepPass {
   WorkspaceLayout layout;
   bool workspace_layout_recomputed = false;
   std::vector<DerivedDamage::Unit>* chrome = nullptr;
+  PaintPassExtents* extents = nullptr;
   NotificationsViewModel toasts;
   std::optional<SDL_FRect> modal;
 
-  void ChromeUnit(const std::optional<SDL_FRect>& rect, std::uint64_t key) const {
-    chrome->push_back({rect.value_or(SDL_FRect{}), key});
+  // A Chrome unit, and who paints it: a skippable pass records the rect in its
+  // extent (PreparedFrameState::paint_pass_extents), so RenderClip runs it for a
+  // clip over it. `Always`: a pass that runs for every clip, or a skippable one
+  // painting inside its own layout region (which its extent holds already).
+  void ChromeUnit(const std::optional<SDL_FRect>& rect, std::uint64_t key, ChromePainter painter) const {
+    const SDL_FRect at = rect.value_or(SDL_FRect{});
+    chrome->push_back({at, key});
+    if (painter != ChromePainter::Always) {
+      (*extents)[static_cast<PaintPass>(painter)].Add(at);
+    }
   }
 };
 
@@ -388,14 +398,42 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // The chrome units (DerivedSurface::Chrome): pushed in a fixed order through
   // the phases below, committed after the last one.
   pass.chrome = &frame_state_.derived_damage.Begin(DerivedSurface::Chrome);
+  // What each skippable paint pass draws: its layout region here, and the Chrome
+  // units it paints as the phases below key them (FramePrepPass::ChromeUnit).
+  {
+    PaintPassExtents& extents = frame_state_.paint_pass_extents;
+    extents.Clear();
+    pass.extents = &extents;
+    const WorkspaceLayout& layout = pass.layout;
+    const auto region = [&extents](PaintPass paint_pass, const SDL_FRect& rect, bool shown) {
+      extents.region_shown[static_cast<std::size_t>(paint_pass)] = shown;
+      extents[paint_pass].Add(rect);
+    };
+    const auto shown = [](const SDL_FRect& r) { return r.w > 0.0f && r.h > 0.0f; };
+    // A surface the layout collapsed paints nothing, hinted or not: under a
+    // maximized panel the editor column collapses, and a full render that painted
+    // the editor at its collapsed rect left marks under the menu bar.
+    region(PaintPass::Editor, layout.editor_surface, shown(layout.editor_surface));
+    region(PaintPass::Sidebar, layout.sidebar, shown(layout.sidebar));
+    region(PaintPass::RightPane, layout.right_pane, shown(layout.right_pane));
+    region(PaintPass::BottomPanel, layout.bottom_panel, shown(layout.bottom_panel));
+    // The window chrome: the menu bar and the top strips here; every pane's strip
+    // and band, the drags' previews and ghosts are its units.
+    region(PaintPass::WindowChrome, layout.menu_bar, true);
+    for (const SDL_FRect& band : {layout.project_tab_strip, layout.tab_strip, layout.breadcrumb}) {
+      extents[PaintPass::WindowChrome].Add(band);
+    }
+  }
   PrepareChromeFrame(pass);
   PrepareFrameCompletions(pass);
   PrepareEditorPaneMetrics(pass);
   PrepareEditorPaneUnits(pass);
   PrepareWorkbenchChromeUnits(pass);
   ResolvePointerOccluder(pass);
+  PrepareWindowChromeUnits(pass);
   PreparePanelSurfaces(pass);
   PrepareSidebarSurfaces(pass);
+  PrepareTextInputOverlays(pass);
   PrepareHoverFrame(pass);
   frame_state_.derived_damage.Commit(
       DerivedSurface::Chrome, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
@@ -642,9 +680,8 @@ void WorkspaceShell::PrepareChromeFrame(FramePrepPass& pass) {
   const BottomPanelSurfaceViewModel& panel_vm = *pass.panel_vm;
   ProjectWorkspaceState& project_state = *pass.project_state;
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
   // The style everything is painted in: the theme's colours, every text
   // renderer's metrics and the UI scale. A unit over the whole window keyed on
   // it, so a colorscheme, theme, font or scale change repaints every pixel from
@@ -661,11 +698,25 @@ void WorkspaceShell::PrepareChromeFrame(FramePrepPass& pass) {
     const float scale = UiScale();
     std::memcpy(&scale_bits, &scale, sizeof scale_bits);
     style = MixRowKey(style, scale_bits);
-    chrome_unit(MakeRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)), style);
+    chrome_unit(MakeRect(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)), style, ChromePainter::Always);
   }
   for (const SDL_FRect& region : {layout.sidebar, layout.bottom_panel, layout.editor_surface, layout.right_pane,
                                   layout.status_bar, layout.tab_strip}) {
-    chrome_unit(region, 0);  // a region that appears, vanishes or moves: rect-only
+    chrome_unit(region, 0, ChromePainter::Always);  // a region that appears, vanishes or moves: rect-only
+  }
+  // The sidebar's divider line (RenderFrameBase paints it from this), lit while
+  // it is dragged.
+  {
+    const bool shown = project_state.sidebar.visible && layout.sidebar.w > 0.0f && layout.sidebar.h > 0.0f;
+    frame_state_.frame_base = PreparedFrameState::FrameBasePaint{
+        .sidebar_visible = project_state.sidebar.visible,
+        .bottom_panel_visible = BottomPanelVisible(),
+        .sidebar_divider_lit = context_.interaction_state.drag_target == DragTarget::SidebarDivider,
+    };
+    chrome_unit(shown ? std::optional<SDL_FRect>(MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
+                                                          kWorkspaceDividerThickness, layout.sidebar.h))
+                      : std::nullopt,
+                frame_state_.frame_base.sidebar_divider_lit ? 1u : 2u, ChromePainter::Always);
   }
   // The bottom panel's body, keyed on WHAT it shows: a terminal tab, an output
   // channel's rows, a plugin's surface. Each kind repaints its own changes (the
@@ -699,7 +750,7 @@ void WorkspaceShell::PrepareChromeFrame(FramePrepPass& pass) {
     chrome_unit(panel.content != PanelContentKind::None && layout.bottom_panel.h > 0.0f
                     ? std::optional<SDL_FRect>(BottomPanelContentRect(layout))
                     : std::nullopt,
-                shows);
+                shows, ChromePainter::BottomPanel);
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");
@@ -739,9 +790,8 @@ void WorkspaceShell::PrepareFrameCompletions(FramePrepPass& pass) {
   const BottomPanelSurfaceViewModel& panel_vm = *pass.panel_vm;
   ProjectWorkspaceState& project_state = *pass.project_state;
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
   // Frame-prep completions that need the resolved layout (TD-2026-07-17-084/083):
   // the render TUs consume prepared data and no longer mutate state mid-paint.
   // 1) Bottom-panel tab strip: prebuild the visible tabs + overflow controls once
@@ -879,16 +929,19 @@ void WorkspaceShell::PrepareFrameCompletions(FramePrepPass& pass) {
     // title that fits again (the compact layout's menus collapsing) repaints whole
     // (QA menu-keyboard at 1.25). The bar's items, chevron and window buttons are
     // units of their own, below.
-    const bool custom = CurrentWindowChromeState().custom_enabled;
-    inputs = util::Fnv1aByte(inputs, custom ? 1u : 0u);
-    if (custom) {
-      const auto title_rect =
-          WindowTitleRect(layout.menu_bar, ComputeVisibleMenuBarItems(layout.menu_bar),
-                          ComputeVisibleWindowControlButtons(layout.menu_bar),
-                          text_renderer_.MeasureWidth(frame_state_.window_title));
-      inputs = MixRowKey(inputs, title_rect.has_value() ? static_cast<std::uint64_t>(title_rect->x) + 1 : 0);
+    std::optional<SDL_FRect>& title_rect = frame_state_.window_chrome.title_rect;
+    title_rect.reset();
+    if (CurrentWindowChromeState().custom_enabled) {
+      title_rect = WindowTitleRect(layout.menu_bar, ComputeVisibleMenuBarItems(layout.menu_bar),
+                                   ComputeVisibleWindowControlButtons(layout.menu_bar),
+                                   text_renderer_.MeasureWidth(frame_state_.window_title));
     }
-    chrome_unit(layout.menu_bar, inputs);
+    PaintFingerprint title;
+    title.Add(title_rect.has_value());
+    if (title_rect.has_value()) {
+      title.Add(*title_rect).Add(std::string_view(frame_state_.window_title));
+    }
+    chrome_unit(layout.menu_bar, title.value(), ChromePainter::WindowChrome);
   }
   frame_state_.caret_visible = CaretVisibleNow();
   // The editor (and the compare/merge editable panes) paint the caret only while
@@ -934,7 +987,7 @@ void WorkspaceShell::PrepareFrameCompletions(FramePrepPass& pass) {
         key.Add(*button).Add(PointerOver(*button));
       }
     }
-    chrome_unit(bar, key.value());
+    chrome_unit(bar, key.value(), ChromePainter::BottomPanel);
   }
   // Whatever moves the caret away -- focus to another surface, a menu or prompt
   // that suspends the blink, the blink's own phase -- this frame repaints both the
@@ -947,7 +1000,7 @@ void WorkspaceShell::PrepareFrameCompletions(FramePrepPass& pass) {
   // once that event owed a frame and no longer named the window (QA monkey,
   // layout profile at 1.25).
   chrome_unit(frame_state_.caret_visible ? CurrentCaretDirtyRect() : std::nullopt,
-              context_.interaction_state.window_has_input_focus ? 1u : 2u);
+              context_.interaction_state.window_has_input_focus ? 1u : 2u, ChromePainter::Always);
 }
 
 // Each editor pane's metrics, bracket pair and occurrence lines.
@@ -1141,9 +1194,8 @@ struct WorkspaceShell::EditorPanesPass {
 void WorkspaceShell::PrepareEditorPaneUnits(FramePrepPass& pass) {
   ProjectWorkspaceState& project_state = *pass.project_state;
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
   // Each editor pane's rows as derived units (derived-damage 2.2): a row whose
   // keys moved repaints, whatever moved them. Added to the editor's hand-written
   // damage for now -- syntax colours are not in the keys yet (EditorRowUnits.h).
@@ -1237,12 +1289,60 @@ void WorkspaceShell::PrepareEditorPaneUnits(FramePrepPass& pass) {
       frame_state_.derived_damage.Commit(surface, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); });
     }
   }
+  // What the editor pass paints in each pane, and in what order: the diffs and
+  // merges in front of their panes, then the editor panes. A diff in one pane of a
+  // split used to take the whole editor column (TD-2026-11-11-439); each paints
+  // inside its own group's editor surface.
+  {
+    std::vector<PreparedFrameState::EditorPassPane>& dispatch = frame_state_.editor_pass_panes;
+    dispatch.clear();
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    const bool focused_shows_diff = ActiveTabIsCompare() || ActiveTabIsMerge();
+    std::array<bool, kMaxEditorGroups> shows_diff{};
+    for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < kMaxEditorGroups &&
+                             gi < project_state.editor_groups.size();
+         ++gi) {
+      EditorGroup& group = project_state.editor_groups[gi];
+      if (!group.has_active_tab()) {
+        continue;
+      }
+      TabEntry& tab = group.active_tab();
+      const bool compare = tab.kind == TabEntry::Kind::Compare && tab.compare.has_value();
+      const bool merge = tab.kind == TabEntry::Kind::Merge && tab.merge.has_value();
+      const bool focused = gi == focused_group;
+      // The focused pane's diff when the frame shows it in front (as the frame's
+      // view model had it).
+      if ((!compare && !merge) || (focused && !focused_shows_diff)) {
+        continue;
+      }
+      shows_diff[gi] = true;
+      dispatch.push_back(PreparedFrameState::EditorPassPane{
+          .kind = compare ? PreparedFrameState::EditorPassPane::Kind::Compare
+                          : PreparedFrameState::EditorPassPane::Kind::Merge,
+          .group = gi,
+          .area = group_rects.groups[gi].editor_surface,
+          .focused = focused,
+          .compare = compare ? &*tab.compare : nullptr,
+          .merge = merge ? &*tab.merge : nullptr,
+      });
+    }
+    for (const EditorPaneLayout& pane : panes) {
+      const std::size_t gi = pane.group_index;
+      if (gi >= kMaxEditorGroups || shows_diff[gi] || !frame_state_.editor_pane_paint[gi].valid) {
+        continue;
+      }
+      dispatch.push_back(PreparedFrameState::EditorPassPane{.kind = PreparedFrameState::EditorPassPane::Kind::Editor,
+                                                            .group = gi,
+                                                            .area = pane.rect,
+                                                            .active = pane.active});
+    }
+  }
   // Each pane's diff scrollbars (append_diff_bars): two slots a pane, empty for a
   // pane that shows no diff.
   for (const std::array<DerivedDamage::Unit, 2>& bars : pane_pass.diff_bars) {
     for (const DerivedDamage::Unit& bar : bars) {
       chrome_unit(bar.rect.w > 0.0f && bar.rect.h > 0.0f ? std::optional<SDL_FRect>(bar.rect) : std::nullopt,
-                  bar.fingerprint);
+                  bar.fingerprint, ChromePainter::Editor);
     }
   }
 }
@@ -1637,7 +1737,10 @@ void WorkspaceShell::FillEditorPanePaint(FramePrepPass& pass, EditorPanesPass& p
   const std::optional<editor::EditorBlameOverlay>& blame = editor_blame_overlay_service_.VisibleOverlay();
   paint.blame = pane.active && blame.has_value() ? &*blame : nullptr;
   paint.blame_source = pane.active ? &blame : nullptr;
-  paint.diagnostics_revision = project_state.diagnostics_store.revision();
+  // This file's: its ruler's marks and their cache move with its diagnostics, not
+  // with every file's.
+  paint.diagnostics_revision =
+      viewport.path().empty() ? 0 : project_state.diagnostics_store.PathRevisionByKey(viewport.path_key());
   // The find widget's highlights, on the focused pane while it is the overlay:
   // a regex or a scoped find draws its precomputed match set, a literal one its
   // query (EditorViewRenderer scans each row for it).
@@ -1840,7 +1943,11 @@ void WorkspaceShell::PrepareTextPaneUnits(FramePrepPass& pass, EditorPanesPass& 
           .Add(scroll.vertical_scrollbar->thumb)
           .Add(pane.active && context_.interaction_state.drag_target == DragTarget::EditorVerticalScrollbar)
           .Add(ruler)
-          .Add(project_state.diagnostics_store.revision())
+          // This file's diagnostics and the severity floor that filters them (the
+          // store-wide revision repainted every pane's ruler for a squiggle in
+          // any other file).
+          .Add(frame_state_.editor_pane_paint[gi].diagnostics_revision)
+          .Add(frame_state_.editor_pane_paint[gi].diagnostics_min_severity)
           .Add(viewport->visual_line_count())
           // The lane places every mark by VisualRowForLine, so a fold that moves
           // rows moves marks with no count changing (EditorOverviewSignature keys
@@ -1881,23 +1988,11 @@ void WorkspaceShell::PrepareTextPaneUnits(FramePrepPass& pass, EditorPanesPass& 
 void WorkspaceShell::PrepareWorkbenchChromeUnits(FramePrepPass& pass) {
   ProjectWorkspaceState& project_state = *pass.project_state;
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
-  // Breakpoints: the gutter dots in every pane and the Breakpoints pane's rows.
-  // They change through the gutter, F9, the pane's own keys and menus, the control
-  // channel's breakpoint-* commands and the adapter's verification -- and only the
-  // paths that also moved the caret repainted anything (QA debug-keys: Delete in
-  // the pane removed a breakpoint that stayed on screen).
-  {
-    const std::uint64_t breakpoints =
-        (project_state.breakpoint_store.revision() * 0x9E3779B97F4A7C15ull) ^
-        project_state.function_breakpoint_store.revision();
-    // The editor's gutter dots are in its panes' keys (EditorRowUnits); the
-    // Breakpoints pane's rows are the debug pane, while it shows.
-    chrome_unit(project_state.debug_pane.visible ? std::optional<SDL_FRect>(layout.right_pane) : std::nullopt,
-                breakpoints);
-  }
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
+  // (Breakpoints: the gutter dots are in each pane's row keys (EditorRowUnits),
+  // and the Breakpoints pane's rows are the debug pane's units, built from the
+  // panel model the breakpoint paths rebuild.)
   // The modal backdrop stack: a prompt opening over the command palette (or the
   // unsaved-changes prompt over a prompt) dims the whole window once more, and the
   // dialog's own repaint covered only the dialog (QA monkey, seeds 7 and 9).
@@ -1910,102 +2005,39 @@ void WorkspaceShell::PrepareWorkbenchChromeUnits(FramePrepPass& pass) {
         (overlay_backdrop ? 1u : 0u) | (settings_overlay_service_.Visible() ? 2u : 0u) |
         (context_.prompts.surface_visible ? 4u : 0u) | (context_.prompts.dirty_visible ? 8u : 0u));
     // Each backdrop dims the whole window.
-    chrome_unit(CurrentWindowRect(), backdrops);
+    chrome_unit(CurrentWindowRect(), backdrops, ChromePainter::Always);
     // (Whether the focused pane paints the find widget's matches is in its pane key.)
-  }
-  // The prompts' dialogs, keyed on what they say: the unsaved-changes prompt names
-  // the tab it closes, looked up when it paints, so a focus that moved under it
-  // renamed it with nothing damaged, and the message kept the old name outside
-  // whatever else was repainted (soak 6d33d9fa57bc).
-  // Each dialog keys on all it paints (RenderPromptSurface / RenderDirtyPromptSurface):
-  // its title, message and detail, the input field's text with the caret and
-  // selection that pick its scrolled slice, and which button is chosen -- so a
-  // prompt's own changes owe a frame, not a rect. (Its buttons' hover is keyed with
-  // the other hover state, after the pointer occluder settles.)
-  {
-    PaintFingerprint dirty;
-    std::optional<SDL_FRect> dirty_rect;
-    if (context_.prompts.dirty_visible) {
-      dirty_rect = ComputeDirtyPromptRect(layout.full);
-      dirty.Add(std::string_view(DirtyPromptTitle())).Add(std::string_view(DirtyPromptMessage()));
-      dirty.Add(context_.prompts.dirty.selected_action);
-    }
-    chrome_unit(dirty_rect, dirty.value());
-    PaintFingerprint surface;
-    std::optional<SDL_FRect> surface_rect;
-    if (context_.prompts.surface_visible) {
-      const PromptSurfaceState& prompt = context_.prompts.surface;
-      surface_rect = ComputePromptSurfaceRect(layout.full);
-      surface.Add(std::string_view(PromptSurfaceTitle())).Add(std::string_view(PromptSurfaceMessage()));
-      surface.Add(std::string_view(PromptSurfaceDetail())).Add(static_cast<int>(prompt.kind));
-      surface.Add(prompt.selected_button).Add(prompt.button_count);
-      for (const std::string_view label : PromptSurfaceActionLabels()) {
-        surface.Add(label);
-      }
-      if (prompt.kind == PromptSurfaceState::Kind::TextInput) {
-        surface.Add(std::string_view(prompt.input.text())).Add(prompt.input.caret());
-        surface.Add(prompt.input.selection_anchor().has_value() ? *prompt.input.selection_anchor() + 1 : 0);
-      }
-    }
-    chrome_unit(surface_rect, surface.value());
   }
   // (A compare tab's scroll is in its rows' surface key, and every diff pane's
   // scrollbars are Chrome units: CompareRowUnits, append_diff_bars.)
   {
-    std::uint64_t dividers = 0;
-    for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
-      for (const float edge : {divider.rect.x, divider.rect.y, divider.rect.w, divider.rect.h}) {
-        dividers = dividers * 0x100000001B3ull ^ static_cast<std::uint64_t>(std::lround(edge * 4.0f));
-      }
+    // Each split divider, a unit at its rect keyed on whether its drag lights it
+    // (RenderActiveWorkspaceSurface paints it in the accent). One slot per divider
+    // a full split can have, so a divider's unit keeps its index. The panes either
+    // side are covered edge to edge by their own units (head, rows, tail; a diff's
+    // rows and tail; the home page), their strips and bands are units too, so a
+    // divider that moves repaints only where it was and where it is -- it was one
+    // unit over the whole editor column, which a drag repainted on every motion.
+    const InteractionState& interaction = context_.interaction_state;
+    const EditorGroupRectsLayout split_rects = ComputeEditorGroupRectsForState(layout);
+    std::vector<PreparedFrameState::EditorAreaChromePaint::Divider>& dividers = frame_state_.editor_area_chrome.dividers;
+    dividers.clear();
+    for (const EditorSplitDividerRect& divider : split_rects.dividers) {
+      dividers.push_back({.rect = divider.rect,
+                          .lit = interaction.drag_target == DragTarget::EditorSplitDivider &&
+                                 divider.node == interaction.drag_editor_split_node &&
+                                 divider.boundary == interaction.drag_editor_split_boundary});
     }
-    // The whole column: each pane's tab strip sits above `editor_area`.
-    const float top = layout.tab_strip.h > 0.0f ? layout.tab_strip.y : layout.editor_area.y;
-    chrome_unit(MakeRect(layout.editor_area.x, top, layout.editor_area.w,
-                         layout.editor_area.y + layout.editor_area.h - top),
-                dividers);
-  }
-  // A project tab's label follows state no input touches -- its dirty marker is
-  // "any editor tab in that project is dirty" -- so typing into or saving a file
-  // changed it with no damage on the strip (remote QA suite).
-  // What the strip shows is also where it is scrolled to, which project is the
-  // active one and how wide it is: an overflow arrow scrolled it and damaged the
-  // arrow alone, and the strip kept the projects it had painted (soak
-  // b3797205c752, 713b09d7b62e, aa044991c495).
-  {
-    const ProjectCatalogState& catalog = context_.project_catalog;
-    std::uint64_t version = tab_strip_chrome_.ProjectStripSourceVersion();
-    for (const std::uint64_t part : {static_cast<std::uint64_t>(catalog.active_index),
-                                     static_cast<std::uint64_t>(catalog.tab_scroll_index),
-                                     static_cast<std::uint64_t>(std::lround(layout.project_tab_strip.w * 4.0f))}) {
-      version = (version ^ part) * 0x100000001B3ull;
-    }
-    chrome_unit(layout.project_tab_strip.h > 0.0f ? std::optional<SDL_FRect>(layout.project_tab_strip) : std::nullopt,
-                version);
-    // What the strip paints, settled once: RenderWindowChrome draws this copy.
-    PreparedFrameState::TabStripPaint& strip = frame_state_.project_strip;
-    ResetTabStripPaint(strip);
-    if (layout.project_tab_strip.h > 0.0f) {
-      const TabDragState& drag = context_.interaction_state.tab_drag;
-      const bool project_drag = drag.dragging && drag.kind == TabDragKind::Project;
-      const std::span<const float> slide = context_.interaction_state.tab_slide.OffsetsFor(TabDragKind::Project, 0);
-      const auto pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); };
-      const std::vector<VisibleStripTab>& visible = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
-      strip.shown = true;
-      SettleTabStripTabs(strip, visible, slide, project_drag ? std::optional<std::size_t>(drag.source_index) : std::nullopt,
-                         slide.empty() && !drag.dragging, pointer_over);
-      SettleTabStripOverflow(strip, tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible),
-                             pointer_over);
-      if (project_drag) {
-        SettleTabStripDrag(strip, visible, layout.project_tab_strip, drag.source_index, drag.pointer_x,
-                           drag.grab_offset_x);
-      }
+    for (std::size_t slot = 0; slot + 1 < kMaxEditorGroups; ++slot) {
+      chrome_unit(slot < dividers.size() ? std::optional<SDL_FRect>(dividers[slot].rect) : std::nullopt,
+                  slot < dividers.size() ? (dividers[slot].lit ? 1u : 2u) : 0u, ChromePainter::Editor);
     }
   }
   // The overlay card's extent: one that opens, closes, grows or shrinks repaints
   // where it was and where it is.
   chrome_unit(project_state.overlay.visible ? std::optional<SDL_FRect>(ComputeOverlayRect(layout.overlay_anchor))
                                             : std::nullopt,
-              0);
+              0, ChromePainter::Always);
   // The open menu's popup and submenu rects, laid out here for the pointer
   // occluder below and for hit-testing. Their rows -- and the context menu's and
   // the overflow popup's -- are resolved further down, once the occluder says what
@@ -2026,42 +2058,9 @@ void WorkspaceShell::PrepareWorkbenchChromeUnits(FramePrepPass& pass) {
   // (The merge header's status and the compare header's summary are header units
   // of their surfaces: see the diff branches of the editor-pane units above.)
   // (The diff's shape -- its presentation rows -- is in its rows' keys: CompareRowUnits.)
-  // The debug toolbar: where it is and its run state.
-  {
-    PreparedFrameState::DebugToolbar toolbar;
-    if (DebugToolbarVisible()) {
-      toolbar.visible = true;
-      toolbar.stopped = IsDebugSessionStopped();
-      toolbar.rect = ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout),
-                                               DebugSupportsReverse())
-                         .widget;
-    }
-    chrome_unit(toolbar.visible ? std::optional<SDL_FRect>(toolbar.rect) : std::nullopt, toolbar.stopped ? 1u : 2u);
-  }
-  // Plugin status items, drawn in the breadcrumb bands.
-  {
-    std::uint64_t items_hash = 0xCBF29CE484222325ull;
-    const auto mix = [&items_hash](std::string_view text) {
-      for (const char c : text) {
-        items_hash = (items_hash ^ static_cast<unsigned char>(c)) * 0x100000001B3ull;
-      }
-      items_hash = (items_hash ^ 0xFFu) * 0x100000001B3ull;
-    };
-    for (const StatusItemView& item : ResolveStatusItems(plugin_runtime_.Host(), status_item_cache_)) {
-      mix(item.id);
-      mix(item.text);
-      mix(item.icon);
-      items_hash = (items_hash ^ (static_cast<std::uint64_t>(item.tone) << 8 |
-                                  static_cast<std::uint64_t>(item.alignment))) *
-                   0x100000001B3ull;
-      items_hash = (items_hash ^ static_cast<std::uint64_t>(std::lround(item.progress * 1000.0f) + 1000)) *
-                   0x100000001B3ull;
-    }
-    frame_state_.status_items_hash = items_hash;  // the breadcrumb bands draw them: their units key on it
-  }
+  // (The debug toolbar is keyed with the hover state, after the pointer occluder.)
   // The context menu's rect (its card and rows are derived units: MenuPopupPaint.h).
   frame_state_.context_menu_rect = ComputeTreeContextMenuRect();
-  PrepareTabStripUnits(pass);
   // The focus ring: the surface that lost it and the one that took it repaint
   // (a Chrome unit at the focused surface's rect).
   // The ring this frame paints is the one its view models were built with, so a
@@ -2070,7 +2069,7 @@ void WorkspaceShell::PrepareWorkbenchChromeUnits(FramePrepPass& pass) {
           prepare_cached_bottom_panel_vm_->focus == project_state.surface.focus) &&
          "frame prep moved the keyboard after the surface view models were built");
   chrome_unit(FocusSurfaceRect(layout, project_state.surface.focus),
-              static_cast<std::uint64_t>(project_state.surface.focus));
+              static_cast<std::uint64_t>(project_state.surface.focus), ChromePainter::Always);
   // (The tabs' titles and dirty marks are in their strips' units above. Every
   // sidebar view's selection, scroll and rows are units of its own surface --
   // SidebarTree, GitPanel, SidebarSearch, SidebarList -- so no unit here repaints
@@ -2086,9 +2085,78 @@ void WorkspaceShell::PrepareWorkbenchChromeUnits(FramePrepPass& pass) {
         strip = TabStripRectForKind(slide.strips[i].kind, slide.strips[i].group_index);
         key = (static_cast<std::uint64_t>(slide.strips[i].kind) << 32) | slide.strips[i].group_index;
       }
-      chrome_unit(strip, key);
+      chrome_unit(strip, key, ChromePainter::WindowChrome);
     }
   }
+}
+
+// The window chrome the pointer lights, after the occluder that decides what it
+// is over: the project strip, the plugin status items, then each editor group's
+// strip and band. (Settled before the occluder, a tab under a prompt that had just
+// opened stayed lit by the frame before's.)
+void WorkspaceShell::PrepareWindowChromeUnits(FramePrepPass& pass) {
+  WorkspaceLayout& layout = pass.layout;
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
+  // A project tab's label follows state no input touches -- its dirty marker is
+  // "any editor tab in that project is dirty" -- so typing into or saving a file
+  // changed it with no damage on the strip (remote QA suite).
+  // What the strip shows is also where it is scrolled to, which project is the
+  // active one and how wide it is: an overflow arrow scrolled it and damaged the
+  // arrow alone, and the strip kept the projects it had painted (soak
+  // b3797205c752, 713b09d7b62e, aa044991c495).
+  // The strip's unit keys on the snapshot paint draws (FingerprintOf): its tabs'
+  // labels, which is active, where it is scrolled, the hovered tab and close
+  // glyph, the chevrons and a drag's ghost. (It keyed on the source version, the
+  // active project, the scroll and the width, and its hover was only ever
+  // repainted by the pointer's own hand-written damage.)
+  {
+    // What the strip paints, settled once: RenderWindowChrome draws this copy.
+    PreparedFrameState::TabStripPaint& strip = frame_state_.project_strip;
+    ResetTabStripPaint(strip);
+    if (layout.project_tab_strip.h > 0.0f) {
+      const TabDragState& drag = context_.interaction_state.tab_drag;
+      const bool project_drag = drag.dragging && drag.kind == TabDragKind::Project;
+      const std::span<const float> slide = context_.interaction_state.tab_slide.OffsetsFor(TabDragKind::Project, 0);
+      const auto pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); };
+      const std::vector<VisibleStripTab>& visible = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+      strip.shown = true;
+      SettleTabStripTabs(strip, visible, slide, project_drag ? std::optional<std::size_t>(drag.source_index) : std::nullopt,
+                         slide.empty() && !drag.dragging, pointer_over);
+      SettleTabStripOverflow(strip, tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible),
+                             pointer_over);
+      if (project_drag) {
+        SettleTabStripDrag(strip, visible, layout.project_tab_strip, drag.source_index, drag.pointer_x,
+                           drag.grab_offset_x);
+      }
+    }
+    chrome_unit(layout.project_tab_strip.h > 0.0f ? std::optional<SDL_FRect>(layout.project_tab_strip) : std::nullopt,
+                FingerprintOf(strip, 0), ChromePainter::WindowChrome);
+  }
+  // The plugin status items in the top breadcrumb band, as paint draws them; the
+  // bands key on them.
+  {
+    std::vector<PreparedFrameState::WindowChromePaint::StatusItem>& items = frame_state_.window_chrome.status_items;
+    items.clear();
+    for (const VisibleStatusItem& item : ComputeVisibleStatusItems(layout.breadcrumb)) {
+      items.push_back(PreparedFrameState::WindowChromePaint::StatusItem{
+          .rect = item.rect,
+          .text = item.item.text,
+          .icon = item.item.icon,
+          .tone = item.item.tone,
+          .progress = item.item.progress,
+          // Only command-bound items are clickable, so only they earn the hover lift.
+          .hovered = item.hovered && !item.item.command.empty(),
+          .left_aligned = item.item.alignment == StatusAlignment::Left,
+      });
+    }
+    PaintFingerprint key;
+    for (const PreparedFrameState::WindowChromePaint::StatusItem& item : items) {
+      key.Add(FingerprintOf(item));
+    }
+    frame_state_.status_items_hash = key.value();
+  }
+  PrepareTabStripUnits(pass);
 }
 
 // Each editor group's tab strip and breadcrumb band. A strip draws its tabs'
@@ -2098,11 +2166,20 @@ void WorkspaceShell::PrepareWorkbenchChromeUnits(FramePrepPass& pass) {
 void WorkspaceShell::PrepareTabStripUnits(FramePrepPass& pass) {
   ProjectWorkspaceState& project_state = *pass.project_state;
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
   const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
   const std::size_t focused = project_state.clamped_focused_group_index();
+  // Each group's strip and band as the window chrome paints them, and the
+  // breadcrumb its band names (PreparedFrameState::window_chrome).
+  PreparedFrameState::WindowChromePaint& chrome = frame_state_.window_chrome;
+  chrome.focused_group = focused;
+  chrome.groups.resize(group_rects.groups.size());
+  for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
+    chrome.groups[gi].tab_strip = group_rects.groups[gi].tab_strip;
+    chrome.groups[gi].breadcrumb = group_rects.groups[gi].breadcrumb;
+    chrome.groups[gi].breadcrumb_label = BreadcrumbLabel(gi);
+  }
   for (std::size_t gi = 0; gi < kMaxEditorGroups; ++gi) {
     const bool present = gi < group_rects.groups.size() && gi < project_state.editor_groups.size();
     PaintFingerprint strip;
@@ -2110,36 +2187,20 @@ void WorkspaceShell::PrepareTabStripUnits(FramePrepPass& pass) {
     PreparedFrameState::TabStripPaint& strip_paint = frame_state_.editor_strips[gi];
     ResetTabStripPaint(strip_paint);
     if (present) {
+      // The strip is one unit (derived-damage 4.1), keyed on the snapshot it
+      // paints (FingerprintOf): which tabs are shown and where -- the active one,
+      // the strip's scroll, the slide -- their labels and badges, the hovered tab
+      // and close glyph, the chevrons and the drag's ghost. And on what the
+      // strip's paint adds around them: the focus picks its palette, and in a
+      // split each strip fills its band and draws its rule.
       strip.Add(gi == focused).Add(group_rects.groups.size());
-      for (const TabEntry& tab : project_state.editor_groups[gi].open_tabs) {
-        strip.Add(TabEntryIsDirty(tab)).Add(std::string_view(tab.title));
-      }
-      // What the strip paints of its tabs (RenderWindowChrome): which are shown and
-      // where -- the active one, the strip's scroll -- their labels and badges, the
-      // hovered tab and close glyph, the overflow chevrons, the slide and the drag.
-      // The strip is one unit; a tab activated or scrolled into view repaints it
-      // whoever asked (derived-damage 4.1).
       const SDL_FRect& strip_rect = group_rects.groups[gi].tab_strip;
       if (strip_rect.h > 0.0f && HasActiveProjectCatalogEntry()) {
         const TabDragState& drag = context_.interaction_state.tab_drag;
         const std::span<const float> slide = context_.interaction_state.tab_slide.OffsetsFor(TabDragKind::Editor, gi);
         const bool still = slide.empty() && !drag.dragging;
         const std::vector<VisibleStripTab>& visible = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip_rect);
-        for (const VisibleStripTab& tab : visible) {
-          strip.Add(tab.index).Add(tab.rect).Add(tab.active).Add(std::string_view(tab.display_title));
-          strip.Add(std::string_view(tab.badge_text)).Add(tab.badge_color).Add(tab.show_badge);
-          strip.Add(still && PointerOver(tab.rect)).Add(still && PointerOver(tab.close_rect));
-        }
-        for (const float offset : slide) {
-          strip.Add(offset);
-        }
         const auto overflow = tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, strip_rect, visible);
-        strip.Add(overflow.hidden_left).Add(overflow.hidden_right).Add(overflow.left_button).Add(overflow.right_button);
-        strip.Add(PointerOver(overflow.left_button)).Add(PointerOver(overflow.right_button));
-        if (drag.dragging && drag.kind == TabDragKind::Editor) {
-          strip.Add(drag.source_group_index).Add(drag.source_index).Add(drag.target_group_index);
-          strip.Add(drag.pointer_x).Add(drag.grab_offset_x);
-        }
         // What the strip paints, settled once: RenderWindowChrome draws this copy
         // (TabStripPaint.h), not the service's list asked for again at paint.
         const auto pointer_over = [this](const SDL_FRect& rect) { return PointerOver(rect); };
@@ -2169,10 +2230,12 @@ void WorkspaceShell::PrepareTabStripUnits(FramePrepPass& pass) {
                              drag.grab_offset_x);
         }
       }
-      band.Add(gi == focused).Add(std::string_view(BreadcrumbLabel(gi))).Add(frame_state_.status_items_hash);
+      strip.Add(FingerprintOf(strip_paint, 0));
+      // (A present group is one of the layout's: `chrome.groups` holds it.)
+      band.Add(gi == focused).Add(std::string_view(chrome.groups[gi].breadcrumb_label)).Add(frame_state_.status_items_hash);
     }
-    chrome_unit(present ? std::optional<SDL_FRect>(group_rects.groups[gi].tab_strip) : std::nullopt, strip.value());
-    chrome_unit(present ? std::optional<SDL_FRect>(group_rects.groups[gi].breadcrumb) : std::nullopt, band.value());
+    chrome_unit(present ? std::optional<SDL_FRect>(group_rects.groups[gi].tab_strip) : std::nullopt, strip.value(), ChromePainter::WindowChrome);
+    chrome_unit(present ? std::optional<SDL_FRect>(group_rects.groups[gi].breadcrumb) : std::nullopt, band.value(), ChromePainter::WindowChrome);
   }
 }
 
@@ -2620,17 +2683,22 @@ void WorkspaceShell::PrepareSidebarSurfaces(FramePrepPass& pass) {
   // decided: an overlay the active buffer has moved away from is this frame's
   // paint's to rebuild, not prep's to lay a card out of.
   editor_blame_overlay_service_.ForgetVisibleOverlayIfStale(ActiveEditorViewport());
-  // A queued editor-hover refresh (the content under a still pointer changed)
-  // runs here, not in paint: RenderClip ran it only when it painted the editor, so
-  // a partial frame that skipped the editor kept the old hover card while a full
-  // render of the same frame dropped it (QA monkey, seed 7).
-  // A card pinned to the caret (Show Hover) refreshes with no pointer at all.
-  if (editor_hover_refresh_pending_ &&
-      (last_mouse_position_valid_ || context_.interaction_state.caret_hover.active)) {
+  // The editor hover is resolved on EVERY prepared frame, here: after the panes
+  // and the blame overlay it reads are settled, before the card's unit is keyed
+  // (PrepareHoverFrame). Not in paint: RenderClip ran it only when it painted the
+  // editor, so a partial frame that skipped the editor kept the old hover card
+  // while a full render of the same frame dropped it (QA monkey, seed 7). Not only
+  // when a refresh was queued either: the queue was set by damage requests,
+  // including the units other surfaces commit later in this same prep, so whether
+  // a still pointer's card followed a change depended on which surface happened
+  // to commit first. The resolution is built to run per painted frame (a cache
+  // hit, no allocation). A card pinned to the caret (Show Hover) resolves with no
+  // pointer at all.
+  if (last_mouse_position_valid_ || context_.interaction_state.caret_hover.active) {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshHover");
     UpdateEditorHover(last_mouse_x_, last_mouse_y_);
-    editor_hover_refresh_pending_ = false;
   }
+  editor_hover_refresh_pending_ = false;
   PrepareMenuBarSurface(pass);
   PrepareSettingsCardSurface(pass);
 }
@@ -2908,31 +2976,37 @@ void WorkspaceShell::PrepareSearchSidebarSurface(FramePrepPass& pass) {
 // named the chrome's rect. In fixed slots: the units are compared by position.
 void WorkspaceShell::PrepareMenuBarSurface(FramePrepPass& pass) {
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
-  const VisibleMenuBarItems bar_items = ComputeVisibleMenuBarItems(layout.menu_bar);
-  for (std::size_t slot = 0; slot < kMaxMenuBarItems; ++slot) {
-    if (slot >= bar_items.size()) {
-      chrome_unit(std::nullopt, 0);
-      continue;
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
+  // The bar's items, its overflow chevron and the window buttons as paint draws
+  // them (PreparedFrameState::window_chrome), lit by PointerOver; each a unit keyed
+  // on its part, in a fixed slot.
+  PreparedFrameState::WindowChromePaint& chrome = frame_state_.window_chrome;
+  chrome.menu_items.clear();
+  for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
+    if (const MenuSpec* menu = FindMenuSpec(item.id); menu != nullptr) {
+      chrome.menu_items.push_back(PreparedFrameState::WindowChromePaint::MenuItem{
+          .rect = item.rect, .label = menu->label, .active = item.active, .hovered = !item.active && PointerOver(item.rect)});
     }
-    const VisibleMenuBarItem& item = bar_items[slot];
-    const bool lit = !item.active && PointerOver(item.rect);
-    chrome_unit(item.rect, (static_cast<std::uint64_t>(item.id) << 8) | (item.active ? 2u : 0u) | (lit ? 4u : 0u) | 1u);
   }
-  const std::optional<SDL_FRect> chevron = MenuOverflowChevronRect(layout.menu_bar);
-  chrome_unit(chevron, chevron.has_value() && PointerOver(*chevron) ? 3u : 1u);
-  const VisibleWindowControlButtons window_buttons = ComputeVisibleWindowControlButtons(layout.menu_bar);
-  const bool expanded = CurrentWindowChromeState().Expanded();
+  for (std::size_t slot = 0; slot < kMaxMenuBarItems; ++slot) {
+    chrome_unit(slot < chrome.menu_items.size() ? std::optional<SDL_FRect>(chrome.menu_items[slot].rect) : std::nullopt,
+                slot < chrome.menu_items.size() ? FingerprintOf(chrome.menu_items[slot]) : 0, ChromePainter::WindowChrome);
+  }
+  chrome.chevron = MenuOverflowChevronRect(layout.menu_bar);
+  chrome.chevron_hovered = chrome.chevron.has_value() && PointerOver(*chrome.chevron);
+  chrome_unit(chrome.chevron, chrome.chevron_hovered ? 3u : 1u, ChromePainter::WindowChrome);
+  chrome.window_buttons.clear();
+  for (const VisibleWindowControlButton& button : ComputeVisibleWindowControlButtons(layout.menu_bar)) {
+    chrome.window_buttons.push_back(PreparedFrameState::WindowChromePaint::WindowButton{
+        .rect = button.rect, .id = static_cast<int>(button.id), .hovered = PointerOver(button.rect)});
+  }
+  chrome.expanded = CurrentWindowChromeState().Expanded();
   for (std::size_t slot = 0; slot < kWindowControlButtonCount; ++slot) {
-    if (slot >= window_buttons.size()) {
-      chrome_unit(std::nullopt, 0);
-      continue;
-    }
-    const VisibleWindowControlButton& button = window_buttons[slot];
-    chrome_unit(button.rect, (static_cast<std::uint64_t>(button.id) << 8) | (PointerOver(button.rect) ? 2u : 0u) |
-                                 (expanded ? 4u : 0u) | 1u);
+    chrome_unit(slot < chrome.window_buttons.size() ? std::optional<SDL_FRect>(chrome.window_buttons[slot].rect)
+                                                    : std::nullopt,
+                slot < chrome.window_buttons.size() ? FingerprintOf(chrome.window_buttons[slot], chrome.expanded) : 0,
+                ChromePainter::WindowChrome);
   }
 }
 
@@ -2964,9 +3038,8 @@ void WorkspaceShell::PrepareSettingsCardSurface(FramePrepPass& pass) {
 void WorkspaceShell::PrepareHoverFrame(FramePrepPass& pass) {
   ProjectWorkspaceState& project_state = *pass.project_state;
   WorkspaceLayout& layout = pass.layout;
-  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key) {
-    pass.ChromeUnit(rect, key);
-  };
+  const auto chrome_unit = [&pass](const std::optional<SDL_FRect>& rect, std::uint64_t key,
+                                   ChromePainter painter) { pass.ChromeUnit(rect, key, painter); };
   // The element painted hovered and the tooltip card, as this frame paints them.
   // Pointer motion damages its own hover changes; this catches the ones nothing
   // moved -- a modal opening over a hovered status segment and its tooltip, an
@@ -2984,54 +3057,73 @@ void WorkspaceShell::PrepareHoverFrame(FramePrepPass& pass) {
         hover_rect = MakeRect(rect->x - 6.0f, rect->y - 1.0f, rect->w + 12.0f, rect->h + 2.0f);
       }
     }
+    // The tooltip card, laid out whole (HoverCardPaint.h): its unit keys on what it
+    // draws, so the same card saying something else repaints too (a click
+    // reordered the tab under a still pointer, QA monkey, seed 5).
     std::optional<SDL_FRect> tooltip_rect;
-    std::size_t tooltip_text_hash = 0;
+    CardPaint& tooltip_card = frame_state_.tooltip_card;
+    tooltip_card.Clear();
     if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
+      tooltip_card.Tooltip(text_renderer_, theme_, tooltip->rect, tooltip->text);
       tooltip_rect = MakeRect(tooltip->rect.x - 1.0f, tooltip->rect.y - 1.0f, tooltip->rect.w + 2.0f,
                               tooltip->rect.h + 2.0f);
-      tooltip_text_hash = std::hash<std::string_view>{}(tooltip->text);
     }
     // The hovered element's fill and the tooltip card (a card at the same place can
     // say something else: a click reordered the tab under a still pointer, QA
     // monkey, seed 5).
-    chrome_unit(hover_rect, 0);
-    chrome_unit(tooltip_rect, tooltip_text_hash);
-    // The editor's banner strip (RenderActiveWorkspaceSurface): keyed on what its
-    // message and buttons are built from -- the banner's kind, file and reason. With these and
-    // the panes, the compare and merge surfaces, the find widget, the cards and the
-    // debug toolbar derived, nothing in the editor area needs a rect asked for it.
+    chrome_unit(hover_rect, 0, ChromePainter::Always);
+    chrome_unit(tooltip_rect, FingerprintOf(tooltip_card), ChromePainter::Always);
+    // What the editor pass paints around its panes (PaintEditorAreaChrome): the
+    // external-change banner over the focused editor -- its message and buttons, lit
+    // under the pointer -- keyed on all of it, and the editor's focus ring (the
+    // focus unit). A diff or merge in front shows no banner (it never laid one out).
     {
-      const EditorBannerState* banner = ActiveEditorBannerForTab(project_state);
-      const EditorGroupRectsLayout banner_rects = ComputeEditorGroupRectsForState(layout);
-      const SDL_FRect strip =
-          banner != nullptr ? ActiveEditorBannerStripRect(project_state, banner_rects) : SDL_FRect{};
-      const bool shown = banner != nullptr && strip.h > 0.0f;
-      // The buttons sit inside the strip and follow its kind; a button lit under
-      // the pointer is the hovered-element unit's (HoveredInteractiveRect).
-      PaintFingerprint key;
-      if (shown) {
-        key.Add(static_cast<int>(banner->kind))
-            .Add(std::string_view(banner->path.native()))
-            .Add(std::string_view(banner->reason))
-            .Add(!ActiveTabIsCompare() && !ActiveTabIsMerge());
+      PreparedFrameState::EditorAreaChromePaint& area = frame_state_.editor_area_chrome;
+      PreparedFrameState::EditorAreaChromePaint::Banner& banner = area.banner;
+      const bool diff_in_front = ActiveTabIsCompare() || ActiveTabIsMerge();
+      EnsureClipFrameAndOverlayViewModels(layout);
+      const std::optional<EditorBannerViewModel>& banner_vm = clip_cached_frame_vm_->editor_banner;
+      const SDL_FRect strip = diff_in_front || !banner_vm.has_value()
+                                  ? SDL_FRect{}
+                                  : ActiveEditorBannerStripRect(project_state, ComputeEditorGroupRectsForState(layout));
+      banner.shown = strip.h > 0.0f;
+      banner.hovered = {};
+      banner.dismiss_hovered = false;
+      if (banner.shown) {
+        banner.strip = strip;
+        banner.message = banner_vm->message;
+        banner.buttons = ComputeEditorBannerButtonRects(strip, banner_vm->buttons);
+        for (std::size_t i = 0; i < banner.buttons.buttons.size(); ++i) {
+          banner.hovered[i] = PointerOver(banner.buttons.rects[i]);
+        }
+        banner.dismiss_hovered = PointerOver(banner.buttons.dismiss);
       }
-      chrome_unit(shown ? std::optional<SDL_FRect>(strip) : std::nullopt, key.value());
+      chrome_unit(banner.shown ? std::optional<SDL_FRect>(strip) : std::nullopt, FingerprintOf(banner),
+                  ChromePainter::Editor);
+      area.focus_ring = project_state.surface.focus == FocusTarget::Editor;
     }
-    // A tree drag: the drop preview it tints and the ghost riding the pointer
-    // (RenderWindowChrome). The preview's tint is translucent over what is under
-    // it, so its region repaints whole when it moves or goes.
+    // A tree drag: the drop preview it tints and the ghost riding the pointer;
+    // and a tab dragged over a pane's body, the drop region it tints. Painted by
+    // the window chrome from this (PreparedFrameState::window_chrome). A preview's
+    // tint is translucent over what is under it, so its region repaints whole when
+    // it moves or goes.
     {
-      const PathDragState& drag = context_.interaction_state.path_drag;
-      const bool previewing = drag.dragging && drag.target != PathDragState::Target::None;
-      chrome_unit(previewing ? std::optional<SDL_FRect>(drag.drop_rect) : std::nullopt, 1u);
-      chrome_unit(drag.dragging ? std::optional<SDL_FRect>(PathDragGhostRect(drag, text_renderer_)) : std::nullopt,
-                  drag.dragging ? MixRowKeyBytes(1u, drag.label.data(), drag.label.size()) : 0u);
-    }
-    // A tab dragged over a pane's body: the drop region it tints (RenderChrome).
-    {
-      const TabDragState& drag = context_.interaction_state.tab_drag;
-      chrome_unit(drag.dragging && drag.body_drop() ? std::optional<SDL_FRect>(drag.body_drop_rect) : std::nullopt,
-                  1u);
+      PreparedFrameState::WindowChromePaint& chrome = frame_state_.window_chrome;
+      const PathDragState& path_drag = context_.interaction_state.path_drag;
+      chrome.path_drop = path_drag.dragging && path_drag.target != PathDragState::Target::None
+                             ? std::optional<SDL_FRect>(path_drag.drop_rect)
+                             : std::nullopt;
+      chrome.path_ghost = path_drag.dragging ? std::optional<SDL_FRect>(PathDragGhostRect(path_drag, text_renderer_))
+                                             : std::nullopt;
+      chrome.path_label = path_drag.dragging ? path_drag.label : std::string();
+      chrome_unit(chrome.path_drop, 1u, ChromePainter::WindowChrome);
+      chrome_unit(chrome.path_ghost, PaintFingerprint().Add(std::string_view(chrome.path_label)).value(),
+                  ChromePainter::WindowChrome);
+      const TabDragState& tab_drag = context_.interaction_state.tab_drag;
+      chrome.tab_body_drop = tab_drag.dragging && tab_drag.body_drop()
+                                 ? std::optional<SDL_FRect>(tab_drag.body_drop_rect)
+                                 : std::nullopt;
+      chrome_unit(chrome.tab_body_drop, 1u, ChromePainter::WindowChrome);
     }
     // The overlay card, derived (5.3): RenderOverlaySurface draws its view model
     // and the pointer, so the model is built here -- the same one paint reuses this
@@ -3039,84 +3131,141 @@ void WorkspaceShell::PrepareHoverFrame(FramePrepPass& pass) {
     // surface of its own: its rows come and go with the list, and in Chrome they
     // would shift every unit after them.
     PrepareOverlayUnits(layout, project_state.overlay.visible);
-    // A prompt's buttons under the pointer, lit as paint lights them (PointerOver,
-    // which the occluder settled above decides). Fixed slots, kPromptButtonSlots per
-    // dialog: the unsaved-changes prompt has three (Save, Discard, Cancel), and two
-    // slots left its Cancel unlit under a pointer (qa tab-inactive-close).
+    // The debug toolbar as its paint draws it: where it is, its buttons, the run
+    // state that enables the step buttons and picks the play or pause glyph, and
+    // which button the pointer is over (PointerOver: nothing under a modal).
     {
-      constexpr std::size_t kPromptButtonSlots = 4;
-      std::array<std::optional<SDL_FRect>, 2 * kPromptButtonSlots> buttons{};
-      static_assert(std::tuple_size_v<decltype(DirtyPromptActionLabels())> <= kPromptButtonSlots &&
-                    std::tuple_size_v<decltype(PromptSurfaceActionLabels())> <= kPromptButtonSlots);
-      // Paint draws min(rects, labels) buttons, so the slots take as many.
-      const auto take = [&](std::size_t first, const auto& rects, std::size_t labels) {
-        const std::size_t drawn = std::min({rects.size(), labels, kPromptButtonSlots});
-        for (std::size_t i = 0; i < drawn; ++i) {
-          buttons[first + i] = rects[i];
+      PreparedFrameState::DebugToolbarPaint& toolbar = frame_state_.debug_toolbar;
+      toolbar = {};
+      // Not over a diff or a merge in front of the focused pane.
+      if (DebugToolbarVisible() && !ActiveTabIsCompare() && !ActiveTabIsMerge()) {
+        toolbar.visible = true;
+        toolbar.stopped = IsDebugSessionStopped();
+        toolbar.layout = ComputeDebugToolbarLayout(ActiveTabSurface(layout), DebugToolbarAvoidBelowY(layout),
+                                                   DebugSupportsReverse());
+        for (std::size_t i = 0; i < toolbar.layout.button_count; ++i) {
+          toolbar.pointer_over[i] = PointerOver(toolbar.layout.buttons[i]);
         }
-      };
+      }
+      chrome_unit(toolbar.visible ? std::optional<SDL_FRect>(toolbar.layout.widget) : std::nullopt,
+                  FingerprintOf(toolbar), ChromePainter::Editor);
+    }
+    // The prompts' dialogs as their paint draws them, keyed on all of it: what
+    // they say (the unsaved-changes prompt names the tab it closes, and a focus
+    // that moved under it renamed it with nothing damaged, soak 6d33d9fa57bc),
+    // the input field's text as displayed, and each button's label, selection and
+    // hover -- lit by PointerOver, which the occluder settled above decides.
+    {
+      PreparedFrameState::PromptDialogPaint& dirty = frame_state_.dirty_prompt_dialog;
+      dirty = {};
+      std::optional<SDL_FRect> dirty_rect;
       if (context_.prompts.dirty_visible) {
-        take(0, ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(layout.full)), DirtyPromptActionLabels().size());
+        const SDL_FRect dialog = ComputeDirtyPromptRect(layout.full);
+        dirty_rect = dialog;
+        dirty.shown = true;
+        dirty.title = DirtyPromptTitle();
+        dirty.message = DirtyPromptMessage();
+        dirty.selected = context_.prompts.dirty.selected_action;
+        const auto labels = DirtyPromptActionLabels();
+        const auto rects = ComputeDirtyPromptButtonRects(dialog);
+        dirty.button_count = std::min({rects.size(), labels.size(), dirty.labels.size()});
+        for (std::size_t i = 0; i < dirty.button_count; ++i) {
+          dirty.labels[i] = labels[i];
+          dirty.hovered[i] = PointerOver(rects[i]);
+        }
       }
+      chrome_unit(dirty_rect, FingerprintOf(dirty), ChromePainter::Always);
+      PreparedFrameState::PromptDialogPaint& prompt = frame_state_.prompt_dialog;
+      prompt = {};
+      std::optional<SDL_FRect> prompt_rect;
       if (context_.prompts.surface_visible) {
-        take(kPromptButtonSlots,
-             ComputePromptSurfaceButtonRects(ComputePromptSurfaceRect(layout.full), context_.prompts.surface.button_count),
-             PromptSurfaceActionLabels().size());
+        const PromptSurfaceState& surface = context_.prompts.surface;
+        const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
+        prompt_rect = dialog;
+        prompt.shown = true;
+        prompt.title = PromptSurfaceTitle();
+        prompt.message = PromptSurfaceMessage();
+        prompt.detail = PromptSurfaceDetail();
+        prompt.text_input = surface.kind == PromptSurfaceState::Kind::TextInput;
+        if (prompt.text_input) {
+          // As the field shows it: the focused input's displayed text when the
+          // text-input pass has one (prepared above), else the buffer's.
+          const std::optional<TextInputVisual>& visual = prepared_text_input_visual_;
+          prompt.input_text = visual.has_value() && visual->surface == TextInputSurface::PromptInput &&
+                                      !visual->displayed_text.empty()
+                                  ? visual->displayed_text
+                                  : std::string(surface.input.text());
+        }
+        prompt.selected = surface.selected_button;
+        prompt.laid_out_buttons = surface.button_count;
+        const auto labels = PromptSurfaceActionLabels();
+        const auto rects = ComputePromptSurfaceButtonRects(dialog, surface.button_count);
+        prompt.button_count = std::min({rects.size(), labels.size(), prompt.labels.size()});
+        for (std::size_t i = 0; i < prompt.button_count; ++i) {
+          prompt.labels[i] = labels[i];
+          prompt.hovered[i] = PointerOver(rects[i]);
+        }
       }
-      for (const std::optional<SDL_FRect>& button : buttons) {
-        chrome_unit(button, button.has_value() && PointerOver(*button) ? 1u : 2u);
-      }
+      chrome_unit(prompt_rect, FingerprintOf(prompt), ChromePainter::Always);
     }
     // The editor hover card goes when its target does -- the pointer leaving for
     // the tab strip cleared the blame card's target and repainted only the strip
-    // (QA monkey, seed 7). Laid out once here; its paint reads this layout.
-    frame_state_.hover_popup = ActiveEditorHoverPopupLayout();
+    // (QA monkey, seed 7) -- and repaints when what it says does: a language
+    // server's hover reply growing in the same card (qa lsp-more), a blame that
+    // reloaded with another message under a clamped card. Laid out whole here
+    // (HoverCardPaint.h); its paint draws this and its unit keys on it.
     std::optional<SDL_FRect> card;
-    // And what the card says: a language server's hover reply that grew from its
-    // first to its full answer in the same card ("provides Scheduler" to "provides
-    // Scheduler, Task, add, run") repainted nothing once its request stopped
-    // naming the editor surface (qa lsp-more).
-    PaintFingerprint card_content;
-    if (frame_state_.hover_popup.has_value()) {
-      const EditorHoverPopupLayout& hover = *frame_state_.hover_popup;
-      const SDL_FRect& popup = hover.rect;
+    CardPaint& hover_card = frame_state_.editor_hover_card;
+    hover_card.Clear();
+    if (const std::optional<EditorHoverPopupLayout> hover = ActiveEditorHoverPopupLayout(); hover.has_value()) {
+      LayOutEditorHoverCard(*hover, hover_card);
+      const SDL_FRect& popup = hover->rect;
       card = MakeRect(popup.x - 2.0f, popup.y - 2.0f, popup.w + 4.0f, popup.h + 4.0f);
-      card_content.Add(static_cast<int>(hover.kind)).Add(hover.blame_line_index);
-      if (hover.diagnostic.has_value()) {
-        card_content.Add(std::string_view(hover.diagnostic->message))
-            .Add(static_cast<int>(hover.diagnostic->severity));
-      }
-      if (hover.plugin_hover.has_value()) {
-        card_content.Add(std::string_view(hover.plugin_hover->title))
-            .Add(std::string_view(hover.plugin_hover->content));
-      }
-      if (hover.debug_value.has_value()) {
-        card_content.Add(std::string_view(hover.debug_value->value)).Add(std::string_view(hover.debug_value->type));
-      }
-      if (hover.primary_action_rect.has_value()) {
-        card_content.Add(*hover.primary_action_rect)
-            .Add(last_mouse_position_valid_ &&
-                 EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_));
-      }
     }
-    chrome_unit(card, card_content.value());
+    chrome_unit(card, FingerprintOf(hover_card), ChromePainter::Editor);
     // The signature-help card: shown while a request's answer is up and the caret
     // has not moved, hidden while a menu holds the pointer -- so a menu opening
     // and closing over it is a card going and coming back with no edit.
     std::optional<SDL_FRect> signature_rect;
-    std::size_t signature_hash = 0;
+    CardPaint& signature_card = frame_state_.signature_card;
+    signature_card.Clear();
     if (active_signature_help_.has_value() && !MenuSurfaceCapturingMouse()) {
       if (const std::optional<SDL_FRect> caret = ActiveEditorCaretRect(layout); caret.has_value()) {
         signature_rect = ComputeTwoBlockHoverCardRect(
             active_signature_help_->signature, active_signature_help_->documentation,
             kEditorHoverPopupMaxPluginTitleLines, kEditorHoverPopupMaxPluginContentLines, *caret,
             layout.editor_surface);
-        signature_hash = std::hash<std::string_view>{}(active_signature_help_->signature) * 31U +
-                         std::hash<std::string_view>{}(active_signature_help_->documentation);
+        LayOutSignatureHelpCard(*active_signature_help_, *signature_rect, signature_card);
       }
     }
-    frame_state_.signature_help_rect = signature_rect;
-    chrome_unit(signature_rect, signature_hash);  // the same card saying something else repaints too
+    chrome_unit(signature_rect, FingerprintOf(signature_card), ChromePainter::Editor);
+  }
+}
+
+// The focused text input's visual, and what the text-input pass draws over its
+// field: the selection and an IME preedit, and the caret (a unit of its own, so a
+// blink repaints only the caret). The preedit was keyed by nothing: every request
+// its events made had become a frame, and a preedit that changed under an
+// unchanged field stayed as it was painted.
+void WorkspaceShell::PrepareTextInputOverlays(FramePrepPass& pass) {
+  const WorkspaceLayout& layout = pass.layout;
+  // The active editor pane, for an editor's preedit and IME area (paint knew it
+  // only when it painted the editor, so a clip that skipped the editor drew no
+  // preedit where a full frame did).
+  std::optional<SDL_FRect> active_editor_pane;
+  for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(layout)) {
+    if (pane.active && pane.group_index < pass.project_state->editor_groups.size() &&
+        GroupActiveEditorTab(pass.project_state->editor_groups[pane.group_index]) != nullptr) {
+      active_editor_pane = pane.rect;
+    }
+  }
+  prepared_text_input_visual_ = BuildActiveTextInputVisual(layout, active_editor_pane);
+  UpdateTextInputArea(pass.renderer, SDL_GetRenderWindow(pass.renderer), prepared_text_input_visual_);
+  LayOutTextInputMarks(prepared_text_input_visual_, frame_state_.text_input_marks);
+  LayOutTextInputCaret(prepared_text_input_visual_, frame_state_.text_input_caret);
+  for (const CardPaint* overlay : {&frame_state_.text_input_marks, &frame_state_.text_input_caret}) {
+    pass.ChromeUnit(overlay->shown ? std::optional<SDL_FRect>(overlay->rect) : std::nullopt, FingerprintOf(*overlay),
+                    ChromePainter::Always);
   }
 }
 
@@ -3149,62 +3298,68 @@ void WorkspaceShell::PrepareOverlayUnits(const WorkspaceLayout& layout, bool ove
       }
       style.Add(static_cast<int>(inputs.current_surface));
     }
+    // What the card's paint lights by the pointer, resolved here once: the paint
+    // reads these (overlay_pointer), and the units key on them.
+    PreparedFrameState::OverlayPointerPaint& pointer = frame_state_.overlay_pointer;
+    pointer = {};
+    // The whole card, all of its view model but the rows (FingerprintOfOverlayCard).
+    const std::uint64_t card = PaintFingerprint().Add(style.value()).Add(FingerprintOfOverlayCard(vm)).value();
     if (vm.mode == OverlayMode::BufferSearch || vm.mode == OverlayMode::BufferReplace) {
       // The find widget (RenderFindWidget): its card and fields, then each button
-      // with its hover, as paint lights it.
+      // with its hover.
       const OverlayFindWidgetViewModel& fw_vm = vm.find_widget;
       const FindWidgetLayout& fw = fw_vm.fw;
-      PaintFingerprint card;
-      card.Add(style.value()).Add(fw.widget).Add(fw.search_field).Add(fw.replace_field).Add(fw.count_rect);
-      card.Add(fw_vm.replace_mode).Add(fw_vm.search_focused).Add(fw_vm.replace_focused);
-      card.Add(fw_vm.has_matches).Add(fw_vm.has_query);
-      card.Add(fw_vm.search_display_text).Add(fw_vm.replace_display_text).Add(fw_vm.count_text);
-      unit(fw.widget, card.value());
+      unit(fw.widget, card);
       for (std::size_t i = 0; i < fw.toggle_count && i < fw.toggle_buttons.size(); ++i) {
+        pointer.toggle_hovered[i] = PointerOver(fw.toggle_buttons[i]);
         unit(fw.toggle_buttons[i], PaintFingerprint()
                                        .Add(fw_vm.toggles[i].label)
                                        .Add(fw_vm.toggles[i].active)
-                                       .Add(PointerOver(fw.toggle_buttons[i]))
+                                       .Add(pointer.toggle_hovered[i])
                                        .value());
       }
-      for (const SDL_FRect& button : {fw.prev_button, fw.next_button, fw.close_button, fw.replace_button,
-                                      fw.replace_all_button}) {
-        unit(button, PaintFingerprint().Add(button).Add(PointerOver(button)).Add(fw_vm.has_matches).value());
+      pointer.prev_hovered = PointerOver(fw.prev_button);
+      pointer.next_hovered = PointerOver(fw.next_button);
+      pointer.close_hovered = PointerOver(fw.close_button);
+      pointer.replace_hovered = PointerOver(fw.replace_button);
+      pointer.replace_all_hovered = PointerOver(fw.replace_all_button);
+      for (const auto& [button, hovered] :
+           {std::pair{fw.prev_button, pointer.prev_hovered}, std::pair{fw.next_button, pointer.next_hovered},
+            std::pair{fw.close_button, pointer.close_hovered}, std::pair{fw.replace_button, pointer.replace_hovered},
+            std::pair{fw.replace_all_button, pointer.replace_all_hovered}}) {
+        unit(button, PaintFingerprint()
+                         .Add(button)
+                         .Add(hovered)
+                         .Add(fw_vm.has_matches)
+                         .Add(fw_vm.has_query)
+                         .value());
       }
     } else {
       // The card: its backdrop (when not caret-anchored), frame, title row, query
       // field, summary and hint, error and empty labels.
-      PaintFingerprint card;
-      card.Add(style.value()).Add(static_cast<int>(vm.mode)).Add(vm.caret_anchored).Add(vm.overlay_rect);
-      card.Add(vm.title).Add(vm.note).Add(vm.note_x).Add(vm.context_label);
-      card.Add(vm.has_query_field).Add(vm.query_row_y).Add(vm.query_display_text);
-      card.Add(vm.current_surface == vm.query_surface);
-      card.Add(vm.summary_line).Add(vm.summary_y).Add(vm.hint).Add(vm.hint_x);
-      card.Add(vm.error_line).Add(vm.error_at_title_row).Add(vm.empty_label);
-      card.Add(vm.list_layout.list_rect);
-      unit(vm.caret_anchored ? vm.overlay_rect : layout.overlay_anchor, card.value());
+      unit(vm.caret_anchored ? vm.overlay_rect : layout.overlay_anchor, card);
       // Each visible row: its labels, whether it is the selection, and the pointer.
+      pointer.row_hovered.resize(vm.rows.size());
       for (std::size_t row = 0; row < vm.rows.size(); ++row) {
         const OverlayListRowViewModel& item = vm.rows[row];
         const SDL_FRect row_rect = ScrollableListRowRect(vm.list_layout, static_cast<int>(row));
         const bool selected = vm.scroll_row + static_cast<int>(row) == vm.selected_row;
+        pointer.row_hovered[row] = PointerOver(row_rect);
         unit(row_rect, PaintFingerprint()
                            .Add(item.primary)
                            .Add(item.secondary)
                            .Add(item.secondary_width)
                            .Add(selected)
-                           .Add(PointerOver(row_rect))
+                           .Add(static_cast<bool>(pointer.row_hovered[row]))
                            .value());
       }
       // The scrollbar: its thumb and whether it is dragged.
+      pointer.scrollbar_dragged = context_.interaction_state.drag_target == DragTarget::OverlayScrollbar;
       if (const auto geometry = MakeVerticalScrollbarGeometry(
               vm.list_layout.list_rect, static_cast<float>(vm.total_rows), vm.list_layout.visible_units,
               static_cast<float>(vm.scroll_row));
           geometry.has_value()) {
-        unit(geometry->track, PaintFingerprint()
-                                  .Add(geometry->thumb)
-                                  .Add(context_.interaction_state.drag_target == DragTarget::OverlayScrollbar)
-                                  .value());
+        unit(geometry->track, PaintFingerprint().Add(geometry->thumb).Add(pointer.scrollbar_dragged).value());
       }
     }
   }
@@ -3233,9 +3388,9 @@ void WorkspaceShell::EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& 
   clip_frame_overlay_view_models_valid_ = true;
 }
 
-void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
-                                   const WorkspaceLayout& layout,
-                                   const FrameSurfaceViewModel& frame_vm) const {
+// The window's backdrop: the background, the regions' fills and their dividers,
+// from the layout and what prep resolved (PreparedFrameState::frame_base).
+void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const {
   DrawFilledRect(renderer, layout.full, theme_.window_background);
   DrawFilledRect(renderer, layout.menu_bar, theme_.chrome_background);
   DrawFilledRect(renderer,
@@ -3274,13 +3429,12 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
                           layout.breadcrumb.w, kWorkspaceDividerThickness),
                  theme_.border);
 
-  if (frame_vm.sidebar_visible) {
+  if (frame_state_.frame_base.sidebar_visible) {
     DrawFilledRect(renderer, layout.sidebar, theme_.surface_background);
     DrawFilledRect(renderer,
                    MakeRect(layout.sidebar.x + layout.sidebar.w, layout.sidebar.y,
                             kWorkspaceDividerThickness, layout.sidebar.h),
-                   context_.interaction_state.drag_target == DragTarget::SidebarDivider ? theme_.accent
-                                                                      : theme_.border);
+                   frame_state_.frame_base.sidebar_divider_lit ? theme_.accent : theme_.border);
     const SDL_FRect sidebar_header = MakeRect(layout.sidebar.x, layout.sidebar.y, layout.sidebar.w,
                                               kWorkspaceHeaderHeight);
     DrawFilledRect(renderer, sidebar_header, theme_.chrome_background);
@@ -3299,7 +3453,7 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
                    theme_.border);
   }
 
-  if (frame_vm.bottom_panel_visible) {
+  if (frame_state_.frame_base.bottom_panel_visible) {
     DrawFilledRect(renderer, layout.bottom_panel, theme_.surface_background);
     // The panel's divider is drawn by the header (PaintBottomPanelHeader), over it.
     const SDL_FRect panel_header = MakeRect(layout.bottom_panel.x, layout.bottom_panel.y,
@@ -3386,102 +3540,51 @@ void WorkspaceShell::PaintEditorPane(SDL_Renderer* renderer, std::size_t group_i
   }
 }
 
-void WorkspaceShell::RenderActiveWorkspaceSurface(
-    SDL_Renderer* renderer,
-    const WorkspaceLayout& layout,
-    const FrameToken& frame_token,
-    bool draw_editor_caret,
-    std::optional<SDL_FRect>* active_editor_pane_rect,
-    const FrameSurfaceViewModel& frame_vm) {
-  (void)frame_token;
-  ProjectWorkspaceState& project_state = *frame_vm.project_state;
-  // Every pane paints the tab in front of its own group, inside its own rect: an
-  // editor, or a diff or a merge. A diff in one pane of a split used to take the
-  // whole editor column, drawing over the other panes' editors while their tab
-  // strips stayed on top of it (TD-2026-11-11-439).
-  const EditorGroupRectsLayout editor_surface_group_rects = ComputeEditorGroupRectsForState(layout);
-  const EditorPaneLayouts editor_panes = EditorPaneLayoutsFromGroupRects(editor_surface_group_rects);
-  const std::size_t focused_group_index = project_state.clamped_focused_group_index();
-  const auto diff_tab_in_front = [&project_state](std::size_t group_index) -> TabEntry* {
-    if (group_index >= project_state.editor_groups.size()) {
-      return nullptr;
-    }
-    EditorGroup& group = project_state.editor_groups[group_index];
-    if (!group.has_active_tab()) {
-      return nullptr;
-    }
-    TabEntry& tab = group.active_tab();
-    const bool diff = (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) ||
-                      (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value());
-    return diff ? &tab : nullptr;
-  };
-  bool focused_pane_is_diff = false;
-  std::array<bool, kMaxEditorGroups> pane_shows_diff{};
-  for (std::size_t gi = 0; gi < editor_surface_group_rects.groups.size() && gi < kMaxEditorGroups; ++gi) {
-    TabEntry* tab = diff_tab_in_front(gi);
-    if (tab == nullptr) {
+// The editor pass: each pane as frame prep dispatched it (editor_pass_panes) --
+// a diff or a merge painting inside its own pane, then the editor panes from their
+// prepared inputs -- and the chrome around them.
+void WorkspaceShell::RenderActiveWorkspaceSurface(SDL_Renderer* renderer,
+                                                  const WorkspaceLayout& layout,
+                                                  bool draw_editor_caret) {
+  for (const PreparedFrameState::EditorPassPane& pane : frame_state_.editor_pass_panes) {
+    if (pane.kind == PreparedFrameState::EditorPassPane::Kind::Editor) {
+      PaintEditorPane(renderer, pane.group, pane.active && draw_editor_caret);
       continue;
     }
-    const bool focused = gi == focused_group_index;
-    // The focused one only when the frame's view model has it (as before): the
-    // view model is what says the frame shows it.
-    if (focused && !frame_vm.compare_surface.has_value()) {
-      continue;
-    }
-    focused_pane_is_diff = focused_pane_is_diff || focused;
-    pane_shows_diff[gi] = true;
-    const SDL_FRect& area = editor_surface_group_rects.groups[gi].editor_surface;
     // A diff or a merge paints inside its pane, as an editor pane does inside its
     // own: in an area too short for its header and a row (a large font, the panel
     // grown over the window) it laid out a row below the area anyway and painted
     // it over the panel -- in a full frame, not in a partial one that left the
     // editor alone (soak 498dc546c6a9).
-    const render::ScopedRenderClip surface_clip(renderer, area);
-    if (tab->kind == TabEntry::Kind::Compare) {
-      CompareTabState& compare_tab = *tab->compare;
-      const bool draw_compare_caret =
-          focused && compare_tab.right_view_active && prepared_frame_draw_editor_caret_;
+    const render::ScopedRenderClip surface_clip(renderer, pane.area);
+    const DiffSurfacePaint& paint = frame_state_.diff_surface_paint[pane.group];
+    if (pane.kind == PreparedFrameState::EditorPassPane::Kind::Compare) {
+      CompareTabState& compare_tab = *pane.compare;
+      const bool draw_compare_caret = pane.focused && compare_tab.right_view_active && draw_editor_caret;
       // Its working side's diagnostics and decorations are in the prepared paint
       // inputs (DiffSurfacePaint), resolved at frame prep.
-      RenderCompareSurface(renderer, area, compare_tab, draw_compare_caret,
-                           CompareRenderProjectInputs{.paint = &frame_state_.diff_surface_paint[gi]});
-      RenderCompareScrollbars(renderer, area, compare_tab, frame_state_.diff_surface_paint[gi]);
+      RenderCompareSurface(renderer, pane.area, compare_tab, draw_compare_caret,
+                           CompareRenderProjectInputs{.paint = &paint});
+      RenderCompareScrollbars(renderer, pane.area, compare_tab, paint);
     } else {
-      MergeTabState& merge_tab = *tab->merge;
-      RenderMergeSurface(renderer, area, merge_tab, focused, frame_state_.diff_surface_paint[gi]);
-      RenderMergeScrollbars(renderer, area, merge_tab, frame_state_.diff_surface_paint[gi]);
+      RenderMergeSurface(renderer, pane.area, *pane.merge, pane.focused, paint);
+      RenderMergeScrollbars(renderer, pane.area, *pane.merge, paint);
     }
   }
-  {
-    // Every editor pane in front, from the inputs frame prep built for it
-    // (PreparedFrameState::EditorPanePaint): PaintEditorPane reads nothing else.
-    for (const EditorPaneLayout& pane : editor_panes) {
-      const std::size_t gi = pane.group_index;
-      if (gi >= kMaxEditorGroups || pane_shows_diff[gi] || !frame_state_.editor_pane_paint[gi].valid) {
-        continue;
-      }
-      if (pane.active && active_editor_pane_rect != nullptr) {
-        *active_editor_pane_rect = pane.rect;
-      }
-      PaintEditorPane(renderer, gi, pane.active && draw_editor_caret);
-    }
-    for (const EditorSplitDividerRect& divider : editor_surface_group_rects.dividers) {
-      const bool divider_active =
-          context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
-          divider.node == context_.interaction_state.drag_editor_split_node &&
-          divider.boundary == context_.interaction_state.drag_editor_split_boundary;
-      DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
-    }
+  PaintEditorAreaChrome(renderer, layout);
+}
+
+// What the editor pass paints around its panes, as frame prep settled it
+// (PreparedFrameState::editor_area_chrome, debug_toolbar): the split dividers, the
+// external-change banner, the editor's focus ring and the debug toolbar.
+void WorkspaceShell::PaintEditorAreaChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const {
+  const PreparedFrameState::EditorAreaChromePaint& area = frame_state_.editor_area_chrome;
+  for (const PreparedFrameState::EditorAreaChromePaint::Divider& divider : area.dividers) {
+    DrawFilledRect(renderer, divider.rect, divider.lit ? theme_.accent : theme_.border);
   }
 
-  // The external-change banner belongs to an editor; a diff or merge in front
-  // shows none (it never laid one out).
-  if (const SDL_FRect strip =
-          focused_pane_is_diff
-              ? SDL_FRect{}
-              : ActiveEditorBannerStripRect(project_state, editor_surface_group_rects);
-      frame_vm.editor_banner.has_value() && strip.h > 0.0f) {
-    const EditorBannerViewModel& banner_vm = *frame_vm.editor_banner;
+  if (const PreparedFrameState::EditorAreaChromePaint::Banner& banner = area.banner; banner.shown) {
+    const SDL_FRect& strip = banner.strip;
     DrawFilledRect(renderer, strip, theme_.chrome_background);
     DrawFilledRect(renderer,
                    MakeRect(strip.x, strip.y + strip.h - kWorkspaceDividerThickness, strip.w,
@@ -3489,7 +3592,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                    theme_.border);
     DrawFilledRect(renderer, MakeRect(strip.x, strip.y, 3.0f, strip.h), theme_.accent);
 
-    const EditorBannerButtonLayout buttons = ComputeEditorBannerButtonRects(strip, banner_vm.buttons);
+    const EditorBannerButtonLayout& buttons = banner.buttons;
     const float message_right = buttons.controls_left();
     const SDL_FRect message_rect = MakeRect(strip.x + 12.0f, strip.y,
                                             std::max(0.0f, message_right - strip.x - 20.0f), strip.h);
@@ -3498,40 +3601,34 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     {
       const render::ScopedRenderClip clip_scope(renderer, clip);
       DrawVCenteredTextOn(text_renderer_, renderer, message_rect, 0.0f, theme_.text_secondary,
-                          theme_.chrome_background, banner_vm.message);
+                          theme_.chrome_background, banner.message);
     }
 
-    const auto draw_banner_button = [&](const SDL_FRect& rect, std::string_view label,
-                                        ButtonTone tone) {
+    const auto draw_banner_button = [&](const SDL_FRect& rect, std::string_view label, ButtonTone tone,
+                                        bool hovered) {
       if (rect.w <= 0.0f) {
         return;
       }
       DrawButtonCentered(text_renderer_, renderer, theme_, rect, label, tone,
-                         ButtonVisualState{
-                             .enabled = true,
-                             .hovered = PointerOver(rect),
-                             .active = false,
-                         });
+                         ButtonVisualState{.enabled = true, .hovered = hovered, .active = false});
     };
     for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
       draw_banner_button(buttons.rects[i], buttons.buttons[i].label,
-                         buttons.buttons[i].destructive ? ButtonTone::Destructive
-                                                        : ButtonTone::Neutral);
+                         buttons.buttons[i].destructive ? ButtonTone::Destructive : ButtonTone::Neutral,
+                         banner.hovered[i]);
     }
-    draw_banner_button(buttons.dismiss, "x", ButtonTone::Neutral);
+    draw_banner_button(buttons.dismiss, "x", ButtonTone::Neutral, banner.dismiss_hovered);
   }
 
-  if (project_state.surface.focus == FocusTarget::Editor) {
+  if (area.focus_ring) {
     DrawSurfaceFocusRing(renderer, layout.editor_surface);
   }
 
   // Floating debug control bar, drawn over the editor whenever a session is live.
   // Stacks below the find widget (which renders later, in the overlay layer) when
-  // both are visible, so draw order between them is irrelevant.
-  if (!focused_pane_is_diff && DebugToolbarVisible()) {
-    RenderDebugToolbar(renderer, layout, IsDebugSessionStopped(),
-                       DebugToolbarAvoidBelowY(layout));
-  }
+  // both are visible, so draw order between them is irrelevant. (Prep leaves it
+  // hidden while a diff is in front.)
+  RenderDebugToolbar(renderer);
 }
 
 }  // namespace microide::workspace

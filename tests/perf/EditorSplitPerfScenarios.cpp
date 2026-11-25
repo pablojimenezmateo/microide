@@ -152,14 +152,13 @@ void RunEditorSplitGridWorkout(ScenarioContext& context) {
       const float t = phase < period ? static_cast<float>(phase) / static_cast<float>(period)
                                      : 2.0f - static_cast<float>(phase) / static_cast<float>(period);
       const float x = divider_x + (t - 0.5f) * editor_pane.w * 0.4f;
-      const workspace::WorkspaceShell::RenderInvalidation redraw =
-          context.MouseMoveDragging(x, divider_y);
-      if (redraw.full) {
+      // The frame the motion owes, as the app paints it: a divider drag asks
+      // for a frame, and preparing it derives what the move repainted.
+      const ScenarioContext::PumpedFrameDamage frame = context.PumpPartialFrame(context.MouseMoveDragging(x, divider_y));
+      if (frame.full) {
         ++divider_full_redraws;
       }
-      for (const SDL_FRect& rect : redraw.rects) {
-        divider_damage += static_cast<double>(rect.w) * static_cast<double>(rect.h);
-      }
+      divider_damage += frame.area;
     }
   });
   context.MouseRelease(divider_x, divider_y);
@@ -202,13 +201,13 @@ void RunEditorSplitGridWorkout(ScenarioContext& context) {
   constexpr int kKeystrokes = 120;
   context.Measure("split.type_in_focused_pane", [&] {
     for (int i = 0; i < kKeystrokes; ++i) {
-      const workspace::WorkspaceShell::RenderInvalidation redraw = context.Type("x");
-      if (redraw.full) {
+      // The frame the keystroke owes, as the app paints it: typing asks for a
+      // frame, and preparing it derives the rows the edit changed.
+      const ScenarioContext::PumpedFrameDamage frame = context.PumpPartialFrame(context.Type("x"));
+      if (frame.full) {
         ++type_full_redraws;
       }
-      for (const SDL_FRect& rect : redraw.rects) {
-        type_damage += static_cast<double>(rect.w) * static_cast<double>(rect.h);
-      }
+      type_damage += frame.area;
     }
   });
 

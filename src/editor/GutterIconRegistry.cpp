@@ -57,7 +57,7 @@ void FillScanlines(SDL_Renderer* renderer, const SDL_FRect& bounds, float cx, fl
     }
   }
   if (!spans.empty()) {
-    SDL_RenderFillRects(renderer, spans.data(), static_cast<int>(spans.size()));
+    render::FillRectsInDrawColor(renderer, spans.data(), static_cast<int>(spans.size()));
   }
 }
 
@@ -101,8 +101,8 @@ void DrawCheck(SDL_Renderer* renderer, const SDL_FRect& b, SDL_Color color) {
   add_segment(pts[0], pts[1]);
   add_segment(pts[1], pts[2]);
   if (!verts.empty()) {
-    SDL_RenderGeometry(renderer, nullptr, verts.data(), static_cast<int>(verts.size()),
-                       indices.data(), static_cast<int>(indices.size()));
+    render::DrawGeometry(renderer, nullptr, verts.data(), static_cast<int>(verts.size()), indices.data(),
+                         static_cast<int>(indices.size()));
   }
 }
 
@@ -206,7 +206,7 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
     case GutterIconShape::Dash: {
       const float h = std::max(2.0f, bounds.h * 0.24f);
       SDL_FRect bar{bounds.x, cy - h * 0.5f, bounds.w, h};
-      SDL_RenderFillRect(renderer, &bar);
+      render::FillRectInDrawColor(renderer, bar);
       break;
     }
     case GutterIconShape::Square: {
@@ -214,7 +214,7 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
       const float inset = std::max(0.0f, bounds.w * 0.08f);
       SDL_FRect box{bounds.x + inset, bounds.y + inset, bounds.w - inset * 2.0f,
                     bounds.h - inset * 2.0f};
-      SDL_RenderFillRect(renderer, &box);
+      render::FillRectInDrawColor(renderer, box);
       break;
     }
     case GutterIconShape::Check:

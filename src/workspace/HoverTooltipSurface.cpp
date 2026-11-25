@@ -358,14 +358,4 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   };
 }
 
-void WorkspaceShell::RenderHoverTooltip(SDL_Renderer* renderer,
-                                        const WorkspaceLayout& layout) const {
-  if (renderer == nullptr) {
-    return;
-  }
-  if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
-    DrawTooltip(text_renderer_, renderer, theme_, tooltip->rect, tooltip->text);
-  }
-}
-
 }  // namespace microide::workspace

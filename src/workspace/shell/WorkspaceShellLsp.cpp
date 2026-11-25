@@ -568,7 +568,7 @@ void WorkspaceShell::StopDebugging() {
   if (last_session) {
     CloseDebugPane();
   }
-  RequestWindowRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }

@@ -104,7 +104,7 @@ WorkspaceShell::~WorkspaceShell() {
   // into (e.g. the pending redraw invalidation) is alive. Reverse-order member
   // destruction would otherwise tear down `pending_render_invalidation_`
   // before `plugin_runtime_`, and plugin teardown invokes
-  // RequestEditorSurfaceRedraw via the shell callbacks.
+  // RequestPreparedFrame via the shell callbacks.
   plugin_runtime_.Shutdown();
   // Land every accepted state write before the process goes away. Saves are
   // applied on a background worker now, so "the setting was saved" and "the

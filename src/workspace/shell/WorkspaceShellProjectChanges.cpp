@@ -45,16 +45,12 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
       }
     }
     if (marked_merge_tab) {
-      RequestActiveTabRedraw();
+      RequestPreparedFrame();
     }
     // The git view reads the now-stale snapshot, and the status bar's branch is
-    // read from HEAD at frame prep -- which needs a frame to run in.
-    if (context_.current_project_state.sidebar.visible) {
-      RequestSidebarRedraw();
-    }
-    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-      RequestRedrawRect(layout->status_bar);
-    }
+    // read from HEAD at frame prep -- which needs a frame to run in. Both are
+    // derived: the frame repaints what the change moved.
+    RequestPreparedFrame();
   }
 
   if (batch.tree_rescan_requested || !batch.file_changes.empty()) {
@@ -129,7 +125,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     // contract, so the O(tabs) filetype-detect + contract rebuild is skipped.
     ApplyEditorPreferencesToAllTabs(/*refresh_language_contracts=*/false);
     // Indent width moves every visible guide and tab stop in every pane.
-    RequestActiveTabRedraw();
+    RequestPreparedFrame();
   }
 
   for (const std::filesystem::path& path : refresh_compare_paths) {
@@ -140,7 +136,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ExternalChange, path);
   }
   if (!dirty_external_paths.empty()) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 
   if (batch.tree_rescan_requested) {
@@ -149,7 +145,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     if (batch.file_changes.empty() || batch.file_changes_truncated) {
       // Any open buffer may reload and any compare/merge restage: that is the
       // editor column, not the window (the sidebar is RefreshProjectFileViews').
-      RequestActiveTabRedraw();
+      RequestPreparedFrame();
       ReloadCleanOpenBuffersFromDisk();
       // Reconcile compare/merge tabs across EVERY editor group, not just the focused
       // one: a compare/merge tab open only in a background split must not keep a stale
@@ -221,15 +217,11 @@ void WorkspaceShell::RefreshProjectFileViews() {
     RefreshProjectSearch(ProjectSearchRerun::InPlace);
   }
   // What lists files is the sidebar (tree, search, Changed on Host) and the
-  // overlay (finder, search). Not the window: under agents writing the tree this
-  // was two full frames a second (TD-2026-10-15-341). A hidden surface needs no
-  // pixels -- RequestSidebarRedraw falls back to the WINDOW when the sidebar is
-  // hidden, which is the full frame again, so it is gated here.
-  if (project.sidebar.visible) {
-    RequestSidebarRedraw();
-  }
-  if (project.overlay.visible) {
-    RequestOverlayRedraw();
+  // overlay (finder, search): a frame repaints what of them changed. Not one
+  // while neither shows -- under agents writing the tree that was two frames a
+  // second preparing a window with nothing to repaint (TD-2026-10-15-341).
+  if (project.sidebar.visible || project.overlay.visible) {
+    RequestPreparedFrame();
   }
 }
 
@@ -273,7 +265,7 @@ void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& pat
       tab.merge->marked_resolved = false;
       // The stale-result banner and the resolved mark are on screen; the batch
       // that got here no longer repaints the window for them (TD-2026-10-15-341).
-      RequestActiveTabRedraw();
+      RequestPreparedFrame();
     }
    }
   }
@@ -283,7 +275,7 @@ void WorkspaceShell::ClearDiagnosticsForPath(const std::filesystem::path& path) 
   if (context_.current_project_state.diagnostics_store.ClearPathPrefix(path)) {
     RefreshProblemsSidebar();
     QueueEditorHoverRefresh();
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
   // Plugin/LSP decorations are path-keyed just like diagnostics, so an external delete
   // (filesystem watcher) must clear them too — otherwise they linger stale and the
@@ -292,7 +284,7 @@ void WorkspaceShell::ClearDiagnosticsForPath(const std::filesystem::path& path) 
   auto& state = context_.current_project_state;
   if (state.plugin_presentation_if_present() != nullptr) {
     if (state.EnsurePluginPresentation().decorations.ClearPathPrefix(path)) {
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
     }
     state.MaybeReleasePluginPresentation();
   }
@@ -341,7 +333,7 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
         SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice, reloaded);
       }
     }
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 }
 
@@ -415,7 +407,7 @@ void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& nor
     SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ExternalChange, path);
   }
   if (!dirty_external_paths.empty()) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 }
 

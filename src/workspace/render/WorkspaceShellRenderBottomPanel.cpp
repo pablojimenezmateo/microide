@@ -1,3 +1,4 @@
+#include "render/SurfacePrimitives.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -59,7 +60,7 @@ void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
   const SDL_Rect clip{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
                       static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))};
   const render::ScopedRenderClip clip_scope(renderer, clip);
-  SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
+  render::DrawTexture(renderer, entry->texture, nullptr, dest);
 }
 
 // The panel strip's tab colours: one definition for prep's fingerprint and paint.

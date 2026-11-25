@@ -104,6 +104,8 @@ class TextRenderer {
   // TextRendererBackend::DrawEphemeralRuns for why the distinction is worth an
   // entry point rather than a heuristic inside the cache.
   void DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) const;
+  // Reports each run to the paint-overrun recorder while it records.
+  void NoteRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) const;
   void DrawStringOn(SDL_Renderer* renderer,
                     float x,
                     float y,

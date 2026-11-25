@@ -1,3 +1,4 @@
+#include "workspace/render/HoverCardPaint.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
@@ -353,139 +354,95 @@ void WorkspaceShell::UpdateTextInputArea(
   SDL_SetTextInputArea(render_window, &area, cursor);
 }
 
-void WorkspaceShell::RenderSingleLineTextSelection(
-    SDL_Renderer* renderer,
-    const std::optional<TextInputVisual>& visual) const {
-  if (!visual.has_value() || !visual->selection_bytes.has_value() ||
-      visual->displayed_text.empty()) {
+// A single-line field's selection and an IME preedit, laid out at frame prep as
+// what the text-input pass draws (HoverCardPaint.h): their unit keys on it.
+void WorkspaceShell::LayOutTextInputMarks(const std::optional<TextInputVisual>& visual, CardPaint& marks) const {
+  marks.Clear();
+  if (!visual.has_value()) {
     return;
   }
-
-  if (!UsesSharedSingleLineCaret(visual->surface)) {
-    return;
+  marks.OpenOverlay(SDL_FRect{});
+  // The selection, over the field's text.
+  if (visual->selection_bytes.has_value() && !visual->displayed_text.empty() &&
+      UsesSharedSingleLineCaret(visual->surface)) {
+    const auto [sel_start_byte, sel_end_byte] = *visual->selection_bytes;
+    if (sel_start_byte < sel_end_byte && sel_end_byte <= visual->displayed_text.size()) {
+      const std::string_view display_sv = visual->displayed_text;
+      const float sel_start_x = visual->text_x + text_renderer_.MeasureWidth(display_sv.substr(0, sel_start_byte));
+      const float sel_end_x = visual->text_x + text_renderer_.MeasureWidth(display_sv.substr(0, sel_end_byte));
+      if (sel_end_x - sel_start_x > 0.0f) {
+        marks.Fill(MakeRect(sel_start_x, visual->text_y - 1.0f, sel_end_x - sel_start_x, text_renderer_.LineHeight()),
+                   theme_.selection_fill);
+        marks.TextOver(sel_start_x, visual->text_y, theme_.text_primary,
+                       display_sv.substr(sel_start_byte, sel_end_byte - sel_start_byte));
+      }
+    }
   }
-
-  const auto [sel_start_byte, sel_end_byte] = *visual->selection_bytes;
-  if (sel_start_byte >= sel_end_byte || sel_end_byte > visual->displayed_text.size()) {
-    return;
-  }
-
-  const std::string_view display_sv = visual->displayed_text;
-  const float sel_start_x =
-      visual->text_x +
-      text_renderer_.MeasureWidth(display_sv.substr(0, sel_start_byte));
-  const float sel_end_x =
-      visual->text_x +
-      text_renderer_.MeasureWidth(display_sv.substr(0, sel_end_byte));
-  const float sel_width = sel_end_x - sel_start_x;
-
-  if (sel_width <= 0.0f) {
-    return;
-  }
-
-  DrawFilledRect(renderer,
-                 MakeRect(sel_start_x, visual->text_y - 1.0f, sel_width,
-                          text_renderer_.LineHeight()),
+  // An IME preedit at the caret: its text, the selected part lit, an underline and
+  // the preedit's own caret.
+  const TextCompositionState& composition_state = context_.text_input.composition;
+  if (!composition_state.text.empty() && composition_state.surface == visual->surface) {
+    const std::string_view composition = composition_state.text;
+    const std::size_t total_codepoints = util::Utf8CodepointCount(composition);
+    const std::size_t selection_start_codepoints =
+        composition_state.start < 0
+            ? total_codepoints
+            : std::min<std::size_t>(static_cast<std::size_t>(composition_state.start), total_codepoints);
+    const std::size_t selection_end_codepoints =
+        composition_state.length <= 0
+            ? selection_start_codepoints
+            : std::min(total_codepoints,
+                       selection_start_codepoints + static_cast<std::size_t>(composition_state.length));
+    const std::size_t selection_start = util::Utf8ByteOffsetForCodepointCount(composition, selection_start_codepoints);
+    const std::size_t selection_end = util::Utf8ByteOffsetForCodepointCount(composition, selection_end_codepoints);
+    const std::string_view prefix = composition.substr(0, selection_start);
+    const std::string_view selected = composition.substr(selection_start, selection_end - selection_start);
+    const std::string_view suffix = composition.substr(selection_end);
+    const float prefix_width = text_renderer_.MeasureWidth(prefix);
+    const float selected_width = text_renderer_.MeasureWidth(selected);
+    const float total_width = text_renderer_.MeasureWidth(composition);
+    const float line_y = visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y;
+    if (!selected.empty()) {
+      marks.Fill(MakeRect(visual->cursor_x + prefix_width, line_y - 1.0f, selected_width, text_renderer_.LineHeight()),
                  theme_.selection_fill);
-  text_renderer_.DrawString(
-      renderer, sel_start_x, visual->text_y, theme_.text_primary,
-      display_sv.substr(sel_start_byte, sel_end_byte - sel_start_byte));
+    }
+    float segment_x = visual->cursor_x;
+    if (!prefix.empty()) {
+      marks.TextOver(segment_x, line_y, theme_.accent, prefix);
+      segment_x += prefix_width;
+    }
+    if (!selected.empty()) {
+      marks.TextOver(segment_x, line_y, theme_.text_primary, selected);
+      segment_x += selected_width;
+    }
+    if (!suffix.empty()) {
+      marks.TextOver(segment_x, line_y, theme_.accent, suffix);
+    }
+    marks.Fill(MakeRect(visual->cursor_x, visual->text_y + text_renderer_.LineHeight() - 1.0f, total_width, 1.0f),
+               theme_.accent);
+    marks.Fill(MakeRect(visual->cursor_x + prefix_width + selected_width, visual->text_y - 1.0f, 1.5f,
+                        text_renderer_.LineHeight()),
+               theme_.accent);
+  }
+  marks.FitOverlayToContents(text_renderer_);
 }
 
-void WorkspaceShell::RenderActiveTextInputCaret(
-    SDL_Renderer* renderer,
-    const std::optional<TextInputVisual>& visual) const {
+// A single-line field's caret, its own overlay: a blink repaints the caret alone.
+void WorkspaceShell::LayOutTextInputCaret(const std::optional<TextInputVisual>& visual, CardPaint& caret) const {
+  caret.Clear();
   if (!visual.has_value() || !context_.interaction_state.window_has_input_focus ||
-      !context_.text_input.composition.text.empty()) {
+      !context_.text_input.composition.text.empty() || !UsesSharedSingleLineCaret(visual->surface) ||
+      !frame_state_.caret_visible) {
     return;
   }
-
-  if (!UsesSharedSingleLineCaret(visual->surface)) {
-    return;
-  }
-
-  if (!frame_state_.caret_visible) {
-    return;
-  }
-
+  caret.OpenOverlay(SDL_FRect{});
   // On a device pixel, where CurrentCaretDirtyRect puts the blink's damage: the
   // measured x carries float noise (render::SnapToDevicePixel).
-  DrawFilledRect(renderer,
-                 MakeRect(render::SnapToDevicePixel(visual->cursor_x, presentation_scale_x_),
-                          (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f, 1.5f,
-                          text_renderer_.LineHeight()),
-                 theme_.cursor);
-}
-
-void WorkspaceShell::RenderTextComposition(
-    SDL_Renderer* renderer,
-    const std::optional<TextInputVisual>& visual) const {
-  if (!visual.has_value() || context_.text_input.composition.text.empty() ||
-      context_.text_input.composition.surface != visual->surface) {
-    return;
-  }
-
-  const std::string_view composition = context_.text_input.composition.text;
-  const std::size_t total_codepoints = util::Utf8CodepointCount(composition);
-  const std::size_t selection_start_codepoints =
-      context_.text_input.composition.start < 0
-          ? total_codepoints
-          : std::min<std::size_t>(static_cast<std::size_t>(context_.text_input.composition.start),
-                                  total_codepoints);
-  const std::size_t selection_end_codepoints =
-      context_.text_input.composition.length <= 0
-          ? selection_start_codepoints
-          : std::min(total_codepoints,
-                     selection_start_codepoints +
-                         static_cast<std::size_t>(context_.text_input.composition.length));
-  const std::size_t selection_start =
-      util::Utf8ByteOffsetForCodepointCount(composition, selection_start_codepoints);
-  const std::size_t selection_end =
-      util::Utf8ByteOffsetForCodepointCount(composition, selection_end_codepoints);
-  const std::string_view prefix = composition.substr(0, selection_start);
-  const std::string_view selected =
-      composition.substr(selection_start, selection_end - selection_start);
-  const std::string_view suffix = composition.substr(selection_end);
-  const float prefix_width = text_renderer_.MeasureWidth(prefix);
-  const float selected_width = text_renderer_.MeasureWidth(selected);
-  const float total_width = text_renderer_.MeasureWidth(composition);
-
-  if (!selected.empty()) {
-    DrawFilledRect(renderer,
-                   MakeRect(visual->cursor_x + prefix_width,
-                            (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f,
-                            selected_width,
-                            text_renderer_.LineHeight()),
-                   theme_.selection_fill);
-  }
-
-  float segment_x = visual->cursor_x;
-  if (!prefix.empty()) {
-    text_renderer_.DrawString(renderer, segment_x,
-                              visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
-                              theme_.accent, prefix);
-    segment_x += prefix_width;
-  }
-  if (!selected.empty()) {
-    text_renderer_.DrawString(
-        renderer, segment_x, visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
-        theme_.text_primary, selected);
-    segment_x += selected_width;
-  }
-  if (!suffix.empty()) {
-    text_renderer_.DrawString(renderer, segment_x,
-                              visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y,
-                              theme_.accent, suffix);
-  }
-
-  DrawFilledRect(renderer,
-                 MakeRect(visual->cursor_x, visual->text_y + text_renderer_.LineHeight() - 1.0f,
-                          total_width, 1.0f),
-                 theme_.accent);
-  DrawFilledRect(renderer,
-                 MakeRect(visual->cursor_x + prefix_width + selected_width, visual->text_y - 1.0f,
-                          1.5f, text_renderer_.LineHeight()),
-                 theme_.accent);
+  caret.Fill(MakeRect(render::SnapToDevicePixel(visual->cursor_x, presentation_scale_x_),
+                      (visual->cursor_y != 0.0f ? visual->cursor_y : visual->text_y) - 1.0f, 1.5f,
+                      text_renderer_.LineHeight()),
+             theme_.cursor);
+  caret.FitOverlayToContents(text_renderer_);
 }
 
 }  // namespace microide::workspace

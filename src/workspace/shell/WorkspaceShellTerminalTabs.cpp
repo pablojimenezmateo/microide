@@ -123,8 +123,8 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
                                   pane.launch_working_directory, pane.launch_command, {});
               },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
-          .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
+          .request_bottom_panel_redraw = [this]() { RequestPreparedFrame(); },
           .revive_terminals =
               [this]() {
                 return SettingFlagEnabled(GetSettingValue("terminal.restore_sessions"), true);
@@ -161,12 +161,10 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .setting = [this](std::string_view key) { return GetSettingValue(std::string(key)); },
       .set_status_segment =
           [this](StatusBarSegmentValue value) {
-            // Published from sync ticks, outside any frame: ask for one, and only
-            // for the strip (the frame adds the bar's rect itself once it runs).
+            // Published from sync ticks, outside any frame: ask for one. The
+            // status bar is derived, so the frame repaints the segments that moved.
             if (status_bar_service_.SetSegment(StatusBarSegmentId::Remote, std::move(value))) {
-              if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-                RequestRedrawRect(layout->status_bar);
-              }
+              RequestPreparedFrame();
             }
           },
       .compare_files =
@@ -199,7 +197,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             ProjectWorkspaceState* state = context_.ProjectStateForRoot(root);
             if (state != nullptr && TerminalPanelService::StartPendingHostPanes(*state) > 0 &&
                 state == &context_.current_project_state) {
-              RequestBottomPanelRedraw();
+              RequestPreparedFrame();
             }
           },
       .host_terminals_waiting =
@@ -271,7 +269,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
                 if (pane != nullptr && pane->session.running() && pane->session.host_identity() == identity) {
                   pane->follow_tail = true;
                   pane->session.PasteText(text);
-                  RequestBottomPanelRedraw();
+                  RequestPreparedFrame();
                   return true;
                 }
               }
@@ -349,8 +347,8 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             // background writes its configuration when it next comes forward.
             if (state == &context_.current_project_state) {
               MakePersistenceCoordinator().SaveConfigState();
-              RequestActiveTabRedraw(true);
-              RequestSidebarRedraw();
+              RequestPreparedFrame();
+              RequestPreparedFrame();
             }
           },
       .host_changes_updated =
@@ -389,7 +387,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
               state->remote_status = status;
               ++state->remote_status_revision;
               if (state == &context_.current_project_state) {
-                RequestEditorSurfaceRedraw();
+                RequestPreparedFrame();
               }
               // Every project's tab wears its connection's state, a background one
               // too. It is pushed here, so nothing polls; and only a change of that
@@ -405,7 +403,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
               state->SetPendingPaths(std::move(pending));
               if (state == &context_.current_project_state) {
-                RequestSidebarRedraw();
+                RequestPreparedFrame();
               }
             }
           },
@@ -654,7 +652,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     NoteLayoutInputsChanged();
   }
   if (panel_visible_before || BottomPanelVisible()) {
-    RequestBottomPanelRedraw();
+    RequestPreparedFrame();
   } else if (badge_changed) {
     // The panel is hidden, so there is no strip to repaint; the badge shows the
     // next time it is. Nothing to do now.

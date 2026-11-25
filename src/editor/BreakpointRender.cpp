@@ -77,7 +77,7 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
     }
   }
   if (!spans.empty()) {
-    SDL_RenderFillRects(renderer, spans.data(), static_cast<int>(spans.size()));
+    render::FillRectsInDrawColor(renderer, spans.data(), static_cast<int>(spans.size()));
   }
 }
 

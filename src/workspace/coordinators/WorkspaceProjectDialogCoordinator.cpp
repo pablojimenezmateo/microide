@@ -253,7 +253,7 @@ void WorkspaceShell::ConsumePendingFontFileDialogResult() {
 
   WriteSettingRespectingScope(pending.target_setting_id, pending.selected_path.string());
   RefreshSettingsOverlayCatalog();
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 void SetNativeDialogsDisabledForTesting(bool disabled) {

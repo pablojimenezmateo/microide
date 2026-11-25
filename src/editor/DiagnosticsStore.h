@@ -120,6 +120,11 @@ class DiagnosticsStore {
   std::size_t InfoCount() const { return info_count_; }
   std::size_t HintCount() const { return hint_count_; }
   std::uint64_t revision() const { return revision_.value(); }
+  // The store's revision when `path_key`'s merged list last changed, or 0 while it
+  // has none: what moves when THIS file's diagnostics do, and only then (a
+  // pane's overview ruler keys on it, not on every file's). Never reused: a list
+  // that goes and comes back is stamped with a later revision.
+  std::uint64_t PathRevisionByKey(std::string_view path_key) const;
 
  private:
   struct SeveritySummary {
@@ -140,6 +145,8 @@ class DiagnosticsStore {
     // (>= diagnostics.size()) so a summary can report the dropped remainder.
     bool truncated = false;
     std::size_t original_count = 0;
+    // The store's revision when this list last changed (PathRevisionByKey).
+    std::uint64_t changed_at = 0;
 
     bool operator==(const FileDiagnostics&) const = default;
   };

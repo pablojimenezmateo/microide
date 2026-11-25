@@ -77,7 +77,7 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
                               PromptSurfaceState::Kind::Confirm, {}, {});
             context_.prompts.surface.detail = std::move(warnings);
           },
-      .request_commit_workflow_redraw = [this]() { RequestSidebarRedraw(); },
+      .request_commit_workflow_redraw = [this]() { RequestPreparedFrame(); },
       .is_in_front = ProjectInFront{context_},
       .project_label = ProjectLabelOf{context_},
       .defer_to_project = CatchUpOnActivate{context_},
@@ -98,7 +98,7 @@ bool WorkspaceShell::OpenCommitWorkflow() {
   InitializeCommitWorkflowService();
   commit_workflow_service_.Open(context_.current_project_state.sidebar.git.commit_workflow);
   context_.current_project_state.surface.focus = FocusTarget::Sidebar;
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
   return true;
 }
 
@@ -107,7 +107,7 @@ void WorkspaceShell::CloseCommitWorkflow() {
     return;
   }
   commit_workflow_service_.Close(context_.current_project_state.sidebar.git.commit_workflow);
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 namespace {
@@ -202,7 +202,7 @@ void WorkspaceShell::InitializeGitOperationService() {
           },
       .notify = [this](NotificationService::Tone tone,
                        std::string message) { Notify(tone, std::move(message)); },
-      .request_redraw = [this]() { RequestSidebarRedraw(); },
+      .request_redraw = [this]() { RequestPreparedFrame(); },
       .is_in_front = ProjectInFront{context_},
       .project_label = ProjectLabelOf{context_},
       .defer_to_project = CatchUpOnActivate{context_},

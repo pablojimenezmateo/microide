@@ -318,8 +318,8 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
     }
   }
   ResetOverlayScroll();
-  RequestOverlayRedraw();
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
@@ -367,7 +367,7 @@ void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
     RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
   }
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::MoveBufferSearchSelection(int delta) {
@@ -383,7 +383,7 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
     }
     if (delta == 0 && !buffer_search.matches.empty()) {
       RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
       return;
     }
   }
@@ -403,7 +403,7 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
       RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
     }
   }
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
@@ -465,7 +465,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
         std::min(buffer_search.selected_index, buffer_search.matches.size() - 1);
     RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
   }
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
@@ -530,7 +530,7 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
     }
   }
   RefreshBufferSearch();
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match) {
@@ -578,7 +578,7 @@ void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match
   }
 
   if (changed) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 }
 
@@ -601,7 +601,7 @@ void WorkspaceShell::ResetBufferSearchFoldRevealState(bool preserve_expanded_fol
         changed = model->CollapseRange(*it) || changed;
       }
       if (changed) {
-        RequestEditorSurfaceRedraw();
+        RequestPreparedFrame();
       }
     }
   }

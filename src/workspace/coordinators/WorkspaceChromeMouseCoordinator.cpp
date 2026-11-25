@@ -654,7 +654,7 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
           .toggle_buffer_search_option = [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
-          .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
+          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .clamp_overlay_scroll_row = [this](const SDL_FRect& rect) { ClampOverlayScrollRow(rect); },

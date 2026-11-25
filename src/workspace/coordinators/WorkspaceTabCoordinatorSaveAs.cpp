@@ -92,7 +92,7 @@ bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
   // The buffer has a new name: its tab title, its breadcrumb, and -- through the
   // extension -- possibly its language, so its highlighting. A plain save repaints
   // only the dirty marker.
-  operations_.request_active_tab_redraw(/*include_tree_sidebar=*/true);
+  operations_.request_frame();
   return true;
 }
 

@@ -348,7 +348,7 @@ void WorkspaceShell::RebuildPresentationRegistries() {
     // The theme's colours may have changed, and not every pixel is a derived
     // unit keyed on them (the chrome bands' fills are not): the window. This
     // named the editor surface and the menu bar.
-    RequestWindowRedraw();
+    RequestPreparedFrame();
   }
 }
 
@@ -493,7 +493,7 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     util::StartupTrace::Scope editor_redraw_scope("RequestEditorSurfaceRedraw");
     util::PerformanceTrace::Scope perf_editor_redraw_scope(
         "WorkspaceShell::ReloadPluginsForCurrentProject::RequestEditorSurfaceRedraw");
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
   if (request.announce) {
     // The user asked for this reload: its own summary, now that it has landed.
@@ -532,7 +532,7 @@ void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
     RefreshGitSidebar();
   }
   RequestPreparedFrame();
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::ReloadPluginsIfPluginAssetsChanged(bool force_check) {

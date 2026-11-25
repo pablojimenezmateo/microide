@@ -41,6 +41,17 @@ struct VisibleStripTab {
   std::optional<editor::WelcomeStageState> remote_state;
 };
 
+// The tab a drag lifted out of `tabs` (its `index` is `source_index`), or null
+// when it scrolled out of the list: what the drag's ghost paints.
+inline const VisibleStripTab* DraggedStripTab(const std::vector<VisibleStripTab>& tabs, std::size_t source_index) {
+  for (const VisibleStripTab& tab : tabs) {
+    if (tab.index == source_index) {
+      return &tab;
+    }
+  }
+  return nullptr;
+}
+
 struct TabStripOverflowControls {
   SDL_FRect left_button{};
   SDL_FRect right_button{};

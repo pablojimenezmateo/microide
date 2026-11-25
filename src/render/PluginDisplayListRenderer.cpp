@@ -95,8 +95,7 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
           const SDL_FPoint& p = list.point_arena[op.data_offset + i];
           polyline_points.push_back(SDL_FPoint{ox + p.x, oy + p.y});
         }
-        SDL_RenderLines(renderer, polyline_points.data(),
-                        static_cast<int>(polyline_points.size()));
+        DrawPolyline(renderer, polyline_points.data(), static_cast<int>(polyline_points.size()));
         break;
       }
       case DrawOp::Text: {
@@ -109,7 +108,7 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
         if (const SurfaceTextureCache::Entry* entry = texture_cache.Lookup(hash);
             entry != nullptr && entry->texture != nullptr) {
           const SDL_FRect dest{ox + op.rect.x, oy + op.rect.y, op.rect.w, op.rect.h};
-          SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
+          DrawTexture(renderer, entry->texture, nullptr, dest);
         }
         break;
       }

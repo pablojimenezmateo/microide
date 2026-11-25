@@ -25,33 +25,15 @@ namespace microide::workspace {
 
 namespace {
 
-// When the pointer moved from one hover-lit element to another (or onto or off
-// one), the rects of both, grown by the hover fill's overhang (`pad_x`, `pad_y`),
-// for `damage`. True when the hovered element changed.
-template <typename Damage>
-bool DamageHoverChange(const std::optional<SDL_FRect>& previous,
-                       const std::optional<SDL_FRect>& current, float pad_x, float pad_y,
-                       const Damage& damage) {
-  // value_or yields fully-initialized locals so the comparison never touches
-  // optional storage GCC cannot prove engaged.
-  const bool previous_present = previous.has_value();
-  const bool current_present = current.has_value();
-  const SDL_FRect previous_rect = previous.value_or(SDL_FRect{});
-  const SDL_FRect current_rect = current.value_or(SDL_FRect{});
-  if (previous_present == current_present &&
-      (!previous_present || RectsEqual(previous_rect, current_rect))) {
-    return false;
+// Whether the pointer moved from one hover-lit element to another (or onto or
+// off one). What it lit is derived at frame prep -- the hovered element and the
+// tooltip are Chrome units, and each surface keys its own hover -- so a change
+// owes a frame and names no rect.
+bool HoverChanged(const std::optional<SDL_FRect>& previous, const std::optional<SDL_FRect>& current) {
+  if (previous.has_value() != current.has_value()) {
+    return true;
   }
-  const auto pad = [pad_x, pad_y](const SDL_FRect& rect) {
-    return MakeRect(rect.x - pad_x, rect.y - pad_y, rect.w + 2.0f * pad_x, rect.h + 2.0f * pad_y);
-  };
-  if (previous_present) {
-    damage(pad(previous_rect));
-  }
-  if (current_present) {
-    damage(pad(current_rect));
-  }
-  return true;
+  return previous.has_value() && current.has_value() && !RectsEqual(*previous, *current);
 }
 
 }  // namespace
@@ -61,7 +43,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   const DamageMark mark = MarkDamage();
   if (context_.prompts.dirty_visible) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
   const auto layout_state = CurrentWorkspaceLayout();
@@ -87,9 +69,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         hit.has_value() ? hit->action : std::nullopt, SDL_GetTicks());
     if (changed) {
       // The toasts are a derived surface: prep repaints the ones whose hover
-      // changed. This only asks for the frame, over the stack (hovering does not
-      // move it), not the whole window it used to.
-      EnsureRedraw(mark, [this, bounds = NotificationToastsBounds(toasts)]() { RequestRedrawRect(bounds); });
+      // changed, so this only asks for the frame.
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     if (hit.has_value()) {
       UpdateMouseCursor(x, y, false);
@@ -145,13 +126,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         }
       }
     }
-    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (context_.prompts.surface_visible) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -162,7 +143,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // wholesale and no underlying surface should react while it owns the screen.
   if (settings_overlay_service_.Visible()) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
-    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -212,7 +193,7 @@ std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, con
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
           window_width - static_cast<float>(event.motion.x), window_width, resolved_sidebar_width);
       NoteLayoutInputsChanged();
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
 
@@ -232,34 +213,9 @@ std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, con
         context_.current_project_state.editor_split.ResizeDivider(
             node, boundary, (pointer - divider.pair_start) / divider.pair_extent);
         NoteLayoutInputsChanged();
-        // Only the two panes sharing this divider move, and their COMBINED span
-        // is what `pair_start`/`pair_extent` name -- an invariant of the resize,
-        // so one rect covers the layout before and after it. This used to repaint
-        // the whole window on every motion event: on a 1920x1080 window that is
-        // 2.1 Mpx of sidebar, menu bar, bottom panel, status bar and debug pane
-        // restated per event to move a divider inside the editor column.
-        //
-        // A vertical divider also changes the width of the two panes' tab strips,
-        // which live in the global band ABOVE the editor area (`layout.tab_strip`
-        // sits at content_top - kTabStripHeight), so the damage is extended up to
-        // cover that band's matching slice. A horizontal divider only restacks
-        // panes inside one column, whose strips do not move.
-        const SDL_FRect editor_area = drag_layout.editor_area;
-        // `pair_extent` is the two panes' shares; the divider between them is not
-        // in it, so the span they tile is that plus one divider (without it the
-        // second pane's far edge went unrepainted).
-        // (Its own thickness: a span too narrow for full-width dividers thins them.)
-        const float pair_span = divider.pair_extent + (divider.vertical ? divider.rect.w : divider.rect.h);
-        SDL_FRect damage =
-            divider.vertical
-                ? MakeRect(divider.pair_start, editor_area.y, pair_span, editor_area.h)
-                : MakeRect(divider.rect.x, divider.pair_start, divider.rect.w, pair_span);
-        if (divider.vertical) {
-          const SDL_FRect& strip = drag_layout.tab_strip;
-          const float top = std::min(damage.y, strip.y);
-          damage = MakeRect(damage.x, top, damage.w, damage.y + damage.h - top);
-        }
-        EnsureRedraw(mark, [this, damage]() { RequestRedrawRect(damage); });
+        // Derived: the two panes' rows, strips and bands are units at their new
+        // rects, and the split dividers a Chrome unit keyed on where they are.
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
         break;
       }
       return true;
@@ -273,19 +229,19 @@ std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, con
     }
 
     if (MakePanelMouseCoordinator().HandleDrag(event, drag_layout)) {
-      EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
 
     if (MakeMergeMouseCoordinator().HandleDrag(event, ActiveTabSurface(drag_layout))) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
 
     if (context_.interaction_state.drag_target == DragTarget::SidebarScrollbar) {
       const bool handled = MakeSidebarMouseCoordinator().HandleDrag(event, drag_layout);
       if (handled) {
-        EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       }
       return handled;
     }
@@ -293,7 +249,7 @@ std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, con
     if (context_.interaction_state.drag_target == DragTarget::DebugPaneScrollbar) {
       const bool handled = MakeDebugPaneMouseCoordinator().HandleDrag(event, drag_layout);
       if (handled) {
-        EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       }
       return handled;
     }
@@ -313,17 +269,17 @@ std::optional<bool> WorkspaceShell::MotionDuringDrag(const SDL_Event& event, con
                                               context_.interaction_state.drag_scrollbar_offset))),
                      0, list_layout.max_scroll);
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
-      EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
 
     if (MakeCompareMouseCoordinator().HandleDrag(event, ActiveTabSurface(drag_layout))) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
 
     if (MakeEditorMouseCoordinator().HandleDrag(event, drag_layout)) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       return true;
     }
 
@@ -341,7 +297,7 @@ std::optional<bool> WorkspaceShell::MotionDuringPointerGesture(const SDL_Event& 
   if (context_.interaction_state.path_drag.armed) {
     if (MakeSidebarMouseCoordinator().HandlePathDragMotion(static_cast<float>(event.motion.x),
                                                            static_cast<float>(event.motion.y), layout)) {
-      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     return true;
   }
@@ -378,7 +334,7 @@ std::optional<bool> WorkspaceShell::MotionDuringPointerGesture(const SDL_Event& 
     if (ActiveTabIsCompare()) {
       const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, ActiveTabSurface(layout));
       if (handled) {
-        EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       }
       return handled;
     }
@@ -386,14 +342,14 @@ std::optional<bool> WorkspaceShell::MotionDuringPointerGesture(const SDL_Event& 
     if (ActiveTabIsMerge()) {
       const bool handled = MakeMergeMouseCoordinator().HandleSelectionMotion(event, ActiveTabSurface(layout));
       if (handled) {
-        EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       }
       return handled;
     }
 
     const bool handled = MakeEditorMouseCoordinator().HandleSelectionMotion(event, layout);
     if (handled) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     return handled;
   }
@@ -402,37 +358,14 @@ std::optional<bool> WorkspaceShell::MotionDuringPointerGesture(const SDL_Event& 
 
 // An open menu takes the pointer: its rows light, and what it blocks stops hovering.
 std::optional<bool> WorkspaceShell::MotionOverOpenMenus(const SDL_Event& event, const WorkspaceLayout& layout) {
-  const auto capture_blocked_hover_visuals = [this, &layout]() {
-    struct HoverVisuals {
-      std::optional<SDL_FRect> tooltip_rect;
-      std::optional<SDL_FRect> editor_hover_popup_rect;
-    };
-
-    HoverVisuals visuals;
-    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
-      visuals.tooltip_rect = tooltip->rect;
-    }
-    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
-      visuals.editor_hover_popup_rect = popup->rect;
-    }
-    return visuals;
-  };
-  const auto invalidate_blocked_hover_visuals = [this](const auto& visuals) {
-    const auto request = [this](const std::optional<SDL_FRect>& rect) {
-      if (rect.has_value()) {
-        RequestRedrawRect(*rect);
-      }
-    };
-    request(visuals.tooltip_rect);
-    request(visuals.editor_hover_popup_rect);
-  };
+  // (The tooltip and the editor's hover card it blocks resolve to nothing while
+  // it holds the pointer, so their Chrome units repaint where they were.)
   if (MenuSurfaceCapturingMouse()) {
     static const bool menu_hover_trace =
         util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MENU_HOVER");
     const Uint64 t0 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     const std::size_t rects_before =
         menu_hover_trace ? pending_render_invalidation_.rects.size() : 0;
-    const auto blocked_hover_visuals = capture_blocked_hover_visuals();
     // A popup row paints lit while the pointer is on it, not only while the menu
     // state names it: a menu opened by Alt+Right under a still pointer has no
     // hovered row in its state, yet paints the row beneath the pointer lit. Each
@@ -468,8 +401,6 @@ std::optional<bool> WorkspaceShell::MotionOverOpenMenus(const SDL_Event& event, 
     }
     const Uint64 t1 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
-    const Uint64 t2 = menu_hover_trace ? SDL_GetTicksNS() : 0;
-    invalidate_blocked_hover_visuals(blocked_hover_visuals);
     const Uint64 t3 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     ChromeMouseCoordinator& chrome_coordinator = MakeChromeMouseCoordinator();
     const Uint64 t4 = menu_hover_trace ? SDL_GetTicksNS() : 0;
@@ -480,10 +411,10 @@ std::optional<bool> WorkspaceShell::MotionOverOpenMenus(const SDL_Event& event, 
         return static_cast<double>(b - a) / 1'000'000.0;
       };
       SDL_Log("MICROIDE_MENU_HOVER motion ev=(%.0f,%.0f) total=%.3fms "
-              "[capture=%.3f cursor=%.3f invalidate=%.3f makeCoord=%.3f handle=%.3f] "
+              "[capture=%.3f cursor=%.3f makeCoord=%.3f handle=%.3f] "
               "rects+=%zu ami=%d hovered=%d",
               event.motion.x, event.motion.y, ms(t0, t5),
-              ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5),
+              ms(t0, t1), ms(t1, t3), ms(t3, t4), ms(t4, t5),
               pending_render_invalidation_.rects.size() - rects_before,
               context_.menu_state.active_menu_item_index,
               context_.menu_state.hovered_popup_row_index);
@@ -516,17 +447,12 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
     }
     // Generic hover-background surfaces (menu-bar items, tab strips, the sidebar's
     // view tabs, header buttons and rows, overlay list rows, bottom-panel tabs, the
-    // debug pane's mode tabs and rows). Rendering is surface-granular,
-    // so damaging the changed element's rect re-renders that surface with the new
-    // hover. One unified probe keeps every list/tab hover affordance in lockstep.
-    const auto request_redraw = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); };
-    // One pixel past the element: a button's hover outline sits on its edge.
-    if (DamageHoverChange(previous_mouse_position_valid
-                              ? HoveredInteractiveRect(layout, previous_mouse_x, previous_mouse_y)
-                              : std::nullopt,
-                          HoveredInteractiveRect(layout, static_cast<float>(event.motion.x),
-                                                 static_cast<float>(event.motion.y)),
-                          1.0f, 1.0f, request_redraw)) {
+    // debug pane's mode tabs and rows). One unified probe keeps every list/tab
+    // hover affordance in lockstep.
+    if (HoverChanged(previous_mouse_position_valid ? HoveredInteractiveRect(layout, previous_mouse_x, previous_mouse_y)
+                                                   : std::nullopt,
+                     HoveredInteractiveRect(layout, static_cast<float>(event.motion.x),
+                                            static_cast<float>(event.motion.y)))) {
       sidebar_hover_button_changed = true;  // reuse the "redraw was requested" return signal
     }
     // A tab's close glyph lights on its own while the pointer is on it. Moving from
@@ -572,14 +498,8 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
           previous_mouse_position_valid ? hovered_tab_close(previous_mouse_x, previous_mouse_y) : std::nullopt;
       const std::optional<SDL_FRect> current_close =
           hovered_tab_close(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-      if (previous_close.has_value() != current_close.has_value() ||
-          (previous_close.has_value() && !RectsEqual(*previous_close, *current_close))) {
-        for (const auto& close : {previous_close, current_close}) {
-          if (close.has_value()) {
-            RequestRedrawRect(MakeRect(close->x - 1.0f, close->y - 1.0f, close->w + 2.0f, close->h + 2.0f));
-          }
-        }
-        sidebar_hover_button_changed = true;
+      if (HoverChanged(previous_close, current_close)) {
+        sidebar_hover_button_changed = true;  // each strip keys its close glyph's hover
       }
     }
     const bool current_action_hovered =
@@ -588,14 +508,13 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
     hover_visual_changed = !(previous_hover_target == active_editor_hover_target_) ||
                            previous_action_hovered != current_action_hovered;
 
-    // Clickable status-bar segments repaint their hover background on enter/leave;
-    // the fill extends a few px past the text rect, so the damage is wider.
-    if (DamageHoverChange(previous_mouse_position_valid
-                              ? HoveredStatusBarSegmentRect(layout, previous_mouse_x, previous_mouse_y)
-                              : std::nullopt,
-                          HoveredStatusBarSegmentRect(layout, static_cast<float>(event.motion.x),
-                                                      static_cast<float>(event.motion.y)),
-                          6.0f, 1.0f, [this](const SDL_FRect& rect) { RequestRedrawRect(rect); })) {
+    // Clickable status-bar segments light on enter/leave (each segment's unit
+    // keys its hover).
+    if (HoverChanged(previous_mouse_position_valid
+                         ? HoveredStatusBarSegmentRect(layout, previous_mouse_x, previous_mouse_y)
+                         : std::nullopt,
+                     HoveredStatusBarSegmentRect(layout, static_cast<float>(event.motion.x),
+                                                 static_cast<float>(event.motion.y)))) {
       status_segment_hover_changed = true;
     }
 
@@ -604,31 +523,18 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
   }
 
   // One tooltip can show at a time, so one before/after comparison covers every
-  // provider: repaint the card that is leaving and the card that is arriving.
+  // provider. The card is a Chrome unit keyed on its text and rect.
   const bool chrome_tooltip_visual_changed = [&]() {
     const std::optional<HoverTooltip> current_tooltip = HoveredTooltip(layout);
-    const bool unchanged =
-        previous_tooltip.has_value() == current_tooltip.has_value() &&
-        (!previous_tooltip.has_value() || (previous_tooltip->text == current_tooltip->text &&
-                                           RectsEqual(previous_tooltip->rect, current_tooltip->rect)));
-    if (unchanged) {
-      return false;
-    }
-    static constexpr float kTooltipRedrawPaddingPx = 1.0f;
-    const auto request_padded = [this](const SDL_FRect& rect) {
-      RequestRedrawRect(MakeRect(rect.x - kTooltipRedrawPaddingPx, rect.y - kTooltipRedrawPaddingPx,
-                                 rect.w + 2.0f * kTooltipRedrawPaddingPx,
-                                 rect.h + 2.0f * kTooltipRedrawPaddingPx));
-    };
-    if (previous_tooltip.has_value()) {
-      request_padded(previous_tooltip->rect);
-    }
-    if (current_tooltip.has_value()) {
-      request_padded(current_tooltip->rect);
-    }
-    return true;
+    return previous_tooltip.has_value() != current_tooltip.has_value() ||
+           (previous_tooltip.has_value() && (previous_tooltip->text != current_tooltip->text ||
+                                             !RectsEqual(previous_tooltip->rect, current_tooltip->rect)));
   }();
-  // The hover and tooltip damage queued above is not the chrome's or the panel's,
+  // What the pointer lights is derived at frame prep: a change owes a frame.
+  if (sidebar_hover_button_changed || status_segment_hover_changed || chrome_tooltip_visual_changed) {
+    RequestPreparedFrame();
+  }
+  // The hover and tooltip frame asked above is not the chrome's or the panel's,
   // so their fallbacks are measured from here. The editor-hover fallback below
   // keeps the entry mark: the floating-widget cards it covers queued their own.
   const DamageMark dispatch_mark = MarkDamage();
@@ -638,7 +544,7 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
   }
 
   if (MakePanelMouseCoordinator().HandleMotion(event)) {
-    EnsureRedraw(dispatch_mark, [this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(dispatch_mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -654,7 +560,7 @@ bool WorkspaceShell::MotionHover(const SDL_Event& event, const WorkspaceLayout& 
   }
 
   if (hover_visual_changed) {
-    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
   }
 
   return hover_visual_changed || chrome_tooltip_visual_changed || sidebar_hover_button_changed ||
@@ -665,11 +571,11 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseWheel");
   const DamageMark mark = MarkDamage();
   if (context_.prompts.dirty_visible) {
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
   if (context_.prompts.surface_visible) {
-    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -729,7 +635,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
               Contains(vm.value_picker.rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
             settings_overlay_service_.SetPickerScroll(settings_overlay_service_.PickerScroll() -
                                                       vertical_ticks * kWheelScrollRows);
-            EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+            EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
             return true;
           }
           // Over the left rail: scroll the category list instead of the value rows.
@@ -738,7 +644,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
                 std::clamp(settings_overlay_service_.CategoryScrollRow() -
                                vertical_ticks * kWheelScrollRows,
                            0, vm.category_max_scroll));
-            EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+            EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
             return true;
           }
         }
@@ -747,32 +653,32 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
             vm.max_scroll));
       }
     }
-    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (MakeChromeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
-    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (HandleTabMouseWheel(event, layout, vertical_ticks)) {
-    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (MakeSidebarMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (MakeDebugPaneMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    EnsureRedraw(mark, [this]() { RequestDebugPaneRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
   if (MakePanelMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     return true;
   }
 
@@ -799,13 +705,15 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
         break;  // an editor pane: the editor path below
       }
       if (handled) {
-        EnsureRedraw(mark, [this, pane]() { RequestRedrawRect(pane); });
+        // The diff's scroll is in its rows' surface key (CompareRowUnits): the
+        // frame repaints the rows that moved.
+        EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
       }
       return handled;
     }
     const bool handled = MakeEditorMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
     if (handled) {
-      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPreparedFrame(); });
     }
     return handled;
   }

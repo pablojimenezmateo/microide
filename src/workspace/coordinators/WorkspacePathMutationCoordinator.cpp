@@ -290,8 +290,8 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .refresh_problems_sidebar = [this]() { RefreshProblemsSidebar(); },
           .queue_editor_hover_refresh = [this]() { QueueEditorHoverRefresh(); },
-          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .request_editor_surface_redraw = [this]() { RequestPreparedFrame(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
           .apply_editor_preferences =
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
           .apply_detected_indent_on_open =

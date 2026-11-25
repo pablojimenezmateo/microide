@@ -295,7 +295,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
     EnsureOutputChannelTabOpen(channel_id);
     context_.current_project_state.panel.content = PanelContentKind::Output;
     context_.current_project_state.panel.output.channel_id = channel_id;
-    RequestBottomPanelRedraw();
+    RequestPreparedFrame();
   };
   // The file reader's thread, with "read nothing": the shape a branch compare's
   // blob load and a conflict merge's stage read already use. `apply` runs on the
@@ -452,7 +452,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 context_.current_project_state.surface.focus = FocusTarget::Panel;
                 terminal_find_service_.Open(ActiveTerminalPane(), query);
-                RequestBottomPanelContentRedraw();
+                RequestPreparedFrame();
                 return true;
               },
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
@@ -535,7 +535,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                           context_.prompts.surface.input.text() == original_seed) {
                         context_.prompts.surface.input.SetText(placeholder);
                         context_.prompts.surface.input.SelectAll();
-                        RequestPromptRedraw();
+                        RequestPreparedFrame();
                       }
                     });
               },
@@ -578,8 +578,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 // now holds what the disk holds.
                 RefreshOpenCompareTabsForPath(path);
                 DismissEditorBannerForPath(context_.current_project_state, path);
-                RequestEditorSurfaceRedraw();
-                RequestTabStripRedraw();
+                RequestPreparedFrame();
+                RequestPreparedFrame();
                 return true;
               },
           .save_all_dirty_tabs = [this]() { return ActionContextSaveAllDirtyTabs(); },
@@ -758,7 +758,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   ++plugin_hover_cache_.generation;
                 }
                 UpdateEditorHover(last_mouse_x_, last_mouse_y_);
-                RequestWindowRedraw();
+                RequestPreparedFrame();
                 // Resolved at the caret, or being fetched (a language server's
                 // answer arrives later and re-resolves into the card).
                 return context_.interaction_state.caret_hover.active;
@@ -769,7 +769,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                                       std::string value) { return SetSettingValue(id, std::move(value)); },
           .notify = [this](NotificationService::Tone tone, std::string message) { Notify(tone, std::move(message)); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
           .activate_editor_banner =
               [this](std::string_view label, std::string* error) {
                 const EditorBannerState* banner =
@@ -794,7 +794,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   if (util::EqualsAsciiCaseInsensitive(bare(button.label), wanted)) {
                     // The path is copied: the action may erase the banner it came from.
                     ActivateEditorBannerAction(button.action, std::filesystem::path(banner->path));
-                    RequestWindowRedraw();
+                    RequestPreparedFrame();
                     return true;
                   }
                 }
@@ -816,7 +816,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 panel.output.channel_id = std::string(channel_id);
                 panel.output.follow_tail = true;
                 NoteLayoutInputsChanged();
-                RequestWindowRedraw();
+                RequestPreparedFrame();
                 return true;
               },
           .remote_hosts = [this]() -> RemoteHostService& { return MakeRemoteHostService(); },
@@ -870,7 +870,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .reveal_buffer_search_match =
               [this](const editor::SelectionRange& match) {
                 RevealBufferSearchMatch(match);
-                RequestEditorSurfaceRedraw();
+                RequestPreparedFrame();
               },
       });
   return *glue_->action_context;

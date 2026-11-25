@@ -57,12 +57,37 @@ was paint no one saw.
   fingerprint of everything drawn inside it. `DerivedDamage::Commit` compares them
   with the units last committed and damages the old and new rect of each that
   differs. Paint reads only the snapshot (`CheckDerivedSurfacePaintReadsOnlyItsSnapshot`
-  checks the function bodies and the types they are handed).
+  checks the function bodies, the types they are handed, and every shell member
+  they call, transitively). Key a snapshot struct with a `FingerprintOf` over a
+  structured binding, so a field added to it does not compile until it is folded.
+- **Floating chrome is a display list.** The hover, signature and tooltip cards and
+  a single-line field's selection, IME preedit and caret are `CardPaint`s
+  (`render/HoverCardPaint.h`) laid out whole at prep -- frame, fills, placed and
+  wrapped text, button -- keyed on `FingerprintOf(card)` and drawn by `PaintCard`,
+  which reads nothing else. Prefer it for a new card.
+- **Every Chrome unit names its painter** (`ChromePainter`). `RenderClip` runs a
+  skippable pass (editor, window chrome, sidebar, right pane, bottom panel) only for
+  a clip that touches its prepared extent -- its layout region plus the units it
+  paints (`PreparedFrameState::paint_pass_extents`). While overrun recording is on
+  (the redraw tests, the QA verifier) a pass drawing outside its extent is a
+  `pass:<name>` overrun: a pixel a clip that skipped the pass would leave stale.
+  The check sees every draw: paint draws only through the recorded primitives
+  (`render/SurfacePrimitives.h`, including the batched `FillRectsInDrawColor`,
+  `DrawGeometry`, `DrawTexture`, `DrawPolyline`) and `TextRenderer`, which reports
+  strings and runs (`CheckSdlDrawCallsStayInTheAllowlist`: raw `SDL_Render*`
+  draws only in the primitives, the text backends and the scene present).
+- **The editor pass dispatches from prep** (`PreparedFrameState::editor_pass_panes`):
+  which pane shows an editor, a diff or a merge, in what area and order. Like
+  every pass `RenderClip` runs, it is under the snapshot lint.
 - **Key everything paint draws.** A value paint reads that no key folds is a stale
   pixel the day it changes on its own (a language server's hover reply growing in
   the same card; a code lens republished at the same height; a tab brought to the
-  front by a path that asked for nothing). Pointer state counts: hover is keyed on
-  the same `PointerOver` paint asks.
+  front by a path that asked for nothing). Pointer state counts: hover is resolved
+  with `PointerOver` at prep -- after `ResolvePointerOccluder` -- stored in the
+  snapshot, keyed, and read by paint; paint never asks the pointer itself.
+- **Hover resolves once per frame.** The editor hover target is resolved on every
+  prepared frame at a fixed point (before the cards are keyed); whether it follows
+  a change must not depend on which surface happened to commit first.
 - **Ask for a frame, not a rect.** A change to a derived surface calls
   `RequestPreparedFrame()` (a coordinator's `request_frame` operation). It counts as
   a request for `EnsureRedraw` fallbacks. Keep a rect only for what is not derived
@@ -76,6 +101,10 @@ was paint no one saw.
   a steady frame allocates nothing (`tools/run-checks.sh perf-tests`).
 - **Coalescing:** a surface damages at most `kSeparateRectsPerSurface` rects; past
   that the nearest pair merges. The window chrome commits `Coalesce::Apart`.
+- **Settled frames derive nothing.** `QaFlowRegression/ASettledFrameDerivesNoDamage`
+  prepares each state twice: damage on the second prepare is a key that moves every
+  frame (CPU) or a phase that changed state after a surface had committed (a stale
+  frame until some later one).
 - **Testing:** a QA finding is a failing-first `QaFlowRegression` test that changes
   state with no request (`frame.frame = true`) and compares the partial frame with
   a full one (`ExpectFresh`); bound the damaged area where the point is that less

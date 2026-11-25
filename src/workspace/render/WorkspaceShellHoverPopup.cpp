@@ -1,3 +1,4 @@
+#include "workspace/render/HoverCardPaint.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include "workspace/render/HoverCardLimits.h"
@@ -98,26 +99,6 @@ SDL_FRect PositionHoverPopup(const SDL_FRect& anchor_rect,
   x = std::max(editor_surface.x + 8.0f, x);
   y = std::max(editor_surface.y + 8.0f, y);
   return MakeRect(x, y, card_width, card_height);
-}
-
-void DrawHoverPopupLines(const render::TextRenderer& text_renderer,
-                        SDL_Renderer* renderer,
-                        float x,
-                        float* y,
-                        SDL_Color foreground,
-                        SDL_Color background,
-                        const std::vector<std::string>& lines,
-                        float line_gap = kEditorHoverPopupLineGap) {
-  if (y == nullptr) {
-    return;
-  }
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    text_renderer.DrawStringOn(renderer, x, *y, foreground, background, lines[i]);
-    *y += text_renderer.LineHeight();
-    if (i + 1 < lines.size()) {
-      *y += line_gap;
-    }
-  }
 }
 
 }  // namespace
@@ -468,125 +449,93 @@ SDL_FRect WorkspaceShell::ComputeTwoBlockHoverCardRect(std::string_view title,
   return PositionHoverPopup(anchor_rect, card_width, card_height, editor_surface);
 }
 
-void WorkspaceShell::DrawTwoBlockHoverCard(SDL_Renderer* renderer,
-                                           const SDL_FRect& area,
-                                           std::string_view title,
-                                           std::string_view content,
-                                           std::size_t max_title_lines,
-                                           std::size_t max_content_lines) const {
-  const float text_x = area.x;
-  const float text_width = std::max(0.0f, area.w);
+void WorkspaceShell::LayOutTwoBlockHoverCard(CardPaint& card,
+                                             const SDL_FRect& area,
+                                             std::string_view title,
+                                             std::string_view content,
+                                             std::size_t max_title_lines,
+                                             std::size_t max_content_lines) const {
   float text_y = area.y;
+  const float text_width = std::max(0.0f, area.w);
   const auto title_lines = title.empty()
                                ? std::vector<std::string>{}
                                : WrapEditorHoverPopupText(title, text_width, max_title_lines);
   const auto content_lines = content.empty()
                                  ? std::vector<std::string>{}
                                  : WrapEditorHoverPopupText(content, text_width, max_content_lines);
-  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
-                      theme_.overlay_background, title_lines);
+  card.Lines(text_renderer_, area.x, &text_y, theme_.text_secondary, title_lines, kEditorHoverPopupLineGap);
   if (!title_lines.empty() && !content_lines.empty()) {
     text_y += kEditorHoverPopupSectionGap;
   }
-  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
-                      theme_.overlay_background, content_lines);
+  card.Lines(text_renderer_, area.x, &text_y, theme_.text_primary, content_lines, kEditorHoverPopupLineGap);
 }
 
-void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
-  // The card frame prep laid out and accounted the damage for, never one laid
-  // out again here (PreparedFrameState::hover_popup).
-  const std::optional<EditorHoverPopupLayout>& popup = frame_state_.hover_popup;
-  if (!popup.has_value()) {
-    return;
-  }
+void WorkspaceShell::LayOutEditorHoverCard(const EditorHoverPopupLayout& popup, CardPaint& card) const {
+  card.Open(popup.rect, CardStyle::Overlay);
+  const float text_x = popup.rect.x + kEditorHoverPopupPadding;
+  const float text_width = std::max(0.0f, popup.rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = popup.rect.y + kEditorHoverPopupPadding;
 
-  DrawCardFrame(renderer, theme_, popup->rect, CardStyle::Overlay);
-  const float text_x = popup->rect.x + kEditorHoverPopupPadding;
-  const float text_width =
-      std::max(0.0f, popup->rect.w - kEditorHoverPopupPadding * 2.0f);
-  float text_y = popup->rect.y + kEditorHoverPopupPadding;
-
-  if (popup->kind == EditorHoverTarget::Kind::Blame) {
-    const editor::EditorBlameLine* blame_line =
-        editor_blame_overlay_service_.VisibleLine(popup->blame_line_index);
+  if (popup.kind == EditorHoverTarget::Kind::Blame) {
+    const editor::EditorBlameLine* blame_line = editor_blame_overlay_service_.VisibleLine(popup.blame_line_index);
     if (blame_line != nullptr) {
       const auto summary_lines =
           WrapEditorHoverPopupText(blame_line->summary, text_width, kEditorHoverPopupMaxSummaryLines);
-      text_renderer_.DrawStringOn(
-          renderer, text_x, text_y, theme_.text_primary, theme_.overlay_background,
-          text_renderer_.TruncateToWidthEphemeralView(blame_line->author, text_width));
+      card.Text(text_x, text_y, theme_.text_primary,
+                text_renderer_.TruncateToWidthEphemeralView(blame_line->author, text_width));
       text_y += text_renderer_.LineHeight() + kEditorHoverPopupLineGap;
-      text_renderer_.DrawStringOn(
-          renderer, text_x, text_y, theme_.text_secondary, theme_.overlay_background,
-          text_renderer_.TruncateToWidthEphemeralView(blame_line->date, text_width));
+      card.Text(text_x, text_y, theme_.text_secondary,
+                text_renderer_.TruncateToWidthEphemeralView(blame_line->date, text_width));
       if (!summary_lines.empty()) {
         text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
-        DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
-                            theme_.overlay_background, summary_lines);
+        card.Lines(text_renderer_, text_x, &text_y, theme_.text_primary, summary_lines, kEditorHoverPopupLineGap);
       }
     }
-  } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
-    DrawTwoBlockHoverCard(renderer, MakeRect(text_x, text_y, text_width, 0.0f),
-                          popup->plugin_hover->title, popup->plugin_hover->content,
-                          kEditorHoverPopupMaxPluginTitleLines,
-                          kEditorHoverPopupMaxPluginContentLines);
-  } else if (popup->kind == EditorHoverTarget::Kind::DebugValue &&
-             popup->debug_value.has_value()) {
-    DrawTwoBlockHoverCard(renderer, MakeRect(text_x, text_y, text_width, 0.0f),
-                          popup->debug_value->type, popup->debug_value->value,
-                          kEditorHoverPopupMaxPluginTitleLines,
-                          kEditorHoverPopupMaxPluginContentLines);
-  } else if (popup->diagnostic.has_value()) {
-    const SDL_Color severity_color =
-        editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
-    const auto message_lines = WrapEditorHoverPopupText(
-        popup->diagnostic->message, text_width, kEditorHoverPopupMaxDiagnosticLines);
-    text_renderer_.DrawStringOn(
-        renderer, text_x, text_y, severity_color, theme_.overlay_background,
-        text_renderer_.TruncateToWidthEphemeralView(
-            DiagnosticSeverityLabel(popup->diagnostic->severity), text_width));
+  } else if (popup.kind == EditorHoverTarget::Kind::Plugin && popup.plugin_hover.has_value()) {
+    LayOutTwoBlockHoverCard(card, MakeRect(text_x, text_y, text_width, 0.0f), popup.plugin_hover->title,
+                            popup.plugin_hover->content, kEditorHoverPopupMaxPluginTitleLines,
+                            kEditorHoverPopupMaxPluginContentLines);
+  } else if (popup.kind == EditorHoverTarget::Kind::DebugValue && popup.debug_value.has_value()) {
+    LayOutTwoBlockHoverCard(card, MakeRect(text_x, text_y, text_width, 0.0f), popup.debug_value->type,
+                            popup.debug_value->value, kEditorHoverPopupMaxPluginTitleLines,
+                            kEditorHoverPopupMaxPluginContentLines);
+  } else if (popup.diagnostic.has_value()) {
+    const SDL_Color severity_color = editor::DiagnosticSeverityColor(theme_, popup.diagnostic->severity);
+    const auto message_lines =
+        WrapEditorHoverPopupText(popup.diagnostic->message, text_width, kEditorHoverPopupMaxDiagnosticLines);
+    card.Text(text_x, text_y, severity_color,
+              text_renderer_.TruncateToWidthEphemeralView(DiagnosticSeverityLabel(popup.diagnostic->severity),
+                                                          text_width));
     if (!message_lines.empty()) {
       text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
-      DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
-                          theme_.overlay_background, message_lines);
+      card.Lines(text_renderer_, text_x, &text_y, theme_.text_primary, message_lines, kEditorHoverPopupLineGap);
     } else {
       text_y += text_renderer_.LineHeight();
     }
     // What the symbol under the squiggle is, below the problem and a rule (VS
     // Code's card). The rule sits in the middle of the section gap.
-    if (popup->plugin_hover.has_value()) {
-      DrawFilledRect(renderer,
-                     MakeRect(popup->rect.x + 1.0f,
-                              std::floor(text_y + kEditorHoverPopupSectionGap * 0.5f),
-                              popup->rect.w - 2.0f, 1.0f),
-                     theme_.border);
+    if (popup.plugin_hover.has_value()) {
+      card.Fill(MakeRect(popup.rect.x + 1.0f, std::floor(text_y + kEditorHoverPopupSectionGap * 0.5f),
+                         popup.rect.w - 2.0f, 1.0f),
+                theme_.border);
       text_y += kEditorHoverPopupSectionGap;
-      DrawTwoBlockHoverCard(renderer, MakeRect(text_x, text_y, text_width, 0.0f),
-                            popup->plugin_hover->title, popup->plugin_hover->content,
-                            kEditorHoverPopupMaxPluginTitleLines,
-                            kEditorHoverPopupMaxPluginContentLines);
+      LayOutTwoBlockHoverCard(card, MakeRect(text_x, text_y, text_width, 0.0f), popup.plugin_hover->title,
+                              popup.plugin_hover->content, kEditorHoverPopupMaxPluginTitleLines,
+                              kEditorHoverPopupMaxPluginContentLines);
     }
   }
 
-  if (popup->primary_action_rect.has_value()) {
-    const bool action_hovered = last_mouse_position_valid_ &&
-                                EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
-    const char* action_label =
-        popup->kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA";
-    DrawButtonCentered(text_renderer_, renderer, theme_, *popup->primary_action_rect, action_label,
-                       ButtonTone::Accent,
-                       ButtonVisualState{
-                           .enabled = true,
-                           .hovered = action_hovered,
-                           .active = false,
-                       });
-    if (popup->kind == EditorHoverTarget::Kind::Diagnostic) {
-      const float hint_x =
-          popup->primary_action_rect->x + popup->primary_action_rect->w + kEditorHoverPopupGap;
-      const float hint_y = popup->primary_action_rect->y +
-                           (popup->primary_action_rect->h - text_renderer_.LineHeight()) * 0.5f;
-      text_renderer_.DrawStringOn(renderer, hint_x, hint_y, theme_.text_secondary,
-                                  theme_.overlay_background, kQuickFixShortcutHint);
+  if (popup.primary_action_rect.has_value()) {
+    card.button = CardButtonPaint{
+        .rect = *popup.primary_action_rect,
+        .label = popup.kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA",
+        .hovered = last_mouse_position_valid_ && EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_),
+    };
+    if (popup.kind == EditorHoverTarget::Kind::Diagnostic) {
+      const float hint_x = popup.primary_action_rect->x + popup.primary_action_rect->w + kEditorHoverPopupGap;
+      const float hint_y =
+          popup.primary_action_rect->y + (popup.primary_action_rect->h - text_renderer_.LineHeight()) * 0.5f;
+      card.Text(hint_x, hint_y, theme_.text_secondary, kQuickFixShortcutHint);
     }
   }
 }
@@ -838,7 +787,7 @@ void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string d
     // Clearing a popup on screen is a repaint of the pixels it covered.
     if (active_signature_help_.has_value()) {
       active_signature_help_.reset();
-      RequestEditorSurfaceRedraw();
+      RequestPreparedFrame();
     }
     return;
   }
@@ -849,7 +798,7 @@ void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string d
       .cursor_line = viewport->cursor_line(),
       .cursor_column = viewport->cursor_column(),
   };
-  RequestEditorSurfaceRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::MaybeExpireSignatureHelp() {
@@ -866,25 +815,16 @@ void WorkspaceShell::MaybeExpireSignatureHelp() {
                            viewport->cursor_column() == active_signature_help_->cursor_column;
   if (!still_valid) {
     active_signature_help_.reset();
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
   }
 }
 
-void WorkspaceShell::RenderSignatureHelpPopup(SDL_Renderer* renderer) const {
-  // The card frame prep laid out and accounted the damage for
-  // (PreparedFrameState::signature_help_rect), never one laid out again
-  // here: paint laid it out from live state, and a menu closing over a card it
-  // had hidden brought the card back with nothing repainting its rect.
-  if (!frame_state_.signature_help_rect.has_value() || !active_signature_help_.has_value()) {
-    return;
-  }
-  const SignatureHelpPopup& popup = *active_signature_help_;
-  const SDL_FRect card_rect = *frame_state_.signature_help_rect;
-  DrawCardFrame(renderer, theme_, card_rect, CardStyle::Overlay);
-
-  const float text_x = card_rect.x + kEditorHoverPopupPadding;
-  const float text_width = std::max(0.0f, card_rect.w - kEditorHoverPopupPadding * 2.0f);
-  float text_y = card_rect.y + kEditorHoverPopupPadding;
+void WorkspaceShell::LayOutSignatureHelpCard(const SignatureHelpPopup& popup, const SDL_FRect& rect,
+                                             CardPaint& card) const {
+  card.Open(rect, CardStyle::Overlay);
+  const float text_x = rect.x + kEditorHoverPopupPadding;
+  const float text_width = std::max(0.0f, rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = rect.y + kEditorHoverPopupPadding;
   // The signature itself is the primary line; the parameter/doc block is the
   // muted supporting text below it (inverse of the hover card's title/content).
   const auto signature_lines =
@@ -893,13 +833,11 @@ void WorkspaceShell::RenderSignatureHelpPopup(SDL_Renderer* renderer) const {
                              ? std::vector<std::string>{}
                              : WrapEditorHoverPopupText(popup.documentation, text_width,
                                                         kEditorHoverPopupMaxPluginContentLines);
-  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
-                      theme_.overlay_background, signature_lines);
+  card.Lines(text_renderer_, text_x, &text_y, theme_.text_primary, signature_lines, kEditorHoverPopupLineGap);
   if (!signature_lines.empty() && !doc_lines.empty()) {
     text_y += kEditorHoverPopupSectionGap;
   }
-  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
-                      theme_.overlay_background, doc_lines);
+  card.Lines(text_renderer_, text_x, &text_y, theme_.text_secondary, doc_lines, kEditorHoverPopupLineGap);
 }
 
 }  // namespace microide::workspace

@@ -302,7 +302,7 @@ bool WorkspaceEditService::ApplyOpenBufferEdits(const std::vector<CodeActionEdit
   }
   // Repaint the tab strip so the dirty indicator appears immediately: the edit
   // just flipped the buffer to dirty.
-  operations_.request_active_tab_redraw(/*include_tree_sidebar=*/false);
+  operations_.request_frame();
   return true;
 }
 
@@ -414,7 +414,7 @@ void WorkspaceEditService::CommitPendingRename() {
     feedback += " (some skipped)";
   }
   state.panel.feedback.text = std::move(feedback);
-  operations_.request_active_tab_redraw(/*include_tree_sidebar=*/true);
+  operations_.request_frame();
 }
 
 bool WorkspaceEditService::IsOpen(const std::filesystem::path& normalized) const {

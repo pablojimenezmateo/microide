@@ -71,8 +71,9 @@ class TabCoordinator {
     // active tab scrolled out of view.
     std::function<void()> ensure_all_active_tabs_visible;
     std::function<void()> reset_caret_blink;
-    std::function<void(bool)> request_active_tab_redraw;
-    std::function<void()> request_tab_strip_redraw;
+    // A frame owed: the strips, panes and the tree are derived surfaces, so a
+    // change to the tabs names no rect (RequestPreparedFrame).
+    std::function<void()> request_frame;
     // Drop TabStripService's per-group label/width geometry cache. Required when a
     // group is added/removed/reindexed, since that cache keys only on
     // (tab_count, strip_width) and is indexed by group slot — a collapse that
@@ -450,7 +451,7 @@ class TabCoordinator {
                            bool before);
   // Shared tail for group split/focus/close: scroll the (new) focused group's
   // active tab into view and request the matching redraw.
-  void RefreshFocusedGroupActiveTab(bool editor_redraw);
+  void RefreshFocusedGroupActiveTab();
   void EnsureEveryGroupActiveTabVisible();
   // Clone an editor tab for a split: copies the viewport (sharing the underlying
   // DocumentState for a live shared buffer) with a fresh folding model.

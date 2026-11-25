@@ -140,7 +140,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       active_editor_hover_target_.reset();
       ++editor_hover_target_generation_;
     }
-    RequestWindowRedraw();
+    RequestPreparedFrame();
     // Traced like every other key: the QA driver orders its control commands
     // after the keys it sent by finding them in this log.
     const FocusTarget focus = context_.current_project_state.surface.focus;
@@ -174,18 +174,12 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     TraceTypedEvent(event, focus_before, focus_after, result.handled);
   }
   // Dividers and scrollbar thumbs paint highlighted while dragged, so a press or
-  // release that changes the drag target repaints both regions, whichever
-  // handler changed it: pressing the sidebar divider damaged nothing, and its
-  // highlight showed only once the first drag motion repainted (QA monkey).
-  if (const DragTarget drag_after = context_.interaction_state.drag_target;
-      drag_after != drag_before && !result.redraw.full) {
-    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-      for (const DragTarget target : {drag_before, drag_after}) {
-        if (const auto rect = DragTargetHighlightRect(*layout, target); rect.has_value()) {
-          result.redraw.Add(*rect);
-        }
-      }
-    }
+  // release that changes the drag target owes a frame, whichever handler changed
+  // it: pressing the sidebar divider damaged nothing, and its highlight showed
+  // only once the first drag motion repainted (QA monkey). Each one lit is in the
+  // key of the unit that paints it, so the frame repaints those and no more.
+  if (context_.interaction_state.drag_target != drag_before) {
+    result.redraw.frame = true;  // this event's, not left for the next turn's wake
   }
   // A modal overlay the input took the focus away from ends, the focus staying
   // where the input put it (ModalOverlayLostFocus).
@@ -375,8 +369,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 // A placeholder may be waiting for this image wherever it shows: an
                 // inline inset in the editor, or the bottom panel's preview.
                 if (ApplyDecodedRasterSizes(shell->surface_texture_cache_, shell->context_)) {
-                  shell->RequestEditorSurfaceRedraw();
-                  shell->RequestBottomPanelContentRedraw();
+                  shell->RequestPreparedFrame();
+                  shell->RequestPreparedFrame();
                 }
               },
           .consume_lsp_callbacks =
@@ -447,7 +441,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 }
               },
           .end_selection_gesture = [shell]() { shell->AbandonPointerGestures(); },
-          .request_window_redraw = [shell]() { shell->RequestWindowRedraw(); },
+          .request_window_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {
                 // Escape abandons a live tab drag, ahead of every surface that also
@@ -456,12 +450,12 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 if (event.key == SDLK_ESCAPE &&
                     shell->context_.interaction_state.tab_drag.kind != TabDragKind::None &&
                     shell->MakeTabMouseCoordinator().CancelDrag()) {
-                  shell->RequestWindowRedraw();
+                  shell->RequestPreparedFrame();
                   return true;
                 }
                 if (event.key == SDLK_ESCAPE && shell->context_.interaction_state.path_drag.armed &&
                     shell->MakeSidebarMouseCoordinator().CancelPathDrag()) {
-                  shell->RequestWindowRedraw();
+                  shell->RequestPreparedFrame();
                   return true;
                 }
                 return shell->MakeKeyInputCoordinator().HandleKeyDown(event);
@@ -543,7 +537,7 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
           .list_changed =
               [shell]() {
                 shell->ResetOverlayScroll();
-                shell->RequestOverlayRedraw();
+                shell->RequestPreparedFrame();
               },
           .start_launch_config =
               [shell](std::size_t index) {
@@ -558,7 +552,7 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
           .apply_colorscheme =
               [shell](std::string_view name, bool persist) {
                 (void)shell->MakePersistenceCoordinator().ApplyColorscheme(name, persist, false);
-                shell->RequestWindowRedraw();
+                shell->RequestPreparedFrame();
               },
           .reveal =
               [shell](const std::filesystem::path& path, std::size_t line, std::size_t column) {
@@ -625,7 +619,7 @@ void WorkspaceShell::Bootstrapper::WireQuickPick() const {
                 for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
                   if (group.open_tabs[i].stable_id == stable_id) {
                     shell->MakeEditorTabService().Activate(i);
-                    shell->RequestWindowRedraw();
+                    shell->RequestPreparedFrame();
                     return;
                   }
                 }
@@ -682,7 +676,7 @@ void WorkspaceShell::Bootstrapper::WireTabStrip() const {
           .close_terminal_tab =
               [shell](std::size_t index) { shell->MakeTerminalPanelService().CloseTerminalTab(index); },
           .request_bottom_panel_frame = [shell]() { shell->RequestPreparedFrame(); },
-          .request_tab_strip_redraw = [shell]() { shell->RequestTabStripRedraw(); },
+          .request_tab_strip_redraw = [shell]() { shell->RequestPreparedFrame(); },
       });
 }
 
@@ -758,8 +752,8 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
           .notify_stop_resolved =
               [shell]() { shell->control_channel_service_.OnDebugStopped(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
-          .request_debug_pane_redraw = [shell]() { shell->RequestDebugPaneRedraw(); },
-          .request_editor_redraw = [shell]() { shell->RequestEditorSurfaceRedraw(); },
+          .request_debug_pane_redraw = [shell]() { shell->RequestPreparedFrame(); },
+          .request_editor_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .queue_editor_hover_refresh = [shell]() { shell->QueueEditorHoverRefresh(); },
           .focus_source_location =
               [shell](const std::filesystem::path& path, std::size_t line) {
@@ -769,7 +763,7 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
                   viewport->JumpCursorTo(line, 0);
                 }
                 shell->context_.current_project_state.surface.focus = FocusTarget::Editor;
-                shell->RequestEditorSurfaceRedraw();
+                shell->RequestPreparedFrame();
               },
           .show_call_stack_panel =
               [shell]() {
@@ -891,8 +885,6 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
           .note_active_editable_edit =
               [shell]() { shell->NoteActiveEditableEdit(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
-          .request_active_tab_redraw =
-              [shell](bool include_tree_sidebar) { shell->RequestActiveTabRedraw(include_tree_sidebar); },
           .confirm_rename_save =
               [shell](std::string detail) {
                 shell->OpenPromptSurface(PromptSurfaceState::Action::ConfirmRenameSave,
@@ -901,7 +893,7 @@ void WorkspaceShell::Bootstrapper::WireWorkspaceEdits() const {
                 shell->context_.prompts.surface.detail = std::move(detail);
                 // The prompt as it is now, with its detail (the open's own request
                 // was made before it had one). This named the menu bar.
-                shell->RequestPromptRedraw();
+                shell->RequestPreparedFrame();
               },
           .notify_error =
               [shell](std::string message) {
@@ -989,7 +981,7 @@ void WorkspaceShell::Bootstrapper::WireAssist() const {
           .finish_tracked_lsp_request = [shell]() { shell->FinishTrackedLspRequest(); },
           .show_overlay = [shell](OverlayMode mode) { shell->ShowOverlay(mode); },
           .dismiss_overlay = [shell](bool focus_editor) { shell->DismissOverlay(focus_editor); },
-          .request_overlay_redraw = [shell]() { shell->RequestOverlayRedraw(); },
+          .request_overlay_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
           .note_active_editable_edit =
@@ -1074,7 +1066,7 @@ void WorkspaceShell::Bootstrapper::WireAssist() const {
                         if (shell->active_signature_help_.has_value() && viewport != nullptr) {
                           shell->active_signature_help_->cursor_line = viewport->cursor_line();
                           shell->active_signature_help_->cursor_column = viewport->cursor_column();
-                          shell->RequestEditorSurfaceRedraw();
+                          shell->RequestPreparedFrame();
                         }
                       },
               },
@@ -1161,21 +1153,21 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
                  std::vector<editor::Diagnostic> diagnostics) {
             if (shell->context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(owner, path, std::move(diagnostics))) {
               shell->RefreshProblemsSidebar();
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
             }
           },
       .clear_file_diagnostics =
           [shell](std::string_view owner, const std::filesystem::path& path) {
             if (shell->context_.current_project_state.diagnostics_store.ClearOwnerFile(owner, path)) {
               shell->RefreshProblemsSidebar();
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
             }
           },
       .clear_owner_diagnostics =
           [shell](std::string_view owner) {
             if (shell->context_.current_project_state.diagnostics_store.ClearOwner(owner)) {
               shell->RefreshProblemsSidebar();
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
             }
           },
       .publish_decorations =
@@ -1184,7 +1176,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
                  editor::PluginDecorationData data) {
             if (shell->context_.current_project_state.EnsurePluginPresentation()
                     .decorations.ReplaceForOwnerFile(owner, path, std::move(data))) {
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
             }
           },
       .clear_file_decorations =
@@ -1192,7 +1184,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
             auto& state = shell->context_.current_project_state;
             auto* pres = state.plugin_presentation.get();
             if (pres != nullptr && pres->decorations.ClearOwnerFile(owner, path)) {
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
               state.MaybeReleasePluginPresentation();
             }
           },
@@ -1201,7 +1193,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
             auto& state = shell->context_.current_project_state;
             auto* pres = state.plugin_presentation.get();
             if (pres != nullptr && pres->decorations.ClearOwner(owner)) {
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
               state.MaybeReleasePluginPresentation();
             }
           },
@@ -1215,7 +1207,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
               if (slot != editor::SurfacePreviewSlot::None) {
                 shell->ActivatePluginSurfacePreview(owner, surface_id, slot);
               }
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
             }
           },
       .clear_surface =
@@ -1224,7 +1216,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
             auto* pres = state.plugin_presentation.get();
             if (pres != nullptr && pres->surfaces.ClearOwnerSurface(owner, surface_id)) {
               shell->SyncPluginSurfacePreviewClosed();
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
               state.MaybeReleasePluginPresentation();
             }
           },
@@ -1234,7 +1226,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
             auto* pres = state.plugin_presentation.get();
             if (pres != nullptr && pres->surfaces.ClearOwner(owner)) {
               shell->SyncPluginSurfacePreviewClosed();
-              shell->RequestEditorSurfaceRedraw();
+              shell->RequestPreparedFrame();
               state.MaybeReleasePluginPresentation();
             }
           },
@@ -1281,7 +1273,7 @@ void WorkspaceShell::Bootstrapper::WirePluginRuntime() const {
       // updated item kept its old text while only the menu bar was repainted).
       .request_status_redraw =
           [shell]() {
-            shell->RequestBreadcrumbRedraw();
+            shell->RequestPreparedFrame();
           },
       .show_notification =
           [shell](const std::string& level, const std::string& message) {

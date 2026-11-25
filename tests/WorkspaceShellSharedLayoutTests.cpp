@@ -109,8 +109,7 @@ void TestWorkspaceSharedLayoutHelpers() {
 // The sidebar fills the band beside the editor tab strip (it starts under the
 // project strip, not under the tab strip), down to the panel like the editor
 // column -- that band was empty chrome over the tree. Its resize handle stays
-// beside the content so it never takes the first tab's left edge, while a drag's
-// damage covers the whole divider line it lights.
+// beside the content so it never takes the first tab's left edge.
 void TestWorkspaceSharedSidebarFillsTheTabStripBand() {
   for (const bool project_strip : {false, true}) {
     const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, {}, true, false, 0.0f,
@@ -123,11 +122,6 @@ void TestWorkspaceSharedSidebarFillsTheTabStripBand() {
     const SDL_FRect handle = microide::workspace::SidebarResizeHandleRect(layout);
     Expect(handle.y == layout.content.y && handle.y + handle.h == layout.sidebar.y + layout.sidebar.h,
            "its resize handle runs beside the content only");
-    const auto damage = microide::workspace::DragTargetHighlightRect(
-        layout, microide::workspace::DragTarget::SidebarDivider);
-    Expect(damage.has_value() && damage->y == layout.sidebar.y &&
-               damage->y + damage->h == layout.sidebar.y + layout.sidebar.h,
-           "a divider drag repaints the divider's whole height");
   }
 }
 
@@ -147,11 +141,6 @@ void TestWorkspaceSharedDebugPaneFillsTheTabStripBand() {
     const SDL_FRect handle = microide::workspace::RightPaneResizeHandleRect(layout);
     Expect(handle.y == layout.content.y && handle.y + handle.h == layout.right_pane.y + layout.right_pane.h,
            "its resize handle runs beside the content only");
-    const auto damage = microide::workspace::DragTargetHighlightRect(
-        layout, microide::workspace::DragTarget::RightPaneDivider);
-    Expect(damage.has_value() && damage->y == layout.right_pane.y &&
-               damage->y + damage->h == layout.right_pane.y + layout.right_pane.h,
-           "a divider drag repaints the divider's whole height");
   }
 }
 

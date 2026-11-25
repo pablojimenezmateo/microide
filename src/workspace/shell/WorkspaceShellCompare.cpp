@@ -584,13 +584,13 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
   // whenever the walk advanced -- on every keystroke, since an edit restarts it.)
   // Capped per frame: if a pane has not yet reached its deepest visible line (after
   // scrolling far down a large file), the next frame takes the next step
-  // (PreparedFrameState::syntax_catch_up_rect). Against each window's own line
+  // (PreparedFrameState::syntax_catch_up_owed). Against each window's own line
   // count: one never sized walks nothing, and would otherwise ask forever.
   const auto behind = [](const SurfaceTokenWindow& window, std::size_t end) {
     return window.frontier() < std::min(end, window.line_count());
   };
   if (behind(compare_tab.left_token_window, left_end) || behind(compare_tab.right_token_window, right_end)) {
-    frame_state_.syntax_catch_up_rect = rect;
+    frame_state_.syntax_catch_up_owed = true;
   }
 }
 

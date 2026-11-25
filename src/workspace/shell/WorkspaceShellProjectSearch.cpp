@@ -264,7 +264,7 @@ void WorkspaceShell::RefreshProjectSearch(ProjectSearchRerun rerun) {
   if (context_.current_project_state.root.empty() || search.query.text().empty()) {
     search.rerun_in_place = false;
     ResetOverlayScroll();
-    RequestSidebarRedraw();
+    RequestPreparedFrame();
     return;
   }
 
@@ -303,7 +303,7 @@ void WorkspaceShell::RefreshProjectSearch(ProjectSearchRerun rerun) {
   if (!in_place) {
     ResetOverlayScroll();
   }
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::StopProjectSearch() {
@@ -370,7 +370,7 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
       RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
     }
   }
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
@@ -378,7 +378,7 @@ void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
   search.edit_field = field;
   search.edit_buffer.SetText(ProjectSearchFieldEditor(search, field).text());
   search.editing = true;
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 // Write the in-flight edit buffer back into the field it is editing WITHOUT
@@ -403,7 +403,7 @@ void WorkspaceShell::CommitProjectSearchEdit() {
   // Query and scope globs all change WHICH files match, so committing any of them
   // re-runs the search. Replace text only affects a later replace-all.
   if (field == ProjectSearchEditField::Replace) {
-    RequestSidebarRedraw();
+    RequestPreparedFrame();
     return;
   }
   RefreshProjectSearch();
@@ -413,7 +413,7 @@ void WorkspaceShell::CancelProjectSearchEdit() {
   auto& search = context_.current_project_state.overlay.workflow.project_search;
   search.edit_buffer.SetText(ProjectSearchFieldEditor(search, search.edit_field).text());
   search.editing = false;
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::ProjectSearchScopeExpanded() const {
@@ -431,7 +431,7 @@ void WorkspaceShell::ToggleProjectSearchScopeExpanded() {
     // panel and any glob change takes effect.
     CommitProjectSearchEdit();
   }
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 // The case toggle's label (the other two are project_search_panel::k*ButtonLabel): a word,
@@ -474,7 +474,7 @@ void WorkspaceShell::ToggleProjectSearchPatternMode() {
           ? project::ProjectSearchPatternMode::Regex
           : project::ProjectSearchPatternMode::Literal;
   RefreshProjectSearch();
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::CycleProjectSearchCaseMode() {
@@ -493,7 +493,7 @@ void WorkspaceShell::CycleProjectSearchCaseMode() {
       break;
   }
   RefreshProjectSearch();
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
@@ -501,7 +501,7 @@ void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
   context_.current_project_state.overlay.workflow.project_search.options.show_hidden =
       !context_.current_project_state.overlay.workflow.project_search.options.show_hidden;
   RefreshProjectSearch();
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 void WorkspaceShell::RequestProjectSearchReplaceAll() {
@@ -620,7 +620,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
                                                   util::AsciiTwin::Build);
     if (!regex->valid()) {
       ps.error = regex->error();
-      RequestSidebarRedraw();
+      RequestPreparedFrame();
       return;
     }
   }
@@ -681,7 +681,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
               ReplaceRegexMatchesInText(content, *regex, replace_text);
           if (!replaced.has_value()) {
             ps.error = "Replace-all aborted: invalid replacement pattern.";
-            RequestSidebarRedraw();
+            RequestPreparedFrame();
             return;
           }
           count = *replaced;
@@ -734,7 +734,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     });
   }
   if (buffers_replaced > 0) {
-    RequestEditorSurfaceRedraw();
+    RequestPreparedFrame();
     Notify(NotificationService::Tone::Info,
            "Replaced " + std::to_string(buffer_replacements) + " in " + std::to_string(buffers_replaced) +
                (buffers_replaced == 1 ? " unsaved editor" : " unsaved editors") + " (not yet saved)");
@@ -783,15 +783,15 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
     case ProjectReplaceOutcome::Status::BlockedByDirty:
       ps.error =
           "Replace-all aborted: save open changes to " + outcome.blocked_relative_path + " first.";
-      RequestSidebarRedraw();
+      RequestPreparedFrame();
       return;
     case ProjectReplaceOutcome::Status::CapExceeded:
       ps.error = "Replace-all aborted: too much content to modify at once.";
-      RequestSidebarRedraw();
+      RequestPreparedFrame();
       return;
     case ProjectReplaceOutcome::Status::InvalidReplacement:
       ps.error = "Replace-all aborted: invalid replacement pattern.";
-      RequestSidebarRedraw();
+      RequestPreparedFrame();
       return;
     case ProjectReplaceOutcome::Status::Applied:
       break;
@@ -890,7 +890,7 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
   // asked for those pixels: this used to ride on the full frame the file-event
   // wake answered every reload with (TD-2026-10-15-341).
   if (reloaded_open_view) {
-    RequestActiveTabRedraw();
+    RequestPreparedFrame();
   }
   RefreshProjectFileViews();
   RequestAutomaticGitSidebarRefresh();
@@ -900,7 +900,7 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
                std::to_string(attempted) + " files; " + std::to_string(outcome.failed_write_count) +
                " could not be written (" + outcome.first_write_failure +
                (outcome.failed_write_count > 1 ? ", and others" : "") + ").";
-    RequestSidebarRedraw();
+    RequestPreparedFrame();
   }
 }
 
@@ -949,7 +949,7 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
       RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
     }
   }
-  RequestSidebarRedraw();
+  RequestPreparedFrame();
 }
 
 }  // namespace microide::workspace

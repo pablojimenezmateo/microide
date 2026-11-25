@@ -133,7 +133,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
           .reset_project_catalog_to_welcome_state =
               [this]() { ResetProjectCatalogToWelcomeState(); },
           .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
-          .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .request_window_redraw = [this]() { RequestPreparedFrame(); },
       });
   return *glue_->project_catalog_service;
 }
@@ -163,7 +163,7 @@ void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
   // them alone: StartFileIndexWatcherForCurrentProject).
   (void)StartFileIndexWatcherForCurrentProject();
   ReloadPluginsForCurrentProject();
-  RequestWindowRedraw();
+  RequestPreparedFrame();
 }
 
 bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,

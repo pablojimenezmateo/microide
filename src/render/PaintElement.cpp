@@ -22,6 +22,7 @@ bool& RecordingFlag() {
 // The innermost open scope and the overruns noted, per painting thread (paint is
 // single-threaded; the thread_local keeps tests in parallel shards apart).
 thread_local PaintElement* t_innermost = nullptr;
+thread_local PaintPassScope* t_pass = nullptr;
 thread_local std::vector<PaintOverrun> t_overruns;
 
 bool Contains(const SDL_Rect& outer, const SDL_Rect& inner) {
@@ -36,7 +37,13 @@ bool PaintOverrunRecordingEnabled() { return RecordingFlag(); }
 void SetPaintOverrunRecording(bool enabled) { RecordingFlag() = enabled; }
 
 void NotePaint(SDL_Renderer* renderer, const SDL_FRect& logical) {
-  if (!RecordingFlag() || t_innermost == nullptr) {
+  if (!RecordingFlag()) {
+    return;
+  }
+  if (t_pass != nullptr) {
+    t_pass->Check(renderer, logical);
+  }
+  if (t_innermost == nullptr) {
     return;
   }
   const SDL_Rect drawn = SnapToDevicePixels(renderer, logical);
@@ -55,6 +62,55 @@ std::vector<PaintOverrun> TakePaintOverruns() {
   std::vector<PaintOverrun> taken;
   taken.swap(t_overruns);
   return taken;
+}
+
+PaintPassScope::PaintPassScope(SDL_Renderer* renderer, std::string_view name, Covers covers, const void* context)
+    : covers_(covers), context_(context), parent_(t_pass) {
+  (void)renderer;
+  if (RecordingFlag()) {
+    name_ = "pass:";
+    name_ += name;
+    t_pass = this;
+  }
+}
+
+PaintPassScope::~PaintPassScope() {
+  if (t_pass == this) {
+    t_pass = parent_;
+  }
+}
+
+void PaintPassScope::Check(SDL_Renderer* renderer, const SDL_FRect& logical) const {
+  // What of the draw can show: inside the innermost element (it clips to its
+  // rect) and inside the renderer's clip (a pane's own clip, a partial frame's).
+  SDL_FRect visible = logical;
+  const auto intersect = [&visible](const SDL_FRect& with) {
+    SDL_FRect both{};
+    if (!SDL_GetRectIntersectionFloat(&visible, &with, &both)) {
+      return false;
+    }
+    visible = both;
+    return true;
+  };
+  if (t_innermost != nullptr && !intersect(t_innermost->logical())) {
+    return;
+  }
+  if (SDL_RenderClipEnabled(renderer)) {
+    SDL_Rect clip{};
+    if (SDL_GetRenderClipRect(renderer, &clip) &&
+        !intersect(SDL_FRect{static_cast<float>(clip.x), static_cast<float>(clip.y), static_cast<float>(clip.w),
+                             static_cast<float>(clip.h)})) {
+      return;
+    }
+  }
+  if (visible.w <= 0.0f || visible.h <= 0.0f || covers_(context_, visible)) {
+    return;
+  }
+  if (std::none_of(t_overruns.begin(), t_overruns.end(),
+                   [this](const PaintOverrun& seen) { return seen.element == name_; })) {
+    t_overruns.push_back(PaintOverrun{name_, SDL_Rect{}, SnapToDevicePixels(renderer, visible), SDL_FRect{}, visible,
+                                      device_pixel_snap_detail::DeviceScale(renderer)});
+  }
 }
 
 PaintElement::PaintElement(SDL_Renderer* renderer, const SDL_FRect& rect, std::string_view name,

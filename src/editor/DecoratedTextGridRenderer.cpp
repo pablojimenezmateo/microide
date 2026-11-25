@@ -290,7 +290,7 @@ void FlushFillRun(SDL_Renderer* renderer,
     return;
   }
   render::SetDrawColor(renderer, color);
-  SDL_RenderFillRects(renderer, batch.data(), static_cast<int>(batch.size()));
+  render::FillRectsInDrawColor(renderer, batch.data(), static_cast<int>(batch.size()));
   batch.clear();
 }
 

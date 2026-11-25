@@ -1105,14 +1105,13 @@ void RunEditorTabDragBurst(ScenarioContext& context) {
                           ? static_cast<float>(phase) / static_cast<float>(period)
                           : 2.0f - static_cast<float>(phase) / static_cast<float>(period);
       const float x = strip.x + t * (strip.w - 1.0f);
-      const workspace::WorkspaceShell::RenderInvalidation redraw =
-          context.MouseMoveDragging(x, grab_y);
-      if (redraw.full) {
+      // The frame the motion owes, as the app paints it: the drag asks for a
+      // frame, and preparing it derives what the move repainted.
+      const ScenarioContext::PumpedFrameDamage frame = context.PumpPartialFrame(context.MouseMoveDragging(x, grab_y));
+      if (frame.full) {
         ++full_redraws;
       }
-      for (const SDL_FRect& rect : redraw.rects) {
-        damage_pixels += static_cast<double>(rect.w) * static_cast<double>(rect.h);
-      }
+      damage_pixels += frame.area;
     }
   });
   context.Measure("tab_drag.drop",

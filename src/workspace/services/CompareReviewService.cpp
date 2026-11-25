@@ -320,7 +320,7 @@ CompareReviewService& WorkspaceShell::MakeCompareReviewService() {
                 }
               },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
+          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
           .open_comment_prompt =
               [this](PromptSurfaceService::ReviewCommentPrompt prompt) {
                 MakePromptSurfaceService().OpenReviewCommentPrompt(std::move(prompt));

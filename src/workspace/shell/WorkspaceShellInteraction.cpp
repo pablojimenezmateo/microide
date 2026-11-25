@@ -54,7 +54,7 @@ void WorkspaceShell::MoveFileFinderSelection(int delta) {
     }
     RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
   }
-  RequestOverlayRedraw();
+  RequestPreparedFrame();
 }
 
 WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const {

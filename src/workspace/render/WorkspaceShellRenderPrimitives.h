@@ -214,17 +214,6 @@ inline TooltipLayout BuildTooltipLayout(const render::TextRenderer& text_rendere
   };
 }
 
-inline void DrawTooltip(const render::TextRenderer& text_renderer,
-                        SDL_Renderer* renderer,
-                        const render::Theme& theme,
-                        const SDL_FRect& rect,
-                        std::string_view text) {
-  render::DrawCardFrame(renderer, theme, rect, render::CardStyle::Tooltip);
-  const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
-  text_renderer.DrawStringOn(renderer, rect.x + 8.0f, y, theme.text_primary,
-                             render::CardBackground(theme, render::CardStyle::Tooltip), text);
-}
-
 struct WrappedTooltipLayout {
   SDL_FRect rect{};
   std::vector<std::string> lines;
@@ -460,7 +449,7 @@ inline void DrawArcStroke(SDL_Renderer* renderer, float cx, float cy, float radi
                   thickness, thickness};
   }
   render::SetDrawColor(renderer, color);
-  SDL_RenderFillRects(renderer, stamps.data(), count);
+  render::FillRectsInDrawColor(renderer, stamps.data(), count);
 }
 
 // Right-pointing filled triangle (Continue / play).
@@ -482,7 +471,7 @@ inline void DrawPlayGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
       continue;
     }
     const SDL_FRect span{base_x, row_y, right - base_x, 1.0f};
-    SDL_RenderFillRect(renderer, &span);
+    render::FillRectInDrawColor(renderer, span);
   }
 }
 
@@ -497,8 +486,8 @@ inline void DrawPauseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   const float bar_h = std::floor(rect.h * 0.34f);
   const SDL_FRect left{cx - 4.0f, cy - bar_h * 0.5f, 2.0f, bar_h};
   const SDL_FRect right{cx + 2.0f, cy - bar_h * 0.5f, 2.0f, bar_h};
-  SDL_RenderFillRect(renderer, &left);
-  SDL_RenderFillRect(renderer, &right);
+  render::FillRectInDrawColor(renderer, left);
+  render::FillRectInDrawColor(renderer, right);
 }
 
 // Filled square (Stop / terminate).
@@ -510,7 +499,7 @@ inline void DrawStopGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   const float side = std::floor(rect.h * 0.34f);
   const SDL_FRect square{std::floor(rect.x + (rect.w - side) * 0.5f),
                          std::floor(rect.y + (rect.h - side) * 0.5f), side, side};
-  SDL_RenderFillRect(renderer, &square);
+  render::FillRectInDrawColor(renderer, square);
 }
 
 // Arc arrow over a dot (Step Over).
@@ -605,7 +594,7 @@ inline void DrawReverseContinueGlyph(SDL_Renderer* renderer, const SDL_FRect& re
       continue;
     }
     const SDL_FRect span{left, row_y, base_x - left, 1.0f};
-    SDL_RenderFillRect(renderer, &span);
+    render::FillRectInDrawColor(renderer, span);
   }
 }
 
@@ -660,7 +649,7 @@ inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
 inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color color) {
   render::SetDrawColor(renderer, color);
   const SDL_FRect dot{std::floor(cx) - 1.0f, std::floor(cy) - 1.0f, 2.0f, 2.0f};
-  SDL_RenderFillRect(renderer, &dot);
+  render::FillRectInDrawColor(renderer, dot);
 }
 
 // Sidebar mode-tab icons (line art, sized to match the existing glyphs above).
@@ -672,7 +661,7 @@ inline void DrawFolderGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const SDL_FRect body{cx - 5.0f, cy - 2.0f, 10.0f, 7.0f};
-  SDL_RenderRect(renderer, &body);
+  render::OutlineRectInDrawColor(renderer, body);
   // Folder tab on the top-left edge.
   render::RenderClipStableLine(renderer, cx - 5.0f, cy - 2.0f, cx - 3.0f, cy - 4.0f);
   render::RenderClipStableLine(renderer, cx - 3.0f, cy - 4.0f, cx, cy - 4.0f);
@@ -787,11 +776,11 @@ inline void DrawWindowControlGlyph(SDL_Renderer* renderer,
       if (expanded) {
         const SDL_FRect back = SDL_FRect{left + 1.5f, top + 3.0f, rect.w - 9.0f, rect.h - 9.0f};
         const SDL_FRect front = SDL_FRect{left - 1.0f, top + 1.0f, rect.w - 9.0f, rect.h - 9.0f};
-        SDL_RenderRect(renderer, &back);
-        SDL_RenderRect(renderer, &front);
+        render::OutlineRectInDrawColor(renderer, back);
+        render::OutlineRectInDrawColor(renderer, front);
       } else {
         const SDL_FRect outline = SDL_FRect{left, top + 1.0f, rect.w - 8.0f, rect.h - 8.0f};
-        SDL_RenderRect(renderer, &outline);
+        render::OutlineRectInDrawColor(renderer, outline);
       }
       return;
     case WorkspaceShell::WindowControlButtonId::Close:
@@ -1193,13 +1182,7 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
   }
 
   // Floating ghost of the dragged tab (skipped when it scrolled off-screen).
-  const VisibleStripTab* ghost = nullptr;
-  for (const VisibleStripTab& tab : tabs) {
-    if (tab.index == source_index) {
-      ghost = &tab;
-      break;
-    }
-  }
+  const VisibleStripTab* ghost = DraggedStripTab(tabs, source_index);
   if (ghost == nullptr) {
     return;
   }
