@@ -3,6 +3,7 @@
 queries the oracle asks."""
 from __future__ import annotations
 
+import collections
 import contextlib
 import os
 import random
@@ -1586,6 +1587,134 @@ class ResourceBudgetTests(unittest.TestCase):
         oracle = monkey_oracles.ResourceOracle(mock.Mock())
         with mock.patch.object(oracle, "sample", return_value=None):
             self.assertEqual(oracle.check(), [])
+
+
+class CrashPointTests(unittest.TestCase):
+    """DataOracle's kills at a named durable-write boundary: which boundaries it
+    knows, which it picks, what makes the app pass one, and the kill itself."""
+
+    def oracle(self, answers):
+        app = mock.Mock()
+        app.project = None
+
+        def query(verb, args=None):
+            answer = answers.get(verb, {})
+            if isinstance(answer, Exception):
+                raise answer
+            return answer(args) if callable(answer) else answer
+        app.query.side_effect = query
+        return monkey_oracles.DataOracle(app), app
+
+    def test_the_boundaries_passed_are_kept_across_launches(self):
+        oracle, app = self.oracle({"crash-points": {"installed": True, "sites": [
+            {"site": "durable.renaming", "files": {"session": 3, "recents": 1}},
+            {"site": "", "files": {"x": 1}}, {"site": "durable.writing", "files": {"": 1}}]}})
+        self.assertEqual(oracle.crash_points(), [("durable.renaming", "recents"), ("durable.renaming", "session")])
+        app.query.side_effect = lambda verb, args=None: {"installed": True, "sites": [
+            {"site": "durable.writing", "files": {"config (staging)": 1}}]}
+        self.assertEqual(oracle.crash_points(), [("durable.renaming", "recents"), ("durable.renaming", "session"),
+                                                 ("durable.writing", "config (staging)")])
+
+    def test_a_binary_without_crash_points_knows_none(self):
+        oracle, _ = self.oracle({"crash-points": {"installed": False, "sites": [
+            {"site": "durable.writing", "files": {"session": 1}}]}})
+        self.assertEqual(oracle.crash_points(), [])
+        oracle, _ = self.oracle({"crash-points": RuntimeError("unknown query")})
+        self.assertEqual(oracle.crash_points(), [])
+        self.assertIsNone(oracle.choose_point(random.Random(1)))
+
+    def test_a_point_is_a_rule_and_its_trigger_least_tried_first(self):
+        oracle, _ = self.oracle({"crash-points": {"installed": True, "sites": [
+            {"site": "durable.writing", "files": {"session (staging)": 1, "recents (staging)": 1}}]},
+            "buffer": {"kind": "editor", "path": "/p/main.cpp"}})
+        picks = collections.Counter(oracle.choose_point(random.Random(seed),
+                                                        tried=lambda key: 1000 if "session" in key else 0)
+                                    for seed in range(50))
+        self.assertGreater(picks["kill:durable.writing@recents (staging)#1|open"], 45, picks)
+        untried = {oracle.choose_point(random.Random(seed)) for seed in range(50)}
+        self.assertEqual(untried, {"kill:durable.writing@recents (staging)#1|open",
+                                   "kill:durable.writing@session (staging)#1|edit"})
+
+    def test_the_trigger_is_what_passes_the_files_boundary(self):
+        oracle, app = self.oracle({"buffer": {"kind": "editor", "path": "/p/main.cpp"}})
+        self.assertEqual(oracle._trigger_for("recents"), "open")
+        self.assertEqual(oracle._trigger_for("recents.bak"), "open")
+        self.assertEqual(oracle._trigger_for("workspace-session (staging)"), "project")
+        self.assertEqual(oracle._trigger_for("main.cpp (staging)"), "save")
+        self.assertEqual(oracle._trigger_for("session"), "edit")
+        app.query.side_effect = lambda verb, args=None: {"kind": "editor", "path": "/p/main.cpp", "readOnly": True}
+        self.assertEqual(oracle._trigger_for("main.cpp"), "edit", "a read-only buffer is not saved")
+        app.query.side_effect = lambda verb, args=None: {"kind": "compare", "path": "/p/main.cpp"}
+        self.assertEqual(oracle._trigger_for("main.cpp"), "edit")
+        app.query.side_effect = RuntimeError("busy")
+        self.assertEqual(oracle._trigger_for("main.cpp"), "edit")
+
+    def dying_app(self, trigger_kills=True, buffer=None):
+        oracle, app = self.oracle({})
+        state = {"alive": True}
+        sent = []
+        armed = []
+
+        def query(verb, args=None):
+            if verb == "crash-points":
+                armed.append(args)
+                return {}
+            if verb == "documents":
+                return [{"path": "/p/a.txt", "dirty": True, "sha256": "edited", "project": "/p"}]
+            if verb == "buffer":
+                return buffer or {}
+            if verb == "persistence":
+                return {"staged": False}
+            return {}
+        app.query.side_effect = query
+
+        def send_line(line, record=True):
+            sent.append(line)
+            if trigger_kills and line != "insert-line-below":
+                state["alive"] = False
+        app.send_line.side_effect = send_line
+        app.alive.side_effect = lambda: state["alive"]
+        app.dying.return_value = False
+        return oracle, app, sent, armed
+
+    def test_a_save_trigger_saves_the_dirty_buffer_and_the_app_dies(self):
+        oracle, app, sent, armed = self.dying_app(buffer={"kind": "editor", "path": "/nowhere/a.txt", "dirty": True})
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001):
+            died, after, saved = oracle._kill_at("kill:durable.renaming@a.txt#1|save")
+        self.assertTrue(died)
+        self.assertEqual(saved, "/nowhere/a.txt")
+        self.assertEqual(sent, ["insert-line-below", "save"])
+        self.assertEqual(armed[0], {"arm": "kill:durable.renaming@a.txt#1"})
+        self.assertEqual(after[0]["sha256"], "edited")
+        self.assertEqual(oracle.point_outcomes["hit:durable.renaming"], 1)
+
+    def test_a_trigger_that_never_reaches_the_boundary_disarms_it(self):
+        oracle, app, sent, armed = self.dying_app(trigger_kills=False)
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001):
+            died, _, saved = oracle._kill_at("kill:durable.writing@workspace-session#1|project")
+        self.assertFalse(died)
+        self.assertIsNone(saved)
+        self.assertEqual(sent, ["insert-line-below", "project-next"])
+        self.assertEqual(armed[-1], {"disarm": True})
+        self.assertEqual(oracle.point_outcomes["missed"], 1)
+
+    def test_an_open_trigger_opens_a_file_recents_has_not_held(self):
+        oracle, app, sent, _ = self.dying_app()
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        app.project = directory
+        with mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0), \
+                mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001):
+            oracle._kill_at("kill:durable.renaming@recents#1|open")
+        self.assertEqual((directory / "qa-point-1.txt").read_text(), "1\n")
+        self.assertTrue(sent[1].startswith("open ") and "qa-point-1.txt" in sent[1], sent)
+
+    def test_a_binary_without_the_query_is_not_killed(self):
+        oracle, app = self.oracle({"crash-points": monkey_oracles.q.QaFailure("unknown query")})
+        self.assertEqual(oracle._kill_at("kill:durable.writing@session#1|edit"), (False, [], None))
+        app.send_line.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
