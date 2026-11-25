@@ -51,6 +51,18 @@ than a mechanical change:
   rather than services, are still open. To re-run the dead-code scan: a clang
   build with `-ffunction-sections` and those linker flags, then the symbols every
   link removed minus those `nm` finds in any binary.
+- **2026-11-25 second pass.** A window scan for near-duplicates (identifier-
+  preserving, literals normalized, 6-line windows) found ~60 real pairs past
+  the exact-clone scan; the substantive ones are folded (SDL surfaces own
+  through `render::SurfacePtr`, blame overlays, dirty prompts, folding model,
+  file watchers, terminal scroll/mouse, LSP didChange/formatting, compare/merge
+  mouse layout). The prescribed coordinator fix landed for the hook bags that
+  were mostly forwards: `KeyInputCoordinator` (58 hooks), `PanelMouse`,
+  `SidebarMouse`, `ChromeMouse`, `TabMouse` and `Lifecycle` coordinators now
+  hold a `Services` struct of references. `DebugPaneMouseCoordinator` keeps its
+  debug hooks on purpose: `DebugPaneTests` fake them to observe DAP focus
+  without a session. What remains of the factories is hooks into shell
+  methods with real bodies, which need those bodies moved to a service first.
 - **Near-duplicates left in place:** the Lua wrappers in `PluginRuntimeApiInterop`
   and `PluginHostLuaApi.inc` (their scoping is the longjmp-safety contract; fold
   them only with `tools/audit-lua-longjmp.py` in the loop), and the compare
