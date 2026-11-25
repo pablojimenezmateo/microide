@@ -3,6 +3,7 @@
 queries the oracle asks."""
 from __future__ import annotations
 
+import contextlib
 import random
 import time
 import sys
@@ -1058,6 +1059,109 @@ class IdleOracleCheckTests(unittest.TestCase):
             oracle, found = self.run_window(wakes)
             self.assertEqual(found, [])
             self.assertFalse(oracle.reported)
+
+
+class Kill9VerdictTests(unittest.TestCase):
+    """What kill9_and_check says about each buffer once the relaunch is back:
+    the branches mutation-test.sh found no test held (265 mutants survived)."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+
+    def kill(self, before, after, waited=True, point=None, kill_at=None, between=None):
+        app = _RelaunchingApp()
+        app.docs[1] = [dict(doc) for doc in before]
+        relaunch = app.crash_and_relaunch
+
+        def restore(*args, **kwargs):
+            relaunch(*args, **kwargs)
+            if between is not None:
+                between()
+            app.docs[1] = [dict(doc) for doc in after]
+        app.crash_and_relaunch = restore
+        oracle = monkey_oracles.DataOracle(app)
+        patches = [mock.patch.object(monkey_oracles, "CRASH_SAFETY_QUIET_S", 0.0),
+                   mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None),
+                   mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001)]
+        if kill_at is not None:
+            patches.append(mock.patch.object(oracle, "_kill_at", side_effect=kill_at))
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            found = oracle.kill9_and_check(random.Random(1), waited=waited, point=point)
+        return [message for _, message in found]
+
+    def file(self, name, text):
+        path = self.dir / name
+        path.write_text(text)
+        return str(path), monkey_oracles._sha256_file(path)
+
+    def test_a_buffer_back_as_it_was_staged_is_fine(self):
+        doc = {"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        self.assertEqual(self.kill([doc], [doc]), [])
+
+    def test_a_buffer_that_is_lost_is_named(self):
+        doc = {"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        found = self.kill([doc], [])
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("the unsaved buffer y.txt did not come back after a kill -9"), found)
+
+    def test_a_buffer_back_with_other_text_says_both_sizes(self):
+        before = {"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        after = {**before, "sha256": "cc", "bytes": 7}
+        self.assertEqual(self.kill([before], [after]),
+                         ["the unsaved buffer y.txt came back after a kill -9 with different content (3 -> 7 bytes)"])
+
+    def test_a_buffer_back_marked_saved_must_be_in_its_file(self):
+        path, held = self.file("y.txt", "saved text\n")
+        before = {"path": path, "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        self.assertEqual(self.kill([before], [{**before, "dirty": False}]),
+                         ["the unsaved buffer y.txt came back after a kill -9 marked saved; its file does not hold it"])
+        self.assertEqual(self.kill([{**before, "sha256": held}], [{**before, "sha256": held, "dirty": False}]), [],
+                         "back clean and its file holds it: it was saved before the kill")
+
+    def test_an_untitled_buffer_is_named_by_its_title(self):
+        doc = {"path": "", "title": "Untitled-3", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        found = self.kill([doc], [])
+        self.assertTrue(found and found[0].startswith("the unsaved buffer Untitled-3 did not come back"), found)
+
+    def test_a_kill_without_the_wait_holds_no_buffer_to_coming_back(self):
+        doc = {"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        self.assertEqual(self.kill([doc], [], waited=False), [])
+
+    def test_a_clean_file_changed_on_disk_across_the_kill_is_reported(self):
+        path, held = self.file("x.txt", "clean\n")
+        doc = {"path": path, "dirty": False, "sha256": held, "bytes": 6, "project": "/p/b"}
+        found = self.kill([doc], [doc], between=lambda: Path(path).write_text("changed\n"))
+        self.assertEqual(found, ["x.txt changed on disk across a kill -9 and relaunch, and nothing saved it"])
+        self.assertEqual(self.kill([doc], [doc]), [], "an untouched file is fine")
+
+    def test_a_kill_at_a_named_point_says_where(self):
+        doc = {"path": "/p/b/y.txt", "dirty": True, "sha256": "bb", "bytes": 3, "project": "/p/b"}
+        edited = {**doc, "sha256": "edited"}
+        found = self.kill([doc], [], point="kill:durable.renaming@session|edit",
+                          kill_at=lambda point: (True, [edited], None))
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].endswith(" (killed at durable.renaming@session)"), found)
+        self.assertEqual(self.kill([doc], [edited], point="kill:durable.renaming@session|edit",
+                                   kill_at=lambda point: (True, [edited], None)), [],
+                         "the edit the trigger made may come back instead of the staged text")
+        found = self.kill([doc], [], point="kill:durable.renaming@session|edit",
+                          kill_at=lambda point: (False, [doc], None))
+        self.assertTrue(found and "killed at" not in found[0], "a trigger that did not die names no point")
+
+    def test_a_merge_result_back_on_its_file_is_not_back(self):
+        path = "/p/b/scheduler.cpp"
+        before = [{"path": path, "dirty": True, "sha256": "file", "bytes": 9, "project": "/p/b",
+                   "title": "compare: scheduler.cpp", "surface": "compare"},
+                  {"path": path, "dirty": True, "sha256": "result", "bytes": 6, "project": "/p/b",
+                   "title": "merge: scheduler.cpp", "surface": "merge"}]
+        after = [before[0], {"path": "/p/b/other.cpp", "dirty": True, "sha256": "result", "bytes": 6,
+                             "project": "/p/b", "title": "other.cpp", "surface": "editor"}]
+        found = self.kill(before, after)
+        self.assertTrue(any("the unsaved merge result for scheduler.cpp did not come back" in f for f in found),
+                        found)
 
 if __name__ == "__main__":
     unittest.main()
