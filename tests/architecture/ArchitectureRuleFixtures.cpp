@@ -1118,6 +1118,7 @@ void RunSdlDrawAllowlistRuleFixtures() {
 void RunAllRuleFixtures() {
   RunDecoratedGridBatchesFillsRuleFixtures();
   RunExecutorPostThenFutureGetRuleFixtures();
+  RunServiceDirectionRuleFixtures();
   RunDescriptorCloseOnExecRuleFixtures();
   RunSdlDrawAllowlistRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();

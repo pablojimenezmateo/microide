@@ -138,6 +138,8 @@ Shell and coordinators
 - `Make*Service()`/`Make*Coordinator()` results are bound by reference and never captured by value into a lambda. `CheckShellGlueIsBoundByReference`, `CheckFactoryResultsAreNotCapturedByValue`
 - No `platform::RunSubprocess` and no synchronous subprocess wait in workspace code; dispatch through `ProjectBackgroundExecutor`. `CheckNoSynchronousSubprocessInWorkspace`, `CheckNoSynchronousSubprocessWaitInWorkspace`
 - Overlays hide through `DismissOverlay` / `HideOverlay(state)`, never a bare `overlay.visible = false`. `CheckOverlayDismissalIsCentralized`
+- A coordinator calls the services it uses through a `Services` struct of references, not through one-line `Make*` hooks that only forward to a service; the count of such hooks ratchets DOWN (read the cap from the test). A hook stays only as a test seam a test actually fakes. `CheckFactoryHooksDoNotForwardToServices`
+- A hook that asks for a repaint is `request_frame`; no per-surface `request_*_redraw` names. `CheckRedrawHooksAreRequestFrame`
 - Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay host-owned and service-backed. Reviewer.
 
 Editor, tabs and panes

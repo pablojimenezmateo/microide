@@ -58,6 +58,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckReactivationDoesNotReloadPlugins", CheckReactivationDoesNotReloadPlugins},
       {"CheckNoFallbackEditorViewportSymbols", CheckNoFallbackEditorViewportSymbols},
       {"CheckCoordinatorOperationsAreCalled", CheckCoordinatorOperationsAreCalled},
+      {"CheckRedrawHooksAreRequestFrame", CheckRedrawHooksAreRequestFrame},
+      {"CheckFactoryHooksDoNotForwardToServices", CheckFactoryHooksDoNotForwardToServices},
       {"CheckRenderTuDoesNotMaterializeStrings", CheckRenderTuDoesNotMaterializeStrings},
       {"CheckRenderTuDoesNotCallToStringOrFormat", CheckRenderTuDoesNotCallToStringOrFormat},
       {"CheckTextViewportNoFullDocCopy", CheckTextViewportNoFullDocCopy},

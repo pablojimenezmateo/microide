@@ -2,7 +2,9 @@
 
 #include "architecture/ArchitectureRuleHelpers.h"
 
+#include <cstddef>
 #include <filesystem>
+#include <vector>
 
 namespace microide::tests::architecture {
 
@@ -18,7 +20,16 @@ RuleResult CheckEditorGroupsMutateWithTheSplitTree(const std::filesystem::path& 
 RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& repo_root);
 RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root);
 RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo_root);
+RuleResult CheckRedrawHooksAreRequestFrame(const std::filesystem::path& repo_root);
+RuleResult CheckFactoryHooksDoNotForwardToServices(const std::filesystem::path& repo_root);
+RuleResult CheckFactoryHooksDoNotForwardToServicesAtCap(const std::filesystem::path& repo_root,
+                                                        std::size_t cap);
+std::size_t CountServiceForwardingHooks(const std::filesystem::path& repo_root,
+                                        std::vector<Violation>* where);
+
+inline constexpr std::size_t kMaxServiceForwardingHooks = 46;
 
 void RunExecutorPostThenFutureGetRuleFixtures();
+void RunServiceDirectionRuleFixtures();
 
 }

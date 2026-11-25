@@ -701,6 +701,154 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
   return result;
 }
 
+namespace {
+
+const std::regex& ServiceForwardingHookPattern() {
+  static const std::regex pattern(
+      R"(\.[a-z_0-9]+\s*=\s*\[this\]\([^)]*\)\s*(?:->\s*[A-Za-z_0-9:<>]+\s*)?\{\s*(?:return\s+)?(?:Make[A-Za-z0-9_]*(?:Service|Coordinator)\(\)|[a-z_0-9]+_service_)\.[^;{}]*;\s*\})");
+  return pattern;
+}
+
+std::size_t CodeMaskedMatchCount(const std::string& text, const std::regex& pattern,
+                                 std::vector<Violation>* where,
+                                 const std::filesystem::path& path) {
+  std::vector<bool> is_code;
+  std::size_t count = 0;
+  for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    if (is_code.empty()) {
+      is_code = BuildCodeMask(text);
+    }
+    const auto start = static_cast<std::size_t>(it->position());
+    if (start >= is_code.size() || !is_code[start]) {
+      continue;
+    }
+    ++count;
+    if (where != nullptr) {
+      where->push_back(Violation{.path = path, .line = LineNumberAt(text, start), .message = {}});
+    }
+  }
+  return count;
+}
+
+}
+
+RuleResult CheckRedrawHooksAreRequestFrame(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "a hook that asks for a repaint is request_frame, never a per-surface request_*redraw";
+  result.hard_fail = true;
+  const std::filesystem::path workspace_dir = repo_root / "src/workspace";
+  const std::regex alias(R"(std::function<void\(\)>\s+request_[a-z_0-9]*redraw\s*;)");
+  const std::regex request_frame(R"(std::function<void\(\)>\s+request_frame\s*;)");
+  bool saw_request_frame = false;
+  static constexpr std::array<std::string_view, 2> kHeaders = {".h", ".inc"};
+  for (const std::filesystem::path& path : SourceFilesUnder(workspace_dir, kHeaders)) {
+    const std::string text = ReadText(path);
+    saw_request_frame = saw_request_frame || CodeMaskedPatternAppears(text, request_frame);
+    AppendCodeMaskRegexViolations(
+        result, path, text, alias,
+        "under derived damage a change asks for a frame and the prepared surfaces derive the "
+        "repaint; name the hook request_frame (or use the struct's existing one)");
+  }
+  if (!saw_request_frame) {
+    result.missing_targets.push_back(Violation{
+        .path = workspace_dir,
+        .line = 1,
+        .message = "found no `std::function<void()> request_frame;` under src/workspace; this "
+                   "rule now scans nothing it can recognise and cannot fail",
+    });
+  }
+  return result;
+}
+
+std::size_t CountServiceForwardingHooks(const std::filesystem::path& repo_root,
+                                        std::vector<Violation>* where) {
+  std::size_t count = 0;
+  for (const std::filesystem::path& path : SourceFilesUnder(repo_root / "src/workspace")) {
+    count += CodeMaskedMatchCount(ReadText(path), ServiceForwardingHookPattern(), where, path);
+  }
+  return count;
+}
+
+RuleResult CheckFactoryHooksDoNotForwardToServicesAtCap(const std::filesystem::path& repo_root,
+                                                        std::size_t cap) {
+  RuleResult result;
+  result.label = "Make* factories wire no new one-line hooks that only forward to a service";
+  result.hard_fail = true;
+  if (!RequireRuleTarget(result, repo_root / "src/workspace")) {
+    return result;
+  }
+  std::vector<Violation> sites;
+  const std::size_t count = CountServiceForwardingHooks(repo_root, &sites);
+  const std::regex any_factory(R"(WorkspaceShell::Make[A-Za-z0-9_]*\()");
+  bool saw_factory = false;
+  for (const std::filesystem::path& path : SourceFilesUnder(repo_root / "src/workspace")) {
+    saw_factory = saw_factory || CodeMaskedPatternAppears(ReadText(path), any_factory);
+  }
+  if (!saw_factory) {
+    result.missing_targets.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "found no WorkspaceShell::Make* factory; this rule now scans nothing",
+    });
+    return result;
+  }
+  if (count > cap) {
+    for (Violation& site : sites) {
+      site.message = std::to_string(count) + " service-forwarding hooks exceed the cap of " +
+                     std::to_string(cap) +
+                     ": give the coordinator a Services struct holding the service and call it "
+                     "directly (KeyInputCoordinator is the model), then lower the cap";
+      result.violations.push_back(std::move(site));
+    }
+  }
+  return result;
+}
+
+RuleResult CheckFactoryHooksDoNotForwardToServices(const std::filesystem::path& repo_root) {
+  return CheckFactoryHooksDoNotForwardToServicesAtCap(repo_root, kMaxServiceForwardingHooks);
+}
+
+void RunServiceDirectionRuleFixtures() {
+  TemporaryDirectory fixture;
+  const std::filesystem::path& root = fixture.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  const auto header = root / "src/workspace/Ops.h";
+  const auto factory = root / "src/workspace/Factory.cpp";
+
+  WriteFile(header, "struct Ops {\n  std::function<void()> request_frame;\n"
+                    "  std::function<void()> request_sidebar_redraw;\n};\n");
+  Expect(CheckRedrawHooksAreRequestFrame(root).violations.size() == 1,
+         "the redraw rule must flag a per-surface request_*_redraw hook");
+  WriteFile(header, "struct Ops {\n  std::function<void()> request_frame;\n"
+                    "  std::function<void(int)> request_sidebar_redraw_for;\n};\n"
+                    "// std::function<void()> request_window_redraw;\n");
+  Expect(CheckRedrawHooksAreRequestFrame(root).violations.empty(),
+         "request_frame, a hook with arguments and a comment are not aliases");
+  WriteFile(header, "struct Ops {};\n");
+  Expect(!CheckRedrawHooksAreRequestFrame(root).missing_targets.empty(),
+         "a tree with no request_frame hook must report a missing target, not pass");
+
+  WriteFile(factory,
+            "Coord& WorkspaceShell::MakeCoord() {\n"
+            "  return Coord(Ops{\n"
+            "      .close = [this]() { MakeSidebarService().Close(); },\n"
+            "      .pick = [this](int d) { return quick_pick_service_.Move(d); },\n"
+            "      .work = [this]() { if (Ready()) { MakeSidebarService().Close(); } },\n"
+            "      .own = [this]() { ShellOwnWork(); },\n"
+            "  });\n"
+            "}\n"
+            "const char* kDoc = \".x = [this]() { MakeSidebarService().Close(); }\";\n");
+  Expect(CountServiceForwardingHooks(root, nullptr) == 2,
+         "only one-line forwards into a service count; real bodies, shell calls and strings do not");
+  Expect(CheckFactoryHooksDoNotForwardToServicesAtCap(root, 2).violations.empty(),
+         "a count at the cap passes");
+  Expect(CheckFactoryHooksDoNotForwardToServicesAtCap(root, 1).violations.size() == 2,
+         "a count above the cap fails and names every site");
+  WriteFile(factory, "void Free() {}\n");
+  Expect(!CheckFactoryHooksDoNotForwardToServicesAtCap(root, 0).missing_targets.empty(),
+         "a tree with no Make* factory must report a missing target, not pass");
+}
+
 void RunExecutorPostThenFutureGetRuleFixtures() {
   TemporaryDirectory fixture;
   const std::filesystem::path& root = fixture.path();
