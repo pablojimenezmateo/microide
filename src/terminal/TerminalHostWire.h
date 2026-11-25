@@ -92,14 +92,8 @@ inline constexpr std::size_t kMaxHostOpenUrlBytes = 8192;
 inline constexpr std::size_t kMaxHostEditBytes = 1u << 20;
 inline constexpr std::size_t kMaxHostEditPathBytes = 4096;
 
-struct TerminalHostWireOptions {
-  bool underline_colors = true;
-  bool edit = true;
-};
-
 void EncodeTerminalLine(std::string& out, const TerminalLine& line);
-void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
-                             TerminalHostWireOptions options = {});
+void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame);
 std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes);
 
 void EncodeTerminalLines(std::string& out, const std::vector<TerminalLine>& lines);

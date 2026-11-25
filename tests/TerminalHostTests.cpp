@@ -160,20 +160,6 @@ void TestHostFrameRoundTripsEveryField() {
          "a cell's extra id and the extras (link, underline colour) round-trip");
   Expect(back->edit == frame.edit, "the file to edit round-trips, bytes and all");
 
-  std::string v4_wire;
-  EncodeTerminalHostFrame(v4_wire, frame, terminal::TerminalHostWireOptions{.edit = false});
-  const std::optional<TerminalHostFrame> v4 = DecodeTerminalHostFrame(v4_wire);
-  Expect(v4.has_value() && !v4->edit.has_value() && v4->extras[1].underline_color.has_value(),
-         "a version-4 peer's frame leaves the edit out and keeps the colours");
-
-  std::string v3_wire;
-  EncodeTerminalHostFrame(v3_wire, frame,
-                          terminal::TerminalHostWireOptions{.underline_colors = false, .edit = false});
-  const std::optional<TerminalHostFrame> v3 = DecodeTerminalHostFrame(v3_wire);
-  Expect(v3_wire.size() < wire.size() && v3.has_value() && v3->extras.size() == 2 &&
-             v3->extras[0].uri == "https://example.com/x" && !v3->extras[1].underline_color.has_value(),
-         "an older peer's frame leaves the colours out and still decodes");
-
   for (std::size_t length = 0; length < wire.size(); ++length) {
     Expect(!DecodeTerminalHostFrame(std::string_view(wire).substr(0, length)).has_value(),
            "a truncated frame is refused at " + std::to_string(length));

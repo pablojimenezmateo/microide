@@ -20,7 +20,9 @@ namespace microide::project::remote {
 
 class RemoteFrameTransport {
  public:
-  static constexpr std::size_t kMaxBulkChunkBytes = 64 * 1024;
+  static constexpr std::size_t kMaxBulkChunkBytes = 32 * 1024;
+  static constexpr std::size_t kAckPayloadBytes = 16;
+  static constexpr std::chrono::milliseconds kMinBandwidthSpan{1};
   static constexpr std::chrono::milliseconds kQueueAllowance{5};
 
   struct Callbacks {
@@ -64,6 +66,7 @@ class RemoteFrameTransport {
   }
   double bulk_bandwidth() const { return bulk_bandwidth_seen_.load(std::memory_order_relaxed); }
   void SetFixedBulkWindow(std::size_t bytes);
+  static double BulkWindowTarget(double bandwidth, std::chrono::steady_clock::duration base_rtt);
 
  private:
   struct Queue {
@@ -77,6 +80,7 @@ class RemoteFrameTransport {
   bool ReadAvailable();
   void HandleAck(std::string_view payload);
   void RetargetBulkWindow();
+  std::optional<double> BandwidthSample(std::uint64_t acked, std::uint64_t received_us, bool sender_was_waiting);
   void QueueAck();
   bool HasWritable();
 
@@ -106,9 +110,10 @@ class RemoteFrameTransport {
   std::uint64_t bulk_bytes_acked_ = 0;
   std::uint64_t bulk_bytes_received_ = 0;
   std::uint64_t bulk_bytes_received_acked_ = 0;
-  std::chrono::steady_clock::time_point last_ack_time_{};
+  std::chrono::steady_clock::time_point last_bulk_read_{};
+  std::chrono::steady_clock::time_point bulk_received_at_{};
   std::chrono::steady_clock::time_point next_tick_{};
-  std::uint64_t last_ack_bytes_ = 0;
+  std::optional<std::pair<std::uint64_t, std::uint64_t>> sample_start_;
   std::deque<std::pair<std::uint64_t, std::chrono::steady_clock::time_point>> bulk_in_flight_;
   std::optional<std::chrono::steady_clock::duration> base_rtt_;
   double bulk_bandwidth_ = 0.0;

@@ -174,15 +174,12 @@ void EncodeTerminalLine(std::string& out, const TerminalLine& line) {
   }
 }
 
-void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame,
-                             TerminalHostWireOptions options) {
+void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
   std::size_t colored = 0;
-  if (options.underline_colors) {
-    for (const TerminalHostCellExtra& extra : frame.extras) {
-      colored += extra.underline_color.has_value() ? 1 : 0;
-    }
+  for (const TerminalHostCellExtra& extra : frame.extras) {
+    colored += extra.underline_color.has_value() ? 1 : 0;
   }
-  const TerminalHostEdit* edit = options.edit && frame.edit.has_value() ? &*frame.edit : nullptr;
+  const TerminalHostEdit* edit = frame.edit.has_value() ? &*frame.edit : nullptr;
   PutVarint(out, frame.rows);
   PutVarint(out, frame.columns);
   PutVarint(out, frame.flags);

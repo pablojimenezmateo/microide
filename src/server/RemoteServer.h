@@ -61,7 +61,6 @@ class RemoteServer {
     std::uint64_t id = 0;
     project::remote::RemotePeer peer;
     std::string root;
-    std::int64_t protocol = 0;
     std::atomic<bool> closed{false};
     std::atomic<bool> active{false};
     std::map<std::uint64_t, std::string> uploads;

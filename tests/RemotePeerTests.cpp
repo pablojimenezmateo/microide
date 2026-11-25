@@ -147,7 +147,7 @@ void TestHelloRoundTripsAndValidates() {
 }
 
 void TestMinimumProtocolVersionIsADeliberateChoice() {
-  Expect(remote::kMinProtocolVersion == 3,
+  Expect(remote::kMinProtocolVersion == 6,
          "kMinProtocolVersion changed: an upgrade now restarts host servers (and ends their "
          "terminals) -- say so in CHANGELOG.md, then update this pin");
 }

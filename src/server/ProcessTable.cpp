@@ -9,6 +9,7 @@
 
 #include "platform/ChildSignals.h"
 #include "platform/OpenFileLimit.h"
+#include "project/remote/RemoteFrameTransport.h"
 #include "project/remote/RemoteProtocol.h"
 #include "util/Log.h"
 #include "util/PosixFd.h"
@@ -35,7 +36,7 @@ namespace remote = project::remote;
 constexpr std::size_t kMaxArgs = 4096;
 constexpr std::size_t kMaxArgvBytes = 1024 * 1024;
 constexpr std::size_t kMaxEnv = 256;
-constexpr std::size_t kChunkBytes = 64 * 1024;
+constexpr std::size_t kReadBytes = 64 * 1024;
 constexpr auto kExitDrainGrace = std::chrono::seconds(5);
 
 #if defined(SYS_pidfd_open)
@@ -487,7 +488,7 @@ void ProcessTable::Pump(Process& process, std::vector<Outgoing>& outgoing) {
     while (stream->sent < stream->total() &&
            stream->sent - stream->base < limits_.credit_bytes) {
       const std::size_t room = limits_.credit_bytes - static_cast<std::size_t>(stream->sent - stream->base);
-      const std::size_t length = std::min({kChunkBytes, room,
+      const std::size_t length = std::min({remote::RemoteFrameTransport::kMaxBulkChunkBytes, room,
                                            static_cast<std::size_t>(stream->total() - stream->sent)});
       Outgoing frame;
       frame.connection = process.connection;
@@ -680,7 +681,7 @@ void ProcessTable::Run() {
         continue;
       }
       Stream& stream = owner.second ? it->second->err : it->second->out;
-      char buffer[kChunkBytes];
+      char buffer[kReadBytes];
       const ssize_t n = ::read(stream.fd, buffer, sizeof(buffer));
       if (n > 0) {
         stream.pending.append(buffer, static_cast<std::size_t>(n));

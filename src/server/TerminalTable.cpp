@@ -153,7 +153,7 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
         request.prefetch_lines != 0 ? request.prefetch_lines : limits_.prefetch_lines;
     terminal->root = std::move(request.root);
     terminal->clients.push_back(
-        Client{.connection = connection, .wire = request.wire, .rows = request.rows, .columns = request.columns});
+        Client{.connection = connection, .rows = request.rows, .columns = request.columns});
   }
   Terminal* raw = terminal.get();
   terminal->session.SetOutputObserver([this, raw]() {
@@ -217,7 +217,7 @@ std::uint64_t TerminalTable::RequestEdit(std::uint64_t handle, terminal::Termina
     }
     Client* target = nullptr;
     for (Client& client : it->second->clients) {
-      if (client.wire.edit && (target == nullptr || client.written_at > target->written_at)) {
+      if (target == nullptr || client.written_at > target->written_at) {
         target = &client;
       }
     }
@@ -231,8 +231,7 @@ std::uint64_t TerminalTable::RequestEdit(std::uint64_t handle, terminal::Termina
   return connection;
 }
 
-bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
-                           terminal::TerminalHostWireOptions wire, std::optional<Resume> resume) {
+bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle, std::optional<Resume> resume) {
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
@@ -247,7 +246,6 @@ bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
     } else {
       *client = Client{.connection = connection, .rows = client->rows, .columns = client->columns};
     }
-    client->wire = wire;
     if (resume.has_value()) {
       client->builder.Resume(resume->screen_top, resume->alternate);
     } else {
@@ -563,7 +561,7 @@ void TerminalTable::Run() {
       client->notification.reset();
       client->echo_ack = echo_ack;
       Outgoing out{.connection = client->connection, .handle = terminal.handle};
-      terminal::EncodeTerminalHostFrame(out.wire, frame, client->wire);
+      terminal::EncodeTerminalHostFrame(out.wire, frame);
       client->sent_bytes += out.wire.size();
       client->last_sent = now;
       outgoing.push_back(std::move(out));

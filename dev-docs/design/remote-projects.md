@@ -1063,10 +1063,18 @@ host notices when the link drops.
   side always drains interactive first, and bulk may have at most
   `remote.backfill_inflight_bytes` outstanding — **adaptive**, aimed at the
   bandwidth-delay product plus 5 ms (`RemoteFrameTransport::kQueueAllowance`):
-  the smoothed bandwidth the acks measure times (the smallest bulk frame-to-ack
-  time seen, Vegas's base RTT, + 5 ms), less the one chunk that sample already
-  contains, floored at 64 KiB and capped at 1 MiB, so a fast link is not
-  throttled to a slow link's constant and a slow one is not flooded. (It aimed at
+  the smoothed bandwidth the acks measure times the smallest bulk frame-to-ack
+  time seen (Vegas's base RTT), less the one chunk that sample already
+  contains, plus a queue of 5 ms of bandwidth or one chunk, whichever is more
+  (`RemoteFrameTransport::BulkWindowTarget`), floored at 64 KiB and capped at
+  1 MiB, so a fast link is not throttled to a slow link's constant and a slow
+  one is not flooded. The bandwidth is read on the RECEIVER's clock: an ack
+  carries the bytes received and the receiver's steady-clock time of the read
+  that completed them (protocol 6), so acks bunched on the way back -- a
+  congested return path, a peer that woke late -- do not read as a faster link
+  (they did, at up to 1160x, before 2026-11-25). The one-chunk queue floor keeps
+  a window-limited sample (window / RTT) from shrinking the window: without it
+  a slow stretch drove the window to its floor and kept it there. (It aimed at
   ~100 ms of bandwidth whatever the round trip until 2026-10-13, which the
   `remote_echo_under_bulk` scenario measured as ~25 ms of queue in front of every
   keystroke on a 60 ms / 100 Mbit/s link; now the echo is within a frame of its

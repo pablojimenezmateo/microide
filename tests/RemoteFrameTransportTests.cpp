@@ -92,6 +92,20 @@ std::vector<Frame> ReadRawFrames(int fd, FrameDecoder& decoder, std::size_t want
   return frames;
 }
 
+std::string AckPayload(std::uint64_t bytes, std::uint64_t received_us) {
+  std::string payload;
+  for (const std::uint64_t value : {bytes, received_us}) {
+    for (int i = 0; i < 8; ++i) {
+      payload.push_back(static_cast<char>((value >> (8 * i)) & 0xffu));
+    }
+  }
+  return payload;
+}
+
+constexpr int ChunksFor(double bytes) {
+  return static_cast<int>(bytes / RemoteFrameTransport::kMaxBulkChunkBytes);
+}
+
 void WriteAll(int fd, const std::string& bytes) {
   std::size_t offset = 0;
   while (offset < bytes.size()) {
@@ -189,9 +203,7 @@ void TestInteractiveOvertakesABulkBacklog() {
          "bulk stops at the window without acks");
 
   std::string ack;
-  std::string value;
-  for (int i = 0; i < 8; ++i) value.push_back(static_cast<char>((bulk_total >> (8 * i)) & 0xff));
-  AppendFrame(ack, FrameType::Ack, Lane::Interactive, 0, value);
+  AppendFrame(ack, FrameType::Ack, Lane::Interactive, 0, AckPayload(bulk_total, 1));
   WriteAll(pair.b, ack);
   Expect(!ReadRawFrames(pair.b, raw, 1).empty(), "an ack releases the next window");
   Expect(inbox.closes.load() == 0, "and the transport is healthy");
@@ -210,7 +222,7 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   const int far = relay.TakeClientFd();
   Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
-  constexpr int kChunks = 200;
+  constexpr int kChunks = ChunksFor(12.5 * 1024 * 1024);
   const TimingWindow timing;
   for (int i = 0; i < kChunks; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
@@ -223,10 +235,7 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   const double window = static_cast<double>(sender.bulk_window());
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
   const double base = std::chrono::duration<double>(sender.base_rtt()).count();
-  const double rule = sender.bulk_bandwidth() *
-                          (base + std::chrono::duration<double>(
-                                      RemoteFrameTransport::kQueueAllowance).count()) -
-                      static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
+  const double rule = RemoteFrameTransport::BulkWindowTarget(sender.bulk_bandwidth(), sender.base_rtt());
   Expect(base > 0.0 && std::abs(window - std::clamp(rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
          "the window follows bandwidth x (base RTT + allowance): window " + std::to_string(window) +
              ", rule " + std::to_string(rule));
@@ -237,6 +246,83 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
            "the window is the bandwidth-delay product plus a few ms of queue: window " +
                std::to_string(window) + ", product " + std::to_string(product));
   }
+}
+
+void TestBulkWindowClimbsBackFromItsFloor() {
+  SocketPair pair;
+  constexpr auto kRtt = std::chrono::milliseconds(40);
+  constexpr double kBytesPerSecond = 12'500'000.0;
+  DelayRelay relay(pair.b, kRtt, 500'000);
+  Inbox sender_inbox;
+  Inbox receiver_inbox;
+  RemoteFrameTransport sender;
+  RemoteFrameTransport receiver;
+  Expect(sender.Start(pair.a, pair.a, sender_inbox.Callbacks(), {}), "start the sender");
+  const int far = relay.TakeClientFd();
+  Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
+  const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
+  constexpr int kSlowChunks = ChunksFor(1.5 * 1024 * 1024);
+  for (int i = 0; i < kSlowChunks; ++i) {
+    Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
+  }
+  Expect(WaitUntil([&] { return receiver_inbox.Count() >= kSlowChunks - 2; }, std::chrono::seconds(30),
+                   std::chrono::milliseconds(5)),
+         "the slow stretch is carried");
+  const std::size_t slow_window = sender.bulk_window();
+  relay.SetBytesPerSecond(static_cast<std::uint64_t>(kBytesPerSecond));
+  constexpr int kFastChunks = ChunksFor(12.5 * 1024 * 1024);
+  const TimingWindow timing;
+  for (int i = 0; i < kFastChunks; ++i) {
+    Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
+  }
+  Expect(WaitUntil([&] { return receiver_inbox.Count() == kSlowChunks + kFastChunks; },
+                   std::chrono::seconds(60), std::chrono::milliseconds(5)),
+         "everything arrives");
+  const double seconds = std::chrono::duration<double>(timing.Elapsed()).count();
+  const double throughput = kFastChunks * static_cast<double>(chunk.size()) / seconds;
+  if (timing.Trustworthy()) {
+    Expect(throughput > kBytesPerSecond * 0.5,
+           "the window climbs back with the link: " + std::to_string(throughput / 1e6) + " MB/s, window " +
+               std::to_string(sender.bulk_window()) + " (it was " + std::to_string(slow_window) +
+               " on the slow link)");
+  }
+}
+
+void TestBulkBandwidthIgnoresCompressedAcks() {
+  SocketPair pair;
+  constexpr auto kRtt = std::chrono::milliseconds(40);
+  constexpr double kBytesPerSecond = 12'500'000.0;
+  DelayRelay relay(pair.b, kRtt, static_cast<std::uint64_t>(kBytesPerSecond));
+  Inbox sender_inbox;
+  Inbox receiver_inbox;
+  RemoteFrameTransport sender;
+  RemoteFrameTransport receiver;
+  Expect(sender.Start(pair.a, pair.a, sender_inbox.Callbacks(), {}), "start the sender");
+  const int far = relay.TakeClientFd();
+  Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
+  const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
+  constexpr int kChunks = ChunksFor(12.5 * 1024 * 1024);
+  for (int i = 0; i < kChunks; ++i) {
+    Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
+  }
+  Expect(WaitUntil([&] { return receiver_inbox.Count() >= kChunks / 4; }, std::chrono::seconds(30),
+                   std::chrono::milliseconds(1)),
+         "the transfer is under way");
+  relay.SetClientStalled(true);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  relay.SetClientStalled(false);
+  double peak = 0.0;
+  Expect(WaitUntil(
+             [&] {
+               peak = std::max(peak, sender.bulk_bandwidth());
+               return receiver_inbox.Count() == kChunks;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(1)),
+         "everything arrives");
+  Expect(peak < kBytesPerSecond * 2,
+         "bunched acks do not read as a faster link: peak " + std::to_string(peak / 1e6) + " MB/s");
+  Expect(sender.bulk_window() < 1024 * 1024,
+         "nor pin the window at its cap: " + std::to_string(sender.bulk_window()));
 }
 
 void TestBulkWindowFillsALongLink() {
@@ -252,7 +338,7 @@ void TestBulkWindowFillsALongLink() {
   const int far = relay.TakeClientFd();
   Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
-  constexpr int kChunks = 160;
+  constexpr int kChunks = ChunksFor(10.0 * 1024 * 1024);
   const TimingWindow timing;
   for (int i = 0; i < kChunks; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
@@ -265,10 +351,7 @@ void TestBulkWindowFillsALongLink() {
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
   const double window = static_cast<double>(sender.bulk_window());
   const double base = std::chrono::duration<double>(sender.base_rtt()).count();
-  const double measured_rule =
-      sender.bulk_bandwidth() *
-          (base + std::chrono::duration<double>(RemoteFrameTransport::kQueueAllowance).count()) -
-      static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
+  const double measured_rule = RemoteFrameTransport::BulkWindowTarget(sender.bulk_bandwidth(), sender.base_rtt());
   Expect(base > 0.0 && std::abs(window - std::clamp(measured_rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
          "the window follows the measured bandwidth x (base RTT + allowance): window " +
              std::to_string(window) + ", rule " + std::to_string(measured_rule));
@@ -276,10 +359,7 @@ void TestBulkWindowFillsALongLink() {
     Expect(window > static_cast<double>(RemoteFrameTransport::Options{}.bulk_window_initial),
            "the window grew past its start: window " + std::to_string(window) + "; " + timing.Describe());
   }
-  const double nominal_rule =
-      kBytesPerSecond * (std::chrono::duration<double>(kRtt).count() +
-                         std::chrono::duration<double>(RemoteFrameTransport::kQueueAllowance).count()) -
-      static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
+  const double nominal_rule = RemoteFrameTransport::BulkWindowTarget(kBytesPerSecond, kRtt);
   if (timing.Trustworthy()) {
     Expect(window >= nominal_rule * 0.80,
            "the window grew to the link's product: window " + std::to_string(window) +
@@ -339,9 +419,23 @@ void TestLyingAckCloses() {
   RemoteFrameTransport transport;
   Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
   std::string ack;
-  AppendFrame(ack, FrameType::Ack, Lane::Interactive, 0, std::string("\x10\x00\x00\x00\x00\x00\x00\x00", 8));
+  AppendFrame(ack, FrameType::Ack, Lane::Interactive, 0, AckPayload(16, 1));
   WriteAll(pair.b, ack);
   Expect(WaitUntil([&]() { return inbox.closes.load() == 1; }), "closed");
+  ::close(pair.b);
+}
+
+void TestAnAckWithoutTheReceiveClockCloses() {
+  SocketPair pair;
+  Inbox inbox;
+  RemoteFrameTransport transport;
+  Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
+  std::string ack;
+  AppendFrame(ack, FrameType::Ack, Lane::Interactive, 0, AckPayload(0, 0).substr(0, 8));
+  WriteAll(pair.b, ack);
+  Expect(WaitUntil([&]() { return inbox.closes.load() == 1; }), "closed");
+  std::lock_guard lock(inbox.mutex);
+  Expect(inbox.close_reason == "malformed ack frame", "as malformed: " + inbox.close_reason);
   ::close(pair.b);
 }
 
@@ -423,6 +517,9 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct",
           TestBulkWindowSettlesAtTheBandwidthDelayProduct);
   AddTest(tests, "RemoteFrameTransport/BulkWindowFillsALongLink", TestBulkWindowFillsALongLink);
+  AddTest(tests, "RemoteFrameTransport/BulkWindowClimbsBackFromItsFloor", TestBulkWindowClimbsBackFromItsFloor);
+  AddTest(tests, "RemoteFrameTransport/BulkBandwidthIgnoresCompressedAcks", TestBulkBandwidthIgnoresCompressedAcks);
+  AddTest(tests, "RemoteFrameTransport/AnAckWithoutTheReceiveClockCloses", TestAnAckWithoutTheReceiveClockCloses);
   AddTest(tests, "RemoteFrameTransport/GarbageFromThePeerClosesOnce",
           TestGarbageFromThePeerClosesOnce);
   AddTest(tests, "RemoteFrameTransport/PeerHangupCloses", TestPeerHangupCloses);

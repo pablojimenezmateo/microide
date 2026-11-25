@@ -13,8 +13,8 @@
 
 namespace microide::project::remote {
 
-inline constexpr std::int64_t kProtocolVersion = 5;
-inline constexpr std::int64_t kMinProtocolVersion = 3;
+inline constexpr std::int64_t kProtocolVersion = 6;
+inline constexpr std::int64_t kMinProtocolVersion = 6;
 
 namespace method {
 inline constexpr std::string_view kServerHello = "server/hello";

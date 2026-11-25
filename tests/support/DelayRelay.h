@@ -31,6 +31,7 @@ class DelayRelay {
     to_client_.from = upstream_fd_;
     to_client_.to = relay_fd_;
     to_client_.stall = &stall_to_client_;
+    to_server_.stall = &stall_to_server_;
     Start(to_server_);
     Start(to_client_);
   }
@@ -76,6 +77,12 @@ class DelayRelay {
     std::lock_guard lock(to_client_.mutex);
     to_client_.wake.notify_all();
   }
+  void SetClientStalled(bool stalled) {
+    stall_to_server_ = stalled;
+    std::lock_guard lock(to_server_.mutex);
+    to_server_.wake.notify_all();
+  }
+  void SetBytesPerSecond(std::uint64_t bytes_per_second) { bytes_per_second_ = bytes_per_second; }
   void Blackhole() { blackhole_ = true; }
 
  private:
@@ -141,10 +148,11 @@ class DelayRelay {
       }
       Chunk chunk = std::move(d.queue.front());
       d.queue.pop_front();
-      if (bytes_per_second_ != 0) {
+      const std::uint64_t bytes_per_second = bytes_per_second_.load();
+      if (bytes_per_second != 0) {
         const auto transmit = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(static_cast<double>(chunk.bytes.size()) /
-                                          static_cast<double>(bytes_per_second_)));
+                                          static_cast<double>(bytes_per_second)));
         const auto lag = std::max<std::chrono::steady_clock::duration>(transmit, kCatchUp);
         link_free = std::max(due, std::chrono::steady_clock::now() - lag) + transmit;
       }
@@ -172,9 +180,10 @@ class DelayRelay {
   int relay_fd_ = -1;
   int client_fd_ = -1;
   std::chrono::steady_clock::duration one_way_;
-  std::uint64_t bytes_per_second_ = 0;
+  std::atomic<std::uint64_t> bytes_per_second_{0};
   std::atomic_bool stop_{false};
   std::atomic_bool stall_to_client_{false};
+  std::atomic_bool stall_to_server_{false};
   std::atomic_bool blackhole_{false};
   Direction to_server_;
   Direction to_client_;

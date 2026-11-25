@@ -670,6 +670,14 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Changed
 
+- **Remote: the first connection after this upgrade restarts the host server**
+  (protocol 6, and the oldest it accepts is 6), which ends the terminals and
+  processes it was running. A transfer's acknowledgement now carries when the
+  far side received the bytes, so the bulk lane measures the link on that
+  clock: acknowledgements bunched on the way back no longer read as a faster
+  link and push a window's worth of output ahead of your keystrokes, and a
+  transfer that slowed down for a while climbs back to the link's speed
+  instead of staying at a ninth of it.
 - **A host terminal open on two machines is the size of the one you type in.**
   The terminal used to take the smaller of the two windows for as long as both
   were attached, so a laptop left connected (and suspended) kept every agent's

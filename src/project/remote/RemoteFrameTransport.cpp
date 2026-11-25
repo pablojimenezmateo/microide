@@ -31,6 +31,11 @@ std::uint64_t DecodeU64(std::string_view bytes) {
   return value;
 }
 
+std::uint64_t MicrosecondsSinceEpoch(std::chrono::steady_clock::time_point at) {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(at.time_since_epoch()).count());
+}
+
 }
 
 RemoteFrameTransport::~RemoteFrameTransport() {
@@ -247,6 +252,9 @@ bool RemoteFrameTransport::FlushWrites() {
       } else if (!bulk_.frames.empty() &&
                  bulk_bytes_sent_ - bulk_bytes_acked_ <
                      bulk_window_.load(std::memory_order_relaxed)) {
+        if (bulk_bytes_sent_ == bulk_bytes_acked_) {
+          sample_start_.reset();
+        }
         writing_ = std::move(bulk_.frames.front());
         bulk_.frames.pop_front();
         bulk_bytes_sent_ += bulk_.bulk_payload_bytes.front();
@@ -284,13 +292,14 @@ bool RemoteFrameTransport::ReadAvailable() {
   for (;;) {
     const ssize_t count = ::read(read_fd_, buffer, sizeof(buffer));
     if (count > 0) {
+      last_bulk_read_ = std::chrono::steady_clock::now();
       util::AddPerformanceCounter(util::PerfCounterId::RemoteBytesReceived,
                                   static_cast<std::uint64_t>(count));
       decoder_.Feed(std::string_view(buffer, static_cast<std::size_t>(count)));
       while (std::optional<Frame> frame = decoder_.Next()) {
         util::AddPerformanceCounter(util::PerfCounterId::RemoteFramesReceived);
         if (frame->type == FrameType::Ack) {
-          if (frame->lane != Lane::Interactive || frame->payload.size() != 8) {
+          if (frame->lane != Lane::Interactive || frame->payload.size() != kAckPayloadBytes) {
             Close("malformed ack frame");
             return false;
           }
@@ -302,6 +311,7 @@ bool RemoteFrameTransport::ReadAvailable() {
         }
         if (frame->lane == Lane::Bulk) {
           bulk_bytes_received_ += frame->payload.size();
+          bulk_received_at_ = last_bulk_read_;
           if (bulk_bytes_received_ - bulk_bytes_received_acked_ >= options_.ack_every_bytes) {
             QueueAck();
           }
@@ -340,7 +350,8 @@ bool RemoteFrameTransport::ReadAvailable() {
 
 void RemoteFrameTransport::QueueAck() {
   std::string encoded;
-  (void)AppendFrame(encoded, FrameType::Ack, Lane::Interactive, 0, EncodeU64(bulk_bytes_received_));
+  (void)AppendFrame(encoded, FrameType::Ack, Lane::Interactive, 0,
+                    EncodeU64(bulk_bytes_received_) + EncodeU64(MicrosecondsSinceEpoch(bulk_received_at_)));
   bulk_bytes_received_acked_ = bulk_bytes_received_;
   std::lock_guard lock(queue_mutex_);
   queued_bytes_ += encoded.size();
@@ -348,18 +359,24 @@ void RemoteFrameTransport::QueueAck() {
   interactive_.frames.push_back(std::move(encoded));
 }
 
+double RemoteFrameTransport::BulkWindowTarget(double bandwidth, std::chrono::steady_clock::duration base_rtt) {
+  const auto chunk = static_cast<double>(kMaxBulkChunkBytes);
+  const double round_trip_bytes = bandwidth * std::chrono::duration<double>(base_rtt).count() - chunk;
+  const double queue_bytes = std::max(bandwidth * std::chrono::duration<double>(kQueueAllowance).count(), chunk);
+  return round_trip_bytes + queue_bytes;
+}
+
 void RemoteFrameTransport::RetargetBulkWindow() {
-  const double horizon =
-      base_rtt_.has_value() ? std::chrono::duration<double>(*base_rtt_ + kQueueAllowance).count()
-                            : 0.1;
-  const double chunk = base_rtt_.has_value() ? static_cast<double>(kMaxBulkChunkBytes) : 0.0;
-  const auto target = static_cast<std::size_t>(std::max(0.0, bulk_bandwidth_ * horizon - chunk));
-  bulk_window_.store(std::clamp(target, options_.bulk_window_floor, options_.bulk_window_cap),
+  const double target = base_rtt_.has_value() ? BulkWindowTarget(bulk_bandwidth_, *base_rtt_)
+                                              : bulk_bandwidth_ * 0.1;
+  bulk_window_.store(std::clamp(static_cast<std::size_t>(target), options_.bulk_window_floor,
+                                options_.bulk_window_cap),
                      std::memory_order_relaxed);
 }
 
 void RemoteFrameTransport::HandleAck(std::string_view payload) {
-  const std::uint64_t acked = DecodeU64(payload);
+  const std::uint64_t acked = DecodeU64(payload.substr(0, 8));
+  const std::uint64_t received_us = DecodeU64(payload.substr(8, 8));
   if (acked > bulk_bytes_sent_ || acked < bulk_bytes_acked_) {
     Close("ack outside the bytes sent");
     return;
@@ -378,29 +395,38 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
     base_rtt_us_.store(std::chrono::duration_cast<std::chrono::microseconds>(*base_rtt_).count(),
                        std::memory_order_relaxed);
   }
+  bulk_bytes_acked_ = acked;
+  if (fixed_bulk_window_.load(std::memory_order_relaxed) != 0) {
+    return;
+  }
   bool sender_was_waiting = false;
   {
     std::lock_guard lock(queue_mutex_);
     sender_was_waiting = !bulk_.frames.empty();
   }
-  if (sender_was_waiting && fixed_bulk_window_.load(std::memory_order_relaxed) == 0 &&
-      last_ack_time_ != std::chrono::steady_clock::time_point{} &&
-      acked - last_ack_bytes_ >= 16 * 1024) {
-    const double seconds = std::chrono::duration<double>(now - last_ack_time_).count();
-    if (seconds > 0.0) {
-      const double sample = static_cast<double>(acked - last_ack_bytes_) / seconds;
-      bulk_bandwidth_ = bulk_bandwidth_ > 0.0 ? bulk_bandwidth_ + (sample - bulk_bandwidth_) / 8.0
-                                              : sample;
-      bulk_bandwidth_seen_.store(bulk_bandwidth_, std::memory_order_relaxed);
-      RetargetBulkWindow();
-    }
-  } else if (base_rtt_dropped && bulk_bandwidth_ > 0.0 &&
-             fixed_bulk_window_.load(std::memory_order_relaxed) == 0) {
+  if (const std::optional<double> sample = BandwidthSample(acked, received_us, sender_was_waiting)) {
+    bulk_bandwidth_ = bulk_bandwidth_ > 0.0 ? bulk_bandwidth_ + (*sample - bulk_bandwidth_) / 8.0 : *sample;
+    bulk_bandwidth_seen_.store(bulk_bandwidth_, std::memory_order_relaxed);
+    RetargetBulkWindow();
+  } else if (base_rtt_dropped && bulk_bandwidth_ > 0.0) {
     RetargetBulkWindow();
   }
-  last_ack_time_ = now;
-  last_ack_bytes_ = acked;
-  bulk_bytes_acked_ = acked;
+}
+
+std::optional<double> RemoteFrameTransport::BandwidthSample(std::uint64_t acked, std::uint64_t received_us,
+                                                            bool sender_was_waiting) {
+  if (!sender_was_waiting || !sample_start_.has_value() || received_us < sample_start_->second) {
+    sample_start_.emplace(acked, received_us);
+    return std::nullopt;
+  }
+  const std::uint64_t span_us = received_us - sample_start_->second;
+  const std::uint64_t bytes = acked - sample_start_->first;
+  constexpr auto kMinSpanUs = std::chrono::duration_cast<std::chrono::microseconds>(kMinBandwidthSpan).count();
+  if (span_us < static_cast<std::uint64_t>(kMinSpanUs) || bytes < kMaxBulkChunkBytes / 2) {
+    return std::nullopt;
+  }
+  sample_start_.emplace(acked, received_us);
+  return static_cast<double>(bytes) * 1e6 / static_cast<double>(span_us);
 }
 
 }

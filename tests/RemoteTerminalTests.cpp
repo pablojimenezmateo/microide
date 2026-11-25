@@ -253,28 +253,6 @@ void TestHostTerminalEditorFallsBackAndIsAbandoned() {
   const auto identity = [](const std::filesystem::path& path) { return path; };
   WriteFile(root / "note.txt", "note\n");
 
-  {
-    auto old_client = remote::RemoteServerClient::Create();
-    const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
-    std::string error;
-    Expect(fd >= 0 && old_client->ConnectFds(fd, fd, remote::HelloRequest{.protocol = 4, .release = "old"}, &error),
-           "a version 4 client connects: " + error);
-    TerminalSession session;
-    TerminalSessionTestAccess::Reset(session, 24, 80);
-    auto channel = remote::RemoteTerminalChannel::Open(
-        old_client, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}}, session,
-        identity);
-    Expect(channel != nullptr, "its terminal opens");
-    TerminalSessionTestAccess::EnterHostMode(session, channel);
-    TypeLine(session, prefix + "\"$EDITOR\" note.txt; echo OLD=$?");
-    Expect(WaitForText(session, "OLD=0"), [&] { return "the helper runs the terminal editor:\n" + ScreenText(session); });
-    Expect(util::ReadTextFile(mark) == "terminal-editor note.txt\n",
-           "with its own arguments: " + util::ReadTextFile(mark).value_or("<nothing>"));
-    Expect(!session.ConsumeHostRequests().edit.has_value(), "and the old client is sent nothing it cannot decode");
-    channel->Close();
-    TerminalSessionTestAccess::EnterHostMode(session, nullptr);
-  }
-
   auto client = Connect(dir);
   TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
