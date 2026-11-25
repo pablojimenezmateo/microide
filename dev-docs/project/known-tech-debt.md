@@ -142,8 +142,8 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    hash), so reset after deleting much code.
 7. **Reach the review listed and did not build:** a scripted language server
    that answers out of order (safety-plan W8); IME composition (a control-channel
-   hook for SDL's text-editing events); a Wayland cell in the soak's matrix (the
-   driver has the backend, `qa-wayland` runs it, no soak job does); the
+   hook for SDL's text-editing events); a Wayland cell in the soak's matrix
+   (DONE 2026-11-25: the `wayland` job type, offered where a weston is); the
    `project-search` overlay mode, which no run has ever shown (dead, or reachable
    only from a layout the monkey does not make -- `surface-gaps.md` lists it);
    timestamps on the app's log lines on the driver's clock, so a trace line can

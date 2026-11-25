@@ -450,6 +450,7 @@ class JobType:
     timeout: float = 1800
     project: str = ""       # empty: taskflow; "repo": the worktree itself
     matrix: bool = True     # randomize window size and ui.scale
+    env: tuple[tuple[str, str], ...] = ()  # the QA driver's environment for this job (a backend)
 
 
 # A job type whose profile is drawn afresh for each job (job_profile).
@@ -458,6 +459,10 @@ ANY_PROFILE = "*"
 
 JOB_TYPES = [
     JobType("default", 26, "default"),
+# The QA driver's Wayland backend (a headless weston per run, input through the
+# control channel): the X11 cells never meet the Wayland window, its scale or its
+# clipboard. Offered only where weston is (wayland_available).
+JobType("wayland", 3, "default", env=(("MQA_BACKEND", "wayland"), ("MQA_WAYLAND_SCALE", "2")), matrix=False),
     JobType("editing", 12, "default", "editing"),
     JobType("layout", 10, "default", "layout"),
     JobType("world", 8, "default", "world"),
@@ -524,7 +529,7 @@ RECORD_MAX_PIXELS = 1440 * 900
 def choose_recording(job_type: "JobType", rng: random.Random) -> str:
     """"" (not recorded), "1" or "chaos" for a job about to start. Nothing is
     recorded where rr cannot run (`soak.py health` says why)."""
-    if job_type.build not in RECORD_BUILDS or job_type.profile in UNRECORDED_PROFILES \
+    if job_type.build not in RECORD_BUILDS or job_type.profile in UNRECORDED_PROFILES or job_type.env \
             or recording.rr_unusable_reason() is not None:
         return ""
     if rng.random() >= RECORD_FRACTION:
@@ -718,9 +723,22 @@ def ledger() -> ld.Ledger:
     return ld.Ledger(SOAK / "ledger.jsonl", contains=has_commit)
 
 
+WESTON = Path(os.environ.get("MQA_WESTON_ROOT", str(Path.home() / ".cache" / "microide-qa" / "weston" / "root"))) \
+    / "usr" / "bin" / "weston"
+
+
+def job_runnable(job: JobType) -> bool:
+    """Whether this machine can run the job type at all: a Wayland job needs a
+    weston, on PATH or unpacked by tools/qa/weston.sh (which the soak does not
+    run: it fetches packages)."""
+    if dict(job.env).get("MQA_BACKEND") == "wayland":
+        return WESTON.exists() or shutil.which("weston") is not None
+    return True
+
+
 def choose_job(rng: random.Random, state: dict[str, Any]) -> JobType | None:
     good = state.get("good", {})
-    available = [job for job in JOB_TYPES if job.build in good and job.build in BUILDS]
+    available = [job for job in JOB_TYPES if job.build in good and job.build in BUILDS and job_runnable(job)]
     if not available:
         return None
     # Yield steering: a job type's weight grows with the distinct findings it
@@ -790,7 +808,7 @@ def start_job(job_type: JobType, state: dict[str, Any], rng: random.Random) -> J
             # A real-size cell stays one: without this a run's own resizes and
             # `ui-scale 999999` took most cells tiny within minutes.
             command += ["--min-logical", f"{TINY_LOGICAL[0]}x{TINY_LOGICAL[1]}"]
-    env = {**os.environ, "MQA_SLOW_FACTOR": str(slow), **build.env,
+    env = {**os.environ, "MQA_SLOW_FACTOR": str(slow), **build.env, **dict(job_type.env),
            # driver.log as it stands when the job dies: block-buffered, a job the
            # hard timeout killed left it empty -- even its first line -- and
            # its finding said nothing (soak dd0052b5e422, fe426d7e7bf9, a4d46bd5fdb4).
