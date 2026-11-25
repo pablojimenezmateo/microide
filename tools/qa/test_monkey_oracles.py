@@ -2178,5 +2178,67 @@ class Kill9ProcedureTests(unittest.TestCase):
         _, found, _ = self.run_kill(app, point="kill:durable.writing@c.txt#1|save", kill_at=kill_at, after=[clean])
         self.assertEqual(found, [])
 
+
+class FrameLatencyEdgeTests(unittest.TestCase):
+    App = FrameLatencyTest.FakeApp
+
+    @staticmethod
+    def frame(index, ms, reason="prepared", requested="partial", rendered="full"):
+        return (f"microide redraw frame: frame={index} reason={reason} requested={requested} rendered={rendered} "
+                f"promoted=no dirty=1 clips=1 elapsed={ms:.2f} ms bounds=0,0,0,0\n")
+
+    def oracle(self, app, slow=1.0):
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", slow):
+            return monkey_oracles.FrameLatency(app, budget=0.5)
+
+    def test_the_budget_is_stretched_by_the_slow_factor_and_held_at_its_edge(self):
+        self.assertEqual(self.oracle(self.App(), slow=3.0).budget_ms, 1500.0)
+        app = self.App()
+        oracle = self.oracle(app)
+        oracle.check()
+        app.log += self.frame(1, 500.0)
+        self.assertEqual(oracle.check(), [], "exactly the budget is within it")
+        app.log += self.frame(2, 500.5)
+        self.assertEqual(oracle.check(), [("latency", "a prepared frame took 500 ms to prepare and paint "
+                                                      "(partial requested, full rendered; budget 500 ms)")])
+
+    def test_each_reason_is_filed_once_and_another_reason_is_filed(self):
+        app = self.App()
+        oracle = self.oracle(app)
+        oracle.check()
+        app.log += self.frame(1, 900.0) + self.frame(2, 950.0, reason="event-partial")
+        first = oracle.check()
+        self.assertEqual(len(first), 1, "one finding per check")
+        self.assertIn("prepared frame", first[0][1])
+        app.log += self.frame(3, 950.0, reason="event-partial")
+        self.assertIn("event-partial frame", oracle.check()[0][1])
+
+    def test_the_evidence_is_the_trace_up_to_the_slow_frame(self):
+        app = self.App()
+        oracle = self.oracle(app)
+        oracle.check()
+        app.log += "".join(f"trace line {i}\n" for i in range(60)) + self.frame(9, 900.0) + "after\n"
+        oracle.check()
+        evidence = oracle.evidence["frame-latency.txt"].decode()
+        self.assertTrue(evidence.endswith("elapsed=900.00 ms bounds=0,0,0,0\n"), evidence[-80:])
+        self.assertNotIn("after", evidence)
+        self.assertEqual(evidence.count("\n"), 41, "forty lines before it and the frame itself")
+        self.assertNotIn("trace line 19\n", evidence)
+        self.assertIn("trace line 20\n", evidence)
+        app.log += self.frame(10, 10.0)
+        oracle.check()
+        self.assertEqual(oracle.evidence, {}, "a check that files nothing keeps none")
+
+    def test_only_the_lines_since_the_last_check_are_read(self):
+        app = self.App()
+        oracle = self.oracle(app)
+        app.log = self.frame(1, 900.0)
+        self.assertEqual(oracle.check(), [], "what was logged before the first check is not read")
+        self.assertEqual(oracle.check(), [])
+        app.log = ""
+        self.assertEqual(oracle.check(), [], "a relaunched app's log starts over")
+        app.log += self.frame(2, 900.0)
+        self.assertEqual(len(oracle.check()), 1)
+
 if __name__ == "__main__":
     unittest.main()
