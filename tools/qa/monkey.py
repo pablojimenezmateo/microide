@@ -196,6 +196,12 @@ INTERESTING_SETTINGS = ("ui.scale", "editor.wrap", "editor.font_size", "editor.c
 STRING_VALUES = ["", "x", "  ", "/nonexistent", "monospace", "DejaVu Sans Mono", "*.md", "src", "%s", "a,b"]
 SCALE_VALUES = ["1", "1.25", "1.5", "1.75", "2", "0.5", "3", "1.1"]
 
+# Readings an input method composes, and what each converts to on commit.
+IME_READINGS = ["\u304b\u3093\u3058", "\u306b\u307b\u3093\u3054", "ni hao", "\u3142\u314f\u3131", "\u0627\u0644"]
+IME_CONVERSIONS = {"\u304b\u3093\u3058": ["\u6f22\u5b57", "\u611f\u3058"],
+                   "\u306b\u307b\u3093\u3054": ["\u65e5\u672c\u8a9e"], "ni hao": ["\u4f60\u597d"],
+                   "\u3142\u314f\u3131": ["\ubc15"]}
+
 # Shell lines for the terminal source.
 TERMINAL_LINES = [
     "ls -la\n", "echo héllo wörld 你好\n", "printf '\\033[31mred\\033[0m \\033[1mbold\\033[0m\\n'\n",
@@ -676,10 +682,10 @@ def xdotool_chord(chord: str) -> str | None:
 PROFILES: dict[str, dict[str, float]] = {
     "default": {"element": 28, "text": 8, "chord": 12, "command": 7, "type": 10, "burst": 5, "drag": 4,
                 "wheel": 4, "point": 3, "setting": 3, "window": 2, "terminal": 2, "file": 3,
-                "external": 2, "kill9": 0.4},
+                "external": 2, "kill9": 0.4, "ime": 1.5},
     # Editing: text, keys, typing and saves; the data-loss oracles get the most to check.
     "editing": {"element": 8, "text": 20, "chord": 20, "type": 22, "burst": 10, "command": 6, "file": 4,
-                "wheel": 3, "external": 3, "kill9": 0.6, "setting": 2},
+                "wheel": 3, "external": 3, "kill9": 0.6, "setting": 2, "ime": 4},
     # Layout and painting: splits, drags, resizes, zoom and fractional scales (W7).
     "layout": {"element": 20, "drag": 12, "window": 8, "setting": 10, "wheel": 8, "command": 8,
                "chord": 8, "text": 6, "type": 4, "point": 4, "burst": 4},
@@ -808,7 +814,7 @@ class Monkey:
             "terminal": self.terminal_action, "file": self.file_action,
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
             "tooling": self.tooling_action, "remote": self.remote_action, "plugin": self.plugin_action,
-            "scale": self.scale_action, "diskfull": self.diskfull_action,
+            "scale": self.scale_action, "diskfull": self.diskfull_action, "ime": self.ime_action,
         }
         self._plugin_commands: list[str] | None = None
         self._tooling_ready = False
@@ -1105,6 +1111,35 @@ class Monkey:
         _, (name, texts) = self._pick([(f"type:{name}", (name, texts)) for name, texts in TEXT_CLASSES.items()])
         self.app.type(self.rng.choice(texts))
         return f"type:{name}"
+
+    def ime_action(self) -> str:
+        """An input method at work (the control channel's compose command, which
+        sends SDL's text-editing events): a few composition updates, a key the
+        composition takes in between, then a commit, a cancel, or the
+        composition left in flight for whatever comes next. Nothing may reach
+        the buffer before the commit."""
+        buffer = self.app.query("buffer")
+        revision = buffer.get("revision") if buffer.get("kind") == "editor" else None
+        reading = self.rng.choice(IME_READINGS)
+        for end in range(1, len(reading) + 1):
+            if self.rng.random() < 0.6 or end == len(reading):
+                start = self.rng.randint(0, end - 1)
+                self.app.send_line(f"compose edit {start} {self.rng.randint(0, end - start)} {reading[:end]}")
+            if self.rng.random() < 0.15:
+                self.app.key(self.rng.choice(["Left", "Right", "BackSpace", "space", "Down"]))
+        if revision is not None:
+            now = self.app.query("buffer")
+            if now.get("kind") == "editor" and now.get("path") == buffer.get("path") \
+                    and now.get("revision") != revision:
+                self._report(f"ime at step {self.step_index}",
+                             [("state", f"an IME composition changed {Path(buffer.get('path') or '').name} "
+                                        "before it was committed")])
+        ending = self.rng.choices(["commit", "cancel", "leave"], weights=[6, 2, 2])[0]
+        if ending == "commit":
+            self.app.send_line("compose commit " + self.rng.choice(IME_CONVERSIONS.get(reading, [reading])))
+        elif ending == "cancel":
+            self.app.send_line("compose cancel")
+        return f"ime:{ending}"
 
     def burst_action(self) -> str:
         """Key repeat or several actions back to back, with no settle and no

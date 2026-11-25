@@ -141,8 +141,12 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    afresh. Carrying it stays the default (llvm-cov drops changed functions by
    hash), so reset after deleting much code.
 7. **Reach the review listed and did not build:** a scripted language server
-   that answers out of order (safety-plan W8); IME composition (a control-channel
-   hook for SDL's text-editing events); a Wayland cell in the soak's matrix
+   that answers out of order (safety-plan W8); IME composition (DONE
+   2026-11-25: the `compose` control command sends SDL's text-editing events
+   through the real input path, and the monkey's `ime` source composes,
+   presses keys in between, then commits, cancels or leaves it in flight --
+   in the default and editing profiles, failing a composition that reaches the
+   buffer before its commit); a Wayland cell in the soak's matrix
    (DONE 2026-11-25: the `wayland` job type, offered where a weston is); the
    `project-search` overlay mode, which no run has ever shown (dead, or reachable
    only from a layout the monkey does not make -- `surface-gaps.md` lists it);
