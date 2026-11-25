@@ -32,10 +32,12 @@ bool OptionalRectsEqual(const std::optional<SDL_FRect>& lhs,
 ChromeMouseCoordinator::ChromeMouseCoordinator(ProjectWorkspaceState& state,
                                                MenuSurfaceState& menu_state,
                                                InteractionState& interaction_state,
+                                               Services services,
                                                Operations operations)
     : state_(state),
       menu_state_(menu_state),
       interaction_state_(interaction_state),
+      services_(services),
       operations_(std::move(operations)) {}
 
 bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
@@ -45,7 +47,7 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (menu_state_.menu_bar_open && event.button.button != SDL_BUTTON_LEFT) {
-    operations_.close_menu_bar();
+    services_.menus.CloseMenuBar();
   }
 
   if (HandleMenuButtonDown(event, layout)) {
@@ -64,7 +66,7 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       }
     }
     if (mode_row.has_overflow && Contains(mode_row.overflow_rect, event.button.x, event.button.y)) {
-      operations_.open_anchored_menu(MenuId::SidebarMode, mode_row.overflow_rect);
+      services_.menus.OpenAnchoredMenu(MenuId::SidebarMode, mode_row.overflow_rect);
       state_.surface.focus = FocusTarget::Sidebar;
       operations_.request_frame();
       return true;
@@ -146,7 +148,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     if (!Contains(WindowControlButtonHitRect(button.rect), event.button.x, event.button.y)) {
       continue;
     }
-    operations_.close_menu_bar();
+    services_.menus.CloseMenuBar();
     switch (button.id) {
       case WorkspaceShell::WindowControlButtonId::Minimize:
         operations_.set_pending_window_action(WorkspaceShell::WindowAction::Minimize);
@@ -168,7 +170,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     if (menu_state_.overflow_popup_open) {
       CloseOverflowPopupWithRedraw();
     } else {
-      operations_.close_menu_bar();
+      services_.menus.CloseMenuBar();
       OpenMenuOverflowPopup(menu_state_);
     }
     operations_.request_frame();
@@ -186,7 +188,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
         const MenuId picked = overflow_specs[*row];
         const SDL_FRect row_rect = MenuOverflowPopupRowRect(popup, *row);
         CloseOverflowPopupWithRedraw();
-        operations_.open_anchored_menu(picked, row_rect);
+        services_.menus.OpenAnchoredMenu(picked, row_rect);
         operations_.request_frame();
       }
       return true;
@@ -204,9 +206,9 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
         continue;
       }
       if (item.id == menu_state_.active_menu_id) {
-        operations_.close_menu_bar();
+        services_.menus.CloseMenuBar();
       } else {
-        operations_.open_menu_bar_menu(item.id);
+        services_.menus.OpenMenuBarMenu(item.id);
       }
       operations_.request_frame();
       return true;
@@ -222,7 +224,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
                              operations_.is_menu_item_enabled(items[row->index]);
         menu_state_.active_submenu_item_index = enabled ? static_cast<int>(row->index) : -1;
         if (enabled) {
-          operations_.execute_menu_item(menu_state_.active_submenu_id, row->index);
+          services_.menus.ExecuteMenuItem(menu_state_.active_submenu_id, row->index);
         }
       }
       operations_.request_frame();
@@ -240,14 +242,14 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
                              operations_.is_menu_item_enabled(items[row->index]);
         menu_state_.active_menu_item_index = enabled ? static_cast<int>(row->index) : -1;
         if (enabled) {
-          operations_.execute_menu_item(menu_state_.active_menu_id, row->index);
+          services_.menus.ExecuteMenuItem(menu_state_.active_menu_id, row->index);
         }
       }
       operations_.request_frame();
       return true;
     }
 
-    operations_.close_menu_bar();
+    services_.menus.CloseMenuBar();
     operations_.request_frame();
     return true;
   }
@@ -258,7 +260,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
 
   for (const auto& item : menu_bar_items) {
     if (Contains(item.rect, event.button.x, event.button.y)) {
-      operations_.open_menu_bar_menu(item.id);
+      services_.menus.OpenMenuBarMenu(item.id);
       operations_.request_frame();
       return true;
     }
@@ -320,7 +322,7 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
       continue;
     }
     if (item.id != menu_state_.active_menu_id) {
-      operations_.open_menu_bar_menu(item.id);
+      services_.menus.OpenMenuBarMenu(item.id);
       operations_.request_frame();
     }
     return true;
@@ -495,14 +497,14 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(const SDL_Event& ev
                                  menu_state_.tree_context_menu.target, row->index);
       menu_state_.tree_context_menu.active_item_index = enabled ? static_cast<int>(row->index) : -1;
       if (event.button.button == SDL_BUTTON_LEFT && enabled) {
-        operations_.execute_tree_context_menu_item(row->index);
+        services_.menus.ExecuteTreeContextMenuItem(row->index);
       }
     }
     operations_.request_frame();
     return true;
   }
 
-  operations_.close_tree_context_menu();
+  services_.menus.CloseTreeContextMenu();
   operations_.request_frame();
   return false;
 }
@@ -536,12 +538,10 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
   }
   glue_->chrome_mouse_coordinator = std::make_unique<ChromeMouseCoordinator>(
       context_.current_project_state, context_.menu_state, context_.interaction_state,
+      ChromeMouseCoordinator::Services{
+          .menus = MakeMenuCoordinator(),
+      },
       ChromeMouseCoordinator::Operations{
-          .close_menu_bar = [this]() { MakeMenuCoordinator().CloseMenuBar(); },
-          .open_anchored_menu =
-              [this](MenuId id, const SDL_FRect& anchor_rect) {
-                MakeMenuCoordinator().OpenAnchoredMenu(id, anchor_rect);
-              },
           .sidebar_mode_row = [this](const SDL_FRect& rect) { return SidebarModeRow(rect); },
           .activate_sidebar_view =
               [this](std::string_view id) {
@@ -561,15 +561,10 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
                 util::Log("microide quit: the title bar's close button");
                 RequestQuit();
               },
-          .open_menu_bar_menu = [this](MenuId id) { MakeMenuCoordinator().OpenMenuBarMenu(id); },
           .active_submenu_rect = [this](const SDL_FRect& rect) { return ActiveSubmenuRect(rect); },
           .hit_test_popup_row = [](std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x,
                                    float y) { return HitTestPopupRow(items, popup_rect, x, y); },
           .is_menu_item_enabled = [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
-          .execute_menu_item =
-              [this](MenuId id, std::size_t item_index) {
-                return MakeMenuCoordinator().ExecuteMenuItem(id, item_index);
-              },
           .compute_popup_menu_rect = [this](const SDL_FRect& menu_bar,
                                             MenuId id) { return ComputePopupMenuRect(menu_bar, id); },
           .find_menu_spec = [](MenuId id) { return WorkspaceShell::FindMenuSpec(id); },
@@ -597,9 +592,6 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
                 const auto items = WorkspaceTreeContextMenuItems(target);
                 return index < items.size() && IsMenuItemEnabled(items[index]);
               },
-          .execute_tree_context_menu_item =
-              [this](std::size_t index) { return MakeMenuCoordinator().ExecuteTreeContextMenuItem(index); },
-          .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
       });
   return *glue_->chrome_mouse_coordinator;
 }

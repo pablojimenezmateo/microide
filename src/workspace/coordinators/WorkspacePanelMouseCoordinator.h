@@ -13,8 +13,16 @@
 
 namespace microide::workspace {
 
+class TerminalPanelService;
+class MenuCoordinator;
+
 class PanelMouseCoordinator {
  public:
+  struct Services {
+    TerminalPanelService& terminal_panel;
+    MenuCoordinator& menus;
+  };
+
   struct Operations {
     std::function<bool()> bottom_panel_visible;
     std::function<SDL_FRect(const WorkspaceLayout&)> bottom_panel_resize_handle_rect;
@@ -22,13 +30,8 @@ class PanelMouseCoordinator {
         compute_bottom_panel_log_layout;
     std::function<std::size_t()> bottom_panel_line_count;
     std::function<void(int, std::size_t, int)> set_bottom_panel_scroll_row;
-    std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<SDL_FRect(const WorkspaceLayout&)> bottom_panel_content_rect;
-    std::function<std::optional<std::string>()> read_primary_selection_text;
-    std::function<void()> clear_terminal_selection;
-    std::function<void(std::string_view)> append_terminal_pending_input;
     std::function<bool(float, float)> terminal_find_mouse_down;
-    std::function<std::optional<TerminalLinkHit>(float, float)> terminal_link_at_point;
     std::function<bool(std::string_view)> open_external_url;
     std::function<std::optional<TerminalSelectionPoint>(int,
                                                            int,
@@ -43,20 +46,13 @@ class PanelMouseCoordinator {
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(float, float)> clamp_bottom_panel_height;
-    std::function<void()> sync_primary_selection_with_terminal_selection;
     std::function<const editor::SurfaceContent*()> active_plugin_surface;
     std::function<void(const std::string&)> execute_command;
-    std::function<TerminalPaneState*(const WorkspaceLayout&, float, float)> terminal_pane_at;
-    std::function<bool(const WorkspaceLayout&, float, float)> activate_terminal_pane_at;
-    std::function<std::optional<TerminalPaneDividerRect>(const WorkspaceLayout&, float, float)>
-        terminal_pane_divider_at;
-    std::function<TerminalPaneRectsLayout(const WorkspaceLayout&)> terminal_pane_rects;
-    std::function<bool(std::size_t, float)> resize_terminal_pane_divider;
-    std::function<bool(std::size_t)> reset_terminal_pane_divider;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,
                         InteractionState& interaction_state,
+                        Services services,
                         Operations operations);
 
   bool HandleResizeButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -79,6 +75,7 @@ class PanelMouseCoordinator {
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;
+  Services services_;
   Operations operations_;
 };
 

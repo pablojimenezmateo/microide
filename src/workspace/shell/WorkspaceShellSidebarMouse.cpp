@@ -24,6 +24,10 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
   }
   glue_->sidebar_mouse_coordinator = std::make_unique<SidebarMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
+      SidebarMouseCoordinator::Services{
+          .sidebar = MakeSidebarService(),
+          .menus = MakeMenuCoordinator(),
+      },
       SidebarMouseCoordinator::Operations{
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .begin_project_search_edit =
@@ -45,23 +49,16 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const std::filesystem::path& path, std::size_t line, std::size_t column) {
                 OpenFileAtLocation(path, line, column);
               },
-          .restore_previous_sidebar = [this]() { MakeSidebarService().RestorePrevious(); },
           .seed_buffer_search_from_project_search =
               [this]() { OpenBufferSearchFromProjectSearchResult(); },
           .can_stage_all_git_sidebar_entries = [this]() { return CanStageAllGitSidebarEntries(); },
-          .stage_all_git_sidebar_entries = [this]() { return MakeSidebarService().StageAllGitEntries(); },
           .can_open_git_commit_button = [this]() { return CanOpenGitCommitButton(); },
           .open_git_commit_workflow = [this]() { return OpenCommitWorkflow(); },
           .confirm_commit_workflow = [this]() { return RequestCommitWorkflowCommit(); },
           .can_discard_all_git_sidebar_entries =
               [this]() { return CanDiscardAllGitSidebarEntries(); },
-          .open_discard_all_git_sidebar_prompt = [this]() { MakeSidebarService().OpenDiscardAllGitPrompt(); },
           .git_sidebar_outgoing_base_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarOutgoingBaseButtonRect(rect); },
-          .open_anchored_menu =
-              [this](MenuId id, const SDL_FRect& rect) {
-                MakeMenuCoordinator().OpenAnchoredMenu(id, rect);
-              },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
@@ -104,22 +101,14 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeProblemsSidebarListLayout(rect, count);
               },
-          .reveal_selected_problems_sidebar_line =
-              [this]() { MakeSidebarService().RevealSelectedProblemsLine(); },
-          .open_selected_problem_sidebar_item = [this]() { return MakeSidebarService().OpenProblemItem(); },
           .compute_tests_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeTestsSidebarListLayout(rect, count);
               },
-          .reveal_selected_tests_sidebar_line =
-              [this]() { MakeSidebarService().RevealSelectedTestsLine(); },
-          .open_selected_test_sidebar_item = [this]() { return MakeSidebarService().OpenTestItem(); },
-          .run_selected_test_sidebar_item = [this]() { return MakeSidebarService().RunTestItem(); },
           .compute_plugin_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputePluginSidebarListLayout(rect, count);
               },
-          .reveal_selected_plugin_sidebar_line = [this]() { MakeSidebarService().RevealSelectedPluginLine(); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
           .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
           .can_collapse_tree =
@@ -127,15 +116,8 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
           .tree_sidebar_collapse_button_rect =
               [this](const SDL_FRect& rect) { return TreeSidebarCollapseButtonRect(rect); },
           .collapse_all_tree = [this]() { context_.current_project_state.directory_tree.CollapseAll(); },
-          .reveal_selected_tree_sidebar_line = [this]() { MakeSidebarService().RevealSelectedTreeLine(); },
           .tree_sidebar_refresh_button_rect =
               [this](const SDL_FRect& rect) { return TreeSidebarRefreshButtonRect(rect); },
-          .open_tree_context_menu =
-              [this](TreeContextTargetKind target,
-                     const std::filesystem::path& path,
-                     const SDL_FRect& rect) {
-                MakeMenuCoordinator().OpenTreeContextMenu(target, path, rect);
-              },
           .compute_tree_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeTreeSidebarListLayout(rect, count);

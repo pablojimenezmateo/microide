@@ -13,11 +13,15 @@
 
 namespace microide::workspace {
 
+class MenuCoordinator;
+
 class ChromeMouseCoordinator {
  public:
+  struct Services {
+    MenuCoordinator& menus;
+  };
+
   struct Operations {
-    std::function<void()> close_menu_bar;
-    std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
     std::function<SidebarModeRowLayout(const SDL_FRect&)> sidebar_mode_row;
     std::function<void(std::string_view)> activate_sidebar_view;
     std::function<void()> request_frame;
@@ -30,13 +34,11 @@ class ChromeMouseCoordinator {
         compute_visible_window_control_buttons;
     std::function<void(WorkspaceShell::WindowAction)> set_pending_window_action;
     std::function<void()> request_quit;
-    std::function<void(MenuId)> open_menu_bar_menu;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&)> active_submenu_rect;
     std::function<std::optional<PopupRowGeometry>(
         std::span<const MenuItemSpec>, const SDL_FRect&, float, float)>
         hit_test_popup_row;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
-    std::function<bool(MenuId, std::size_t)> execute_menu_item;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
     std::function<const MenuSpec*(MenuId)> find_menu_spec;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
@@ -58,13 +60,12 @@ class ChromeMouseCoordinator {
         TreeContextTargetKind, const SDL_FRect&, float, float)>
         hit_test_tree_context_menu_row;
     std::function<bool(TreeContextTargetKind, std::size_t)> is_tree_context_menu_item_enabled_at;
-    std::function<bool(std::size_t)> execute_tree_context_menu_item;
-    std::function<void()> close_tree_context_menu;
   };
 
   ChromeMouseCoordinator(ProjectWorkspaceState& state,
                          MenuSurfaceState& menu_state,
                          InteractionState& interaction_state,
+                         Services services,
                          Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -99,6 +100,7 @@ class ChromeMouseCoordinator {
   ProjectWorkspaceState& state_;
   MenuSurfaceState& menu_state_;
   InteractionState& interaction_state_;
+  Services services_;
   Operations operations_;
 };
 

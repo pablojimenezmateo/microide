@@ -7,6 +7,7 @@
 #include "workspace/SidebarMetrics.h"
 #include "util/PathMatch.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -144,7 +145,7 @@ bool SidebarMouseCoordinator::CancelPathDrag() {
 
 void SidebarMouseCoordinator::ActivateTreeSelection() {
   const auto opened = state_.directory_tree.ActivateSelection();
-  operations_.reveal_selected_tree_sidebar_line();
+  services_.sidebar.RevealSelectedTreeLine();
   if (opened.has_value()) {
     operations_.open_file(*opened);
     state_.surface.focus = FocusTarget::Sidebar;

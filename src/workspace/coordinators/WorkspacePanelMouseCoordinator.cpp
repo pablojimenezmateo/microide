@@ -44,9 +44,11 @@ std::optional<std::size_t> BottomPanelLineIndexAtPoint(
 
 PanelMouseCoordinator::PanelMouseCoordinator(ProjectWorkspaceState& state,
                                              InteractionState& interaction_state,
+                                             Services services,
                                              Operations operations)
     : state_(state),
       interaction_state_(interaction_state),
+      services_(services),
       operations_(std::move(operations)) {}
 
 bool PanelMouseCoordinator::HandleResizeButtonDown(const SDL_Event& event,
@@ -74,11 +76,11 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       Contains(operations_.bottom_panel_content_rect(layout), event.button.x, event.button.y)) {
     const float x = static_cast<float>(event.button.x);
     const float y = static_cast<float>(event.button.y);
-    if (event.button.button == SDL_BUTTON_LEFT && operations_.terminal_pane_divider_at) {
-      if (const auto divider = operations_.terminal_pane_divider_at(layout, x, y);
+    if (event.button.button == SDL_BUTTON_LEFT) {
+      if (const auto divider = services_.terminal_panel.DividerAt(layout, x, y);
           divider.has_value()) {
         if (event.button.clicks >= 2) {
-          operations_.reset_terminal_pane_divider(divider->boundary);
+          services_.terminal_panel.ResetActiveTabDivider(divider->boundary);
           interaction_state_.drag_target = DragTarget::None;
           return true;
         }
@@ -88,7 +90,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         return true;
       }
     }
-    util::InvokeIfSet(operations_.activate_terminal_pane_at, layout, x, y);
+    services_.terminal_panel.ActivatePaneAt(layout, x, y);
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_visible()) {
@@ -149,19 +151,17 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (event.button.button == SDL_BUTTON_RIGHT &&
         Contains(panel_content, event.button.x, event.button.y)) {
       state_.surface.focus = FocusTarget::Panel;
-      operations_.open_anchored_menu(
-          MenuId::TerminalContext,
-          MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+      services_.menus.OpenAnchoredMenu(MenuId::TerminalContext, MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                    1.0f));
       return true;
     }
     if (event.button.button == SDL_BUTTON_MIDDLE &&
         Contains(panel_content, event.button.x, event.button.y)) {
-      if (const auto text = operations_.read_primary_selection_text(); text.has_value()) {
-        operations_.clear_terminal_selection();
+      if (const auto text = services_.terminal_panel.ReadPrimarySelectionText(); text.has_value()) {
+        services_.terminal_panel.ClearTerminalSelection();
         if (auto* terminal_tab = state_.active_terminal_pane()) {
           terminal_tab->follow_tail = true;
-          operations_.append_terminal_pending_input(*text);
+          services_.terminal_panel.AppendTerminalPendingInput(*text);
           terminal_tab->session.PasteText(*text);
         }
       }
@@ -184,8 +184,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (auto* terminal_tab = ActivePanelTerminalPane()) {
     const SDL_FRect panel_content = operations_.bottom_panel_content_rect(layout);
     if (Contains(panel_content, event.button.x, event.button.y)) {
-      if (const auto link = operations_.terminal_link_at_point(static_cast<float>(event.button.x),
-                                                               static_cast<float>(event.button.y));
+      if (const auto link = services_.terminal_panel.TerminalLinkAtPoint(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
           link.has_value()) {
         const std::string* url = &link->target;
         if (url->starts_with("file://")) {
@@ -266,10 +265,10 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         terminal_tab->mouse_selecting = true;
         terminal_tab->follow_tail = false;
       } else {
-        operations_.clear_terminal_selection();
+        services_.terminal_panel.ClearTerminalSelection();
       }
     } else {
-      operations_.clear_terminal_selection();
+      services_.terminal_panel.ClearTerminalSelection();
     }
     state_.surface.focus = FocusTarget::Panel;
   }
@@ -351,7 +350,7 @@ bool PanelMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
     if (terminal_tab->mouse_selecting) {
       terminal_tab->mouse_selecting = false;
       selection_autoscroll::Disarm(interaction_state_);
-      operations_.sync_primary_selection_with_terminal_selection();
+      services_.terminal_panel.SyncPrimarySelectionWithTerminalSelection();
       return true;
     }
   }
@@ -362,16 +361,12 @@ bool PanelMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
 bool PanelMouseCoordinator::HandleDrag(const SDL_Event& event,
                                        const WorkspaceLayout& layout) {
   if (interaction_state_.drag_target == DragTarget::TerminalPaneDivider) {
-    if (!operations_.terminal_pane_rects || !operations_.resize_terminal_pane_divider) {
-      return false;
-    }
     const std::size_t boundary = interaction_state_.drag_terminal_pane_boundary;
-    for (const TerminalPaneDividerRect& divider : operations_.terminal_pane_rects(layout).dividers) {
+    for (const TerminalPaneDividerRect& divider : services_.terminal_panel.PaneRects(layout).dividers) {
       if (divider.boundary != boundary || divider.pair_extent <= 0.0f) {
         continue;
       }
-      operations_.resize_terminal_pane_divider(
-          boundary, (static_cast<float>(event.motion.x) - divider.pair_start) / divider.pair_extent);
+      services_.terminal_panel.ResizeActiveTabDivider(boundary, (static_cast<float>(event.motion.x) - divider.pair_start) / divider.pair_extent);
       return true;
     }
     return false;
@@ -449,7 +444,7 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
         } else if ((event.motion.state & SDL_BUTTON_RMASK) != 0) {
           button = terminal::TerminalSession::MouseButton::Right;
         }
-        operations_.clear_terminal_selection();
+        services_.terminal_panel.ClearTerminalSelection();
         terminal_tab->session.SendMouseMotion(button, viewport_position->row,
                                               viewport_position->column,
                                               render::ToKeyModifiers(interaction_state_.key_modifiers));
@@ -513,7 +508,7 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
       if (const auto layout = operations_.current_workspace_layout();
           layout.has_value() &&
           Contains(operations_.bottom_panel_content_rect(*layout), event.motion.x, event.motion.y)) {
-        link = operations_.terminal_link_at_point(event.motion.x, event.motion.y);
+        link = services_.terminal_panel.TerminalLinkAtPoint(event.motion.x, event.motion.y);
       }
     }
     bool changed = false;
@@ -546,7 +541,7 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
         const auto button = vertical_ticks > 0 ? terminal::TerminalSession::MouseButton::WheelUp
                                                : terminal::TerminalSession::MouseButton::WheelDown;
         const int step_count = std::abs(vertical_ticks);
-        operations_.clear_terminal_selection();
+        services_.terminal_panel.ClearTerminalSelection();
         for (int i = 0; i < step_count; ++i) {
           terminal_tab->session.SendMouseButton(button, true, viewport_position->row,
                                                 viewport_position->column,
@@ -562,23 +557,21 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
     return false;
   }
 
-  if (operations_.terminal_pane_at) {
-    TerminalPaneState* pane = operations_.terminal_pane_at(
-        layout, static_cast<float>(event.wheel.mouse_x), static_cast<float>(event.wheel.mouse_y));
-    if (pane != nullptr && pane != state_.active_terminal_pane()) {
-      const std::size_t line_count = pane->session.LineCount();
-      const int visible_rows =
-          operations_.compute_bottom_panel_log_layout(layout, line_count).scroll.visible_rows;
-      const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
-      const int current = pane->follow_tail
-                              ? max_scroll
-                              : ClampScrollRowToContent(pane->scroll_row, line_count, visible_rows);
-      const int target = ClampScrollRowToContent(current - vertical_ticks * kWheelScrollRows,
-                                                 line_count, visible_rows);
-      pane->scroll_row = target;
-      pane->follow_tail = target >= max_scroll;
-      return true;
-    }
+  TerminalPaneState* pane = services_.terminal_panel.PaneAt(
+      layout, static_cast<float>(event.wheel.mouse_x), static_cast<float>(event.wheel.mouse_y));
+  if (pane != nullptr && pane != state_.active_terminal_pane()) {
+    const std::size_t line_count = pane->session.LineCount();
+    const int visible_rows =
+        operations_.compute_bottom_panel_log_layout(layout, line_count).scroll.visible_rows;
+    const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
+    const int current = pane->follow_tail
+                            ? max_scroll
+                            : ClampScrollRowToContent(pane->scroll_row, line_count, visible_rows);
+    const int target = ClampScrollRowToContent(current - vertical_ticks * kWheelScrollRows,
+                                               line_count, visible_rows);
+    pane->scroll_row = target;
+    pane->follow_tail = target >= max_scroll;
+    return true;
   }
 
   ScrollPanelRows(layout, -vertical_ticks * kWheelScrollRows);
@@ -654,7 +647,7 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
     return false;
   }
 
-  operations_.clear_terminal_selection();
+  services_.terminal_panel.ClearTerminalSelection();
   terminal_tab->session.SendMouseButton(mouse_button, pressed, viewport_position->row,
                                         viewport_position->column,
                                         render::ToKeyModifiers(interaction_state_.key_modifiers));
@@ -668,6 +661,10 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
   }
   glue_->panel_mouse_coordinator = std::make_unique<PanelMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
+      PanelMouseCoordinator::Services{
+          .terminal_panel = MakeTerminalPanelService(),
+          .menus = MakeMenuCoordinator(),
+      },
       PanelMouseCoordinator::Operations{
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_resize_handle_rect =
@@ -694,16 +691,8 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
           .set_bottom_panel_scroll_row = [this](
                                              int row, std::size_t count,
                                              int visible_rows) { SetBottomPanelScrollRow(row, count, visible_rows); },
-          .open_anchored_menu = [this](MenuId id,
-                                       const SDL_FRect& rect) { MakeMenuCoordinator().OpenAnchoredMenu(id, rect); },
           .bottom_panel_content_rect = [](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
-          .read_primary_selection_text = [this]() { return MakeTerminalPanelService().ReadPrimarySelectionText(); },
-          .clear_terminal_selection = [this]() { MakeTerminalPanelService().ClearTerminalSelection(); },
-          .append_terminal_pending_input =
-              [this](std::string_view input) { MakeTerminalPanelService().AppendTerminalPendingInput(input); },
           .terminal_find_mouse_down = [this](float x, float y) { return HandleTerminalFindMouseDown(x, y); },
-          .terminal_link_at_point = [this](float x,
-                                           float y) { return MakeTerminalPanelService().TerminalLinkAtPoint(x, y); },
           .open_external_url =
               [this](std::string_view url) {
                 return MakeTerminalPanelService().OpenUrlForPane(
@@ -726,8 +715,6 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
               [](float desired_height, float window_height) {
                 return ClampBottomPanelHeight(desired_height, window_height);
               },
-          .sync_primary_selection_with_terminal_selection =
-              [this]() { MakeTerminalPanelService().SyncPrimarySelectionWithTerminalSelection(); },
           .active_plugin_surface = [this]() -> const editor::SurfaceContent* {
             const auto& panel = context_.current_project_state.panel;
             const auto* pres = context_.current_project_state.plugin_presentation_if_present();
@@ -738,21 +725,6 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
                 std::string error_message;
                 ExecuteCommandName(command, {}, ActionSource::Command, &error_message);
               },
-          .terminal_pane_at = [this](const WorkspaceLayout& layout, float x,
-                                     float y) { return MakeTerminalPanelService().PaneAt(layout, x, y); },
-          .activate_terminal_pane_at = [this](
-                                           const WorkspaceLayout& layout, float x,
-                                           float y) { return MakeTerminalPanelService().ActivatePaneAt(layout, x, y); },
-          .terminal_pane_divider_at = [this](const WorkspaceLayout& layout, float x,
-                                             float y) { return MakeTerminalPanelService().DividerAt(layout, x, y); },
-          .terminal_pane_rects =
-              [this](const WorkspaceLayout& layout) { return MakeTerminalPanelService().PaneRects(layout); },
-          .resize_terminal_pane_divider =
-              [this](std::size_t boundary, float share) {
-                return MakeTerminalPanelService().ResizeActiveTabDivider(boundary, share);
-              },
-          .reset_terminal_pane_divider =
-              [this](std::size_t boundary) { return MakeTerminalPanelService().ResetActiveTabDivider(boundary); },
       });
   return *glue_->panel_mouse_coordinator;
 }
