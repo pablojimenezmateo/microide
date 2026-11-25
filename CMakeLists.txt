@@ -2085,6 +2085,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   add_executable(microide_perf
     src/app/DirtyRegionPolicy.cpp
     $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+    $<TARGET_OBJECTS:microide_kernel>
   $<TARGET_OBJECTS:microide_core>
     tests/perf/AllocationCounter.cpp
     tests/perf/PerfCpuAffinity.cpp
