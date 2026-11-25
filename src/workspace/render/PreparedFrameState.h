@@ -291,6 +291,24 @@ class PaintPassExtent {
   static bool CoversThunk(const void* extent, const SDL_FRect& drawn) {
     return static_cast<const PaintPassExtent*>(extent)->Covers(drawn);
   }
+  std::string Describe() const {
+    std::string out;
+    const auto append = [&out](const SDL_FRect& r) {
+      out += out.empty() ? "" : ";";
+      out += std::to_string(static_cast<int>(r.x)) + "," + std::to_string(static_cast<int>(r.y)) + "," +
+             std::to_string(static_cast<int>(r.w)) + "," + std::to_string(static_cast<int>(r.h));
+    };
+    for (const SDL_FRect& r : rects_) {
+      append(r);
+    }
+    if (spill_.has_value()) {
+      append(*spill_);
+    }
+    return out.empty() ? std::string("none") : out;
+  }
+  static std::string DescribeThunk(const void* extent) {
+    return static_cast<const PaintPassExtent*>(extent)->Describe();
+  }
 
  private:
   util::InlineVector<SDL_FRect, kSeparateRects> rects_;

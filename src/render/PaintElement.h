@@ -18,6 +18,7 @@ struct PaintOverrun {
   SDL_FRect element_logical{};
   SDL_FRect draw_logical{};
   SDL_FPoint scale{1.0f, 1.0f};
+  std::string extent;
 };
 
 bool PaintOverrunRecordingEnabled();
@@ -30,7 +31,9 @@ std::vector<PaintOverrun> TakePaintOverruns();
 class PaintPassScope {
  public:
   using Covers = bool (*)(const void* context, const SDL_FRect& visible);
-  PaintPassScope(SDL_Renderer* renderer, std::string_view name, Covers covers, const void* context);
+  using Describe = std::string (*)(const void* context);
+  PaintPassScope(SDL_Renderer* renderer, std::string_view name, Covers covers, const void* context,
+                 Describe describe = nullptr);
   ~PaintPassScope();
   PaintPassScope(const PaintPassScope&) = delete;
   PaintPassScope& operator=(const PaintPassScope&) = delete;
@@ -39,6 +42,7 @@ class PaintPassScope {
  private:
   std::string name_;
   Covers covers_ = nullptr;
+  Describe describe_ = nullptr;
   const void* context_ = nullptr;
   PaintPassScope* parent_ = nullptr;
 };

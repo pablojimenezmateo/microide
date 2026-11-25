@@ -257,6 +257,37 @@ void TestAPaintElementClipsAndReportsADrawPastItsRect() {
 }
 }
 
+namespace {
+
+bool CoversOnlyTheLeftEighty(const void*, const SDL_FRect& drawn) {
+  return drawn.x >= 0.0f && drawn.x + drawn.w <= 80.0f + 1.0f;
+}
+
+void TestAPassIsHeldToWhatItDrawsInsideTheWindow() {
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(100, 60);
+  SDL_Renderer* renderer = canvas.renderer();
+  const bool was = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
+  {
+    const render::PaintPassScope pass(renderer, "editor", &CoversOnlyTheLeftEighty, nullptr);
+    render::FillRect(renderer, SDL_FRect{0.0f, 0.0f, 100.0f, 10.0f}, SDL_Color{0, 255, 0, 255});
+  }
+  const std::vector<render::PaintOverrun> inside = render::TakePaintOverruns();
+  {
+    const render::PaintPassScope pass(renderer, "editor", &CoversOnlyTheLeftEighty, nullptr);
+    render::FillRect(renderer, SDL_FRect{0.0f, 20.0f, 79.0f, 10.0f}, SDL_Color{0, 255, 0, 255});
+    render::FillRect(renderer, SDL_FRect{100.0f, 20.0f, 30.0f, 10.0f}, SDL_Color{0, 255, 0, 255});
+  }
+  const std::vector<render::PaintOverrun> beyond = render::TakePaintOverruns();
+  render::SetPaintOverrunRecording(was);
+  Expect(inside.size() == 1, "a pass drawing over the window's last twenty columns, outside its extent, is reported");
+  Expect(beyond.empty(), "but a draw past the window's edge paints nothing and is not an overrun");
+}
+
+}
+
 void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ScopedRenderClip/NarrowsToTheOuterClip", TestNarrowsToTheOuterClip);
   AddTest(tests, "ScopedRenderClip/NarrowsInDevicePixelsAtAFractionalScale",
@@ -269,6 +300,7 @@ void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
           TestSnapToDevicePixelsIsWholeIdempotentAndKeepsEmptyEmpty);
   AddTest(tests, "ScopedRenderClip/APaintElementClipsAndReportsADrawPastItsRect",
           TestAPaintElementClipsAndReportsADrawPastItsRect);
+  AddTest(tests, "ScopedRenderClip/APassIsHeldToWhatItDrawsInsideTheWindow", TestAPassIsHeldToWhatItDrawsInsideTheWindow);
 }
 
 }

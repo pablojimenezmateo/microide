@@ -62,8 +62,9 @@ std::vector<PaintOverrun> TakePaintOverruns() {
   return taken;
 }
 
-PaintPassScope::PaintPassScope(SDL_Renderer* renderer, std::string_view name, Covers covers, const void* context)
-    : covers_(covers), context_(context), parent_(t_pass) {
+PaintPassScope::PaintPassScope(SDL_Renderer* renderer, std::string_view name, Covers covers, const void* context,
+                               Describe describe)
+    : covers_(covers), describe_(describe), context_(context), parent_(t_pass) {
   (void)renderer;
   if (RecordingFlag()) {
     name_ = "pass:";
@@ -91,6 +92,13 @@ void PaintPassScope::Check(SDL_Renderer* renderer, const SDL_FRect& logical) con
   if (t_innermost != nullptr && !intersect(t_innermost->logical())) {
     return;
   }
+  if (int width = 0, height = 0; SDL_GetCurrentRenderOutputSize(renderer, &width, &height)) {
+    const SDL_FPoint scale = device_pixel_snap_detail::DeviceScale(renderer);
+    if (scale.x > 0.0f && scale.y > 0.0f &&
+        !intersect(SDL_FRect{0.0f, 0.0f, static_cast<float>(width) / scale.x, static_cast<float>(height) / scale.y})) {
+      return;
+    }
+  }
   if (SDL_RenderClipEnabled(renderer)) {
     SDL_Rect clip{};
     if (SDL_GetRenderClipRect(renderer, &clip) &&
@@ -105,7 +113,8 @@ void PaintPassScope::Check(SDL_Renderer* renderer, const SDL_FRect& logical) con
   if (std::none_of(t_overruns.begin(), t_overruns.end(),
                    [this](const PaintOverrun& seen) { return seen.element == name_; })) {
     t_overruns.push_back(PaintOverrun{name_, SDL_Rect{}, SnapToDevicePixels(renderer, visible), SDL_FRect{}, visible,
-                                      device_pixel_snap_detail::DeviceScale(renderer)});
+                                      device_pixel_snap_detail::DeviceScale(renderer),
+                                      describe_ != nullptr ? describe_(context_) : std::string()});
   }
 }
 

@@ -74,7 +74,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   }
   const auto pass_scope = [&](PaintPass paint_pass, std::string_view name) {
     return render::PaintPassScope(renderer, name, &PaintPassExtent::CoversThunk,
-                                  &passes.extents[static_cast<std::size_t>(paint_pass)]);
+                                  &passes.extents[static_cast<std::size_t>(paint_pass)], &PaintPassExtent::DescribeThunk);
   };
   if (!skip_editor_surface) {
     const render::PaintPassScope pass = pass_scope(PaintPass::Editor, "editor");
