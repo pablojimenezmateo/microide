@@ -614,7 +614,7 @@ void WorkspaceShell::Bootstrapper::WireTabStrip() const {
           .close_terminal_tab =
               [shell](std::size_t index) { shell->MakeTerminalPanelService().CloseTerminalTab(index); },
           .request_bottom_panel_frame = [shell]() { shell->RequestPreparedFrame(); },
-          .request_tab_strip_redraw = [shell]() { shell->RequestPreparedFrame(); },
+          .request_frame = [shell]() { shell->RequestPreparedFrame(); },
       });
 }
 
@@ -681,8 +681,6 @@ void WorkspaceShell::Bootstrapper::WireDebug() const {
           .notify_stop_resolved =
               [shell]() { shell->control_channel_service_.OnDebugStopped(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
-          .request_debug_pane_redraw = [shell]() { shell->RequestPreparedFrame(); },
-          .request_editor_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .queue_editor_hover_refresh = [shell]() { shell->QueueEditorHoverRefresh(); },
           .focus_source_location =
               [shell](const std::filesystem::path& path, std::size_t line) {
@@ -898,7 +896,6 @@ void WorkspaceShell::Bootstrapper::WireAssist() const {
           .finish_tracked_lsp_request = [shell]() { shell->FinishTrackedLspRequest(); },
           .show_overlay = [shell](OverlayMode mode) { shell->ShowOverlay(mode); },
           .dismiss_overlay = [shell](bool focus_editor) { shell->DismissOverlay(focus_editor); },
-          .request_overlay_redraw = [shell]() { shell->RequestPreparedFrame(); },
           .reset_caret_blink = [shell]() { shell->ResetCaretBlink(); },
           .request_frame = [shell]() { shell->RequestPreparedFrame(); },
           .note_active_editable_edit =

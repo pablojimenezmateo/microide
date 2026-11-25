@@ -298,8 +298,8 @@ bool WorkspaceTabStripChrome::ScrollEditorTabStripForGroup(std::size_t group_ind
   }
   const bool scrolled =
       tab_strip_service_->ScrollEditorTabStrip(state.editor_groups[group_index], group_index, direction);
-  if (scrolled && operations_.request_tab_strip_redraw) {
-    operations_.request_tab_strip_redraw();
+  if (scrolled && operations_.request_frame) {
+    operations_.request_frame();
   }
   return scrolled;
 }

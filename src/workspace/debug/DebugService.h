@@ -43,8 +43,6 @@ class DebugService {
     std::function<void(const std::string& reason, int thread_id)> notify_stop_began;
     std::function<void()> notify_stop_resolved;
     std::function<void()> request_frame;
-    std::function<void()> request_debug_pane_redraw;
-    std::function<void()> request_editor_redraw;
     std::function<void()> queue_editor_hover_refresh;
     std::function<void(const std::filesystem::path& path, std::size_t line)> focus_source_location;
     std::function<void()> show_call_stack_panel;

@@ -41,7 +41,6 @@ struct DeleteResolutionHarness {
     CompareInteractionCoordinator::Operations ops;
     ops.active_merge_tab = [this]() { return &merge_tab; };
     ops.request_frame = []() {};
-    ops.request_tab_strip_redraw = []() {};
     ops.stage_merge_result_path = [stage_ok](const std::filesystem::path&) { return stage_ok; };
     return ops;
   }
@@ -622,9 +621,8 @@ void TestAcceptingASideReportsTheAcceptedLines() {
   std::vector<std::vector<std::string>> reported;
   CompareInteractionCoordinator::Operations ops;
   ops.active_merge_tab = [&]() { return &merge_tab; };
-  ops.request_tab_strip_redraw = []() {};
-  ops.reveal_active_merge_selection = []() {};
   ops.request_frame = []() {};
+  ops.reveal_active_merge_selection = []() {};
   ops.update_merge_max_visual_columns = [&](MergeTabState&,
                                             const std::vector<std::string>& lines) {
     reported.push_back(lines);

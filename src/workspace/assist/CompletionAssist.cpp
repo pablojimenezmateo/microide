@@ -266,7 +266,7 @@ void CompletionAssist::FollowCompletionCaret() {
     host_.ops().dismiss_overlay(true);
     return;
   }
-  host_.ops().request_overlay_redraw();
+  host_.ops().request_frame();
 }
 
 std::vector<CompletionSessionItem> CompletionAssist::TransformPluginCompletions(
@@ -359,7 +359,7 @@ void CompletionAssist::PublishMerge(const std::shared_ptr<Merge>& merge,
     if (!list_up) {
       ops.show_overlay(OverlayMode::Completion);
     }
-    ops.request_overlay_redraw();
+    ops.request_frame();
     return;
   }
   if (merge->sources.AnyPending()) {
@@ -370,7 +370,7 @@ void CompletionAssist::PublishMerge(const std::shared_ptr<Merge>& merge,
   } else {
     session.error.clear();
   }
-  ops.request_overlay_redraw();
+  ops.request_frame();
 }
 
 bool CompletionAssist::ApplySelectedCompletion() {

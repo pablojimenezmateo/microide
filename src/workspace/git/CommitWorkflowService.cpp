@@ -112,8 +112,8 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
   state.checks = project::RunCommitPreChecks(
       repository_state, ProjectLauncher(), state.subject.text(), state.BodyText(),
       state.acknowledged_warning_ids, &state.staged_summary, run_blocking_conflict_scan);
-  if (callbacks_.request_commit_workflow_redraw != nullptr) {
-    callbacks_.request_commit_workflow_redraw();
+  if (callbacks_.request_frame != nullptr) {
+    callbacks_.request_frame();
   }
 }
 
@@ -138,8 +138,8 @@ void CommitWorkflowService::Open(CommitWorkflowState& state) {
 
   state.draft_context = CurrentDraftContext();
   RefreshDerivedState(state);
-  if (callbacks_.request_commit_workflow_redraw != nullptr) {
-    callbacks_.request_commit_workflow_redraw();
+  if (callbacks_.request_frame != nullptr) {
+    callbacks_.request_frame();
   }
 }
 
@@ -151,8 +151,8 @@ void CommitWorkflowService::Close(CommitWorkflowState& state) {
   state.open = false;
   state.pending_confirmation = CommitWorkflowPendingConfirmation::None;
   state.operation_in_flight = false;
-  if (callbacks_.request_commit_workflow_redraw != nullptr) {
-    callbacks_.request_commit_workflow_redraw();
+  if (callbacks_.request_frame != nullptr) {
+    callbacks_.request_frame();
   }
 }
 

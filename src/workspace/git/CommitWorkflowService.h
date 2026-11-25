@@ -37,7 +37,7 @@ class CommitWorkflowService {
         open_staged_diff;
     std::function<void(project::CommitOperationKind)> open_commit_confirmation;
     std::function<void(std::string)> open_commit_warning_confirmation;
-    std::function<void()> request_commit_workflow_redraw;
+    std::function<void()> request_frame;
     std::function<bool(const std::filesystem::path& project_root)> is_in_front;
     std::function<std::string(const std::filesystem::path& project_root)> project_label;
     std::function<void(const std::filesystem::path& project_root)> defer_to_project;

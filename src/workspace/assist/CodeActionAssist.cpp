@@ -199,7 +199,7 @@ void CodeActionAssist::PublishMerge(const std::shared_ptr<Merge>& merge,
   } else {
     session.error.clear();
   }
-  host_.ops().request_overlay_redraw();
+  host_.ops().request_frame();
 }
 
 bool CodeActionAssist::Finish(bool applied, std::string error) {
@@ -207,7 +207,7 @@ bool CodeActionAssist::Finish(bool applied, std::string error) {
     host_.ops().dismiss_overlay(true);
   } else {
     host_.context().current_project_state.overlay.workflow.code_actions.error = std::move(error);
-    host_.ops().request_overlay_redraw();
+    host_.ops().request_frame();
   }
   return applied;
 }

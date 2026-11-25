@@ -13,7 +13,6 @@ class CompareInteractionCoordinator {
   struct Operations {
     std::function<void()> show_compare_picker_overlay;
     std::function<void()> reset_overlay_scroll;
-    std::function<void()> request_overlay_redraw;
     std::function<void()> reveal_compare_picker_selection;
     std::function<void(const project::GitCommitEntry&)> open_comparison;
     std::function<void(const std::string& ref, const std::string& label)> set_outgoing_base_ref;
@@ -30,7 +29,6 @@ class CompareInteractionCoordinator {
     std::function<void()> reveal_active_merge_selection;
     std::function<void(MergeTabState&, const std::vector<std::string>&)>
         update_merge_max_visual_columns;
-    std::function<void()> request_tab_strip_redraw;
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(const std::filesystem::path&, const std::string&, const std::string&)>
         open_working_tree_comparison;

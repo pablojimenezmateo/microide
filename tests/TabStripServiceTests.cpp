@@ -120,7 +120,7 @@ void TestScrollingATabStripRequestsItsRepaint() {
   chrome.Configure(context, tab_strip_service, layout_mode_service, output_channels,
                    WorkspaceTabStripChrome::Operations{
                        .request_bottom_panel_frame = [&]() { ++panel_repaints; },
-                       .request_tab_strip_redraw = [&]() { ++strip_repaints; },
+                       .request_frame = [&]() { ++strip_repaints; },
                    });
   microide::workspace::EditorGroup& group = context.current_project_state.focused_group();
   for (const char* name : {"a.txt", "b.txt", "c.txt"}) {

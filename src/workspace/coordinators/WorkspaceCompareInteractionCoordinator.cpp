@@ -224,7 +224,7 @@ void CompareInteractionCoordinator::RefreshPicker() {
   picker.summary_line =
       BuildFilteredCountSummary(picker.matches.size(), picker.items.size(), "revisions");
   operations_.reset_overlay_scroll();
-  operations_.request_overlay_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::MovePickerSelection(int delta) {
@@ -236,7 +236,7 @@ void CompareInteractionCoordinator::MovePickerSelection(int delta) {
   if (state_.overlay.visible) {
     operations_.reveal_compare_picker_selection();
   }
-  operations_.request_overlay_redraw();
+  operations_.request_frame();
 }
 
 void CompareInteractionCoordinator::OpenSelectedCommit() {
@@ -703,7 +703,6 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     merge_tab->allow_conflict_marker_override = false;
     merge_tab->status_message = "Marked resolved (deleted).";
     util::InvokeIfSet(operations_.refresh_git_sidebar);
-    operations_.request_tab_strip_redraw();
     operations_.request_frame();
     return;
   }
@@ -768,7 +767,6 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   merge_tab->allow_conflict_marker_override = false;
   merge_tab->status_message = "Marked resolved.";
   util::InvokeIfSet(operations_.refresh_git_sidebar);
-  operations_.request_tab_strip_redraw();
   operations_.request_frame();
 }
 

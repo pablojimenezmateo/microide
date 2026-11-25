@@ -77,7 +77,7 @@ void DebugService::ConsumeDapCallbacks() {
       }
     }
     SyncSessionsPanel();
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   }
 }
 
@@ -273,8 +273,7 @@ void DebugService::ResendBreakpointsForFile(const std::filesystem::path& path) {
     session->ResendBreakpointsForFile(path);
   }
   SyncBreakpointsPanel();
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
-  util::InvokeIfSet(operations_.request_editor_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 void DebugService::Continue() {

@@ -38,7 +38,6 @@ class AssistHost {
     std::function<void()> finish_tracked_lsp_request;
     std::function<void(OverlayMode)> show_overlay;
     std::function<void(bool)> dismiss_overlay;
-    std::function<void()> request_overlay_redraw;
     std::function<void()> reset_caret_blink;
     std::function<void()> request_frame;
     std::function<void()> note_active_editable_edit;

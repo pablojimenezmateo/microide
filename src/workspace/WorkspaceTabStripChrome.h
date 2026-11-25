@@ -35,7 +35,7 @@ class WorkspaceTabStripChrome {
     std::function<void(std::string_view)> close_output_channel_tab;
     std::function<void(std::size_t)> close_terminal_tab;
     std::function<void()> request_bottom_panel_frame;
-    std::function<void()> request_tab_strip_redraw;
+    std::function<void()> request_frame;
   };
 
   WorkspaceTabStripChrome() = default;

@@ -31,7 +31,7 @@ void DebugService::FocusFrame(int frame_id) {
     for (const DebugValueTree::ChildFetch& fetch : model.ApplyScopes(scopes)) {
       FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
     }
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   });
   EvaluateWatches(frame_id);
 }
@@ -43,7 +43,7 @@ void DebugService::ToggleVariableRow(std::size_t row) {
   if (fetch.reference > 0) {
     FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
   }
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 template <typename Model>
@@ -77,7 +77,7 @@ void DebugService::FetchTreeChildrenPage(Model ProjectWorkspaceState::*model_mem
         } else {
           (CurrentProjectState().*model_member).MarkChildrenError(reference);
         }
-        util::InvokeIfSet(operations_.request_debug_pane_redraw);
+        util::InvokeIfSet(operations_.request_frame);
       });
 }
 
@@ -115,7 +115,7 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
       [this, session_id, label](bool ok, dap_protocol::DapEvaluateResult result) {
         if (!ok) {
           AppendConsoleLine(session_id, label, "error: could not evaluate expression");
-          util::InvokeIfSet(operations_.request_debug_pane_redraw);
+          util::InvokeIfSet(operations_.request_frame);
           return;
         }
         std::string line = result.result.empty() ? std::string("(no value)") : result.result;
@@ -136,13 +136,13 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
                     AppendConsoleLine(session_id, label, "    " + variable.name + ": " +
                                                              variable.value);
                   }
-                  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+                  util::InvokeIfSet(operations_.request_frame);
                 });
           }
         }
-        util::InvokeIfSet(operations_.request_debug_pane_redraw);
+        util::InvokeIfSet(operations_.request_frame);
       });
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
   return true;
 }
 
@@ -170,11 +170,11 @@ void DebugService::EvaluateWatches(int frame_id) {
             if (ok) {
               CurrentProjectState().debug_watch.ApplyEvaluate(i, result);
             }
-            util::InvokeIfSet(operations_.request_debug_pane_redraw);
+            util::InvokeIfSet(operations_.request_frame);
           });
     }
   }
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 std::size_t DebugService::AddWatch(std::string expression) {
@@ -203,7 +203,7 @@ void DebugService::ToggleWatchRow(std::size_t row) {
   if (fetch.reference > 0) {
     FetchWatchChildren(fetch.reference, fetch.start, fetch.count);
   }
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 DebugValueTreePane& DebugService::EditablePane(EditableTree tree) {
@@ -222,7 +222,7 @@ void DebugService::BeginTreeEdit(EditableTree tree, std::size_t row) {
     return;
   }
   if (EditablePane(tree).BeginEdit(row)) {
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   }
 }
 
@@ -243,16 +243,16 @@ void DebugService::CommitTreeEdit(EditableTree tree) {
           if (ok) {
             EditablePane(tree).ApplySetVariable(node_id, result);
           }
-          util::InvokeIfSet(operations_.request_debug_pane_redraw);
+          util::InvokeIfSet(operations_.request_frame);
         });
   }
   pane.CancelEdit();
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 void DebugService::CancelTreeEdit(EditableTree tree) {
   EditablePane(tree).CancelEdit();
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
@@ -281,7 +281,7 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
           model.Fail(generation);
         }
         util::InvokeIfSet(operations_.queue_editor_hover_refresh);
-        util::InvokeIfSet(operations_.request_editor_redraw);
+        util::InvokeIfSet(operations_.request_frame);
       });
 }
 

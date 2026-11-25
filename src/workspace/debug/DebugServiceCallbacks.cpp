@@ -87,8 +87,7 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
     operations_.focus_source_location(state.debug_execution.FocusedPath(),
                                       state.debug_execution.FocusedLine());
   }
-  util::InvokeIfSet(operations_.request_editor_redraw);
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
   util::InvokeIfSet(operations_.notify_stop_resolved);
 }
 
@@ -98,17 +97,15 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
   callbacks.on_output = [this, session_id, session_label](
                             const dap_protocol::DapOutputEvent& output) {
     util::InvokeIfSet(operations_.append_console_output, session_id, session_label, output);
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   };
   callbacks.on_state_changed = [this](DebugSession::State state) {
     util::InvokeIfSet(operations_.notify_session_state_changed, state);
     SyncSessionsPanel();
     util::InvokeIfSet(operations_.request_frame);
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   callbacks.on_capabilities_changed = [this]() {
     util::InvokeIfSet(operations_.request_frame);
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
   };
   callbacks.on_terminated = [this, session_id](DebugSession::State terminal_state,
                                                const std::string& reason) {
@@ -146,7 +143,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       ProjectStop(stop, frames);
     }
     SyncSessionsPanel();
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   };
   callbacks.on_resumed = [this, session_id]() {
     if (IsActiveSession(session_id)) {
@@ -154,7 +151,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     } else {
       CurrentDapManager().SetSessionAttention(session_id, false);
       SyncSessionsPanel();
-      util::InvokeIfSet(operations_.request_debug_pane_redraw);
+      util::InvokeIfSet(operations_.request_frame);
     }
   };
   callbacks.on_threads = [this, session_id](
@@ -167,7 +164,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     if (state.debug_execution.focused_thread_id == 0) {
       state.debug_execution.focused_thread_id = state.debug_execution.thread_id;
     }
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   };
   callbacks.breakpoint_provider = [this]() {
     return CurrentProjectState().breakpoint_store.SnapshotAll();
@@ -191,7 +188,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         }
         CurrentProjectState().breakpoint_store.ApplyVerification(path, results);
         SyncBreakpointsPanel();
-        util::InvokeIfSet(operations_.request_editor_redraw);
+        util::InvokeIfSet(operations_.request_frame);
       };
   callbacks.on_breakpoint_changed = [this](const std::filesystem::path& path,
                                            const dap_protocol::DapBreakpoint& breakpoint) {
@@ -212,8 +209,7 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
                 });
     }
     SyncBreakpointsPanel();
-    util::InvokeIfSet(operations_.request_editor_redraw);
-    util::InvokeIfSet(operations_.request_debug_pane_redraw);
+    util::InvokeIfSet(operations_.request_frame);
   };
   callbacks.function_breakpoint_provider = [this]() {
     return CurrentProjectState().function_breakpoint_store.All();
@@ -232,13 +228,13 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
         }
         CurrentProjectState().function_breakpoint_store.ApplyVerification(requested_names, results);
         SyncBreakpointsPanel();
-        util::InvokeIfSet(operations_.request_debug_pane_redraw);
+        util::InvokeIfSet(operations_.request_frame);
       };
   callbacks.on_exception_filters_available =
       [this](const std::vector<dap_protocol::DapExceptionFilter>& filters) {
         CurrentProjectState().debug_breakpoints_panel.SetAdvertisedFilters(filters);
         SyncBreakpointsPanel();
-        util::InvokeIfSet(operations_.request_debug_pane_redraw);
+        util::InvokeIfSet(operations_.request_frame);
       };
   callbacks.exception_filter_provider = [this]() {
     std::vector<ExceptionFilterRequest> requests;
@@ -259,8 +255,7 @@ void DebugService::ClearTransientDebugViews() {
   state.debug_variables.Clear();
   state.debug_hover.Clear();
   state.debug_watch.ClearResults();
-  util::InvokeIfSet(operations_.request_editor_redraw);
-  util::InvokeIfSet(operations_.request_debug_pane_redraw);
+  util::InvokeIfSet(operations_.request_frame);
 }
 
 }

@@ -25,7 +25,7 @@ class GitOperationService {
         append_output;
     std::function<void(std::string_view)> show_output_panel;
     std::function<void(NotificationService::Tone, std::string)> notify;
-    std::function<void()> request_redraw;
+    std::function<void()> request_frame;
     std::function<bool(const std::filesystem::path& repository_root)> is_in_front;
     std::function<std::string(const std::filesystem::path& repository_root)> project_label;
     std::function<void(const std::filesystem::path& repository_root)> defer_to_project;

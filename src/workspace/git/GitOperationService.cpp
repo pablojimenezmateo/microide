@@ -63,8 +63,8 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
     std::lock_guard lock(mutex_);
     generation = ++operation_generation_;
   }
-  if (callbacks_.request_redraw != nullptr) {
-    callbacks_.request_redraw();
+  if (callbacks_.request_frame != nullptr) {
+    callbacks_.request_frame();
   }
 
   background_executor_.PostDurable([this, generation, repository_root, work = std::move(work),
@@ -118,8 +118,8 @@ void GitOperationService::Publish(const std::uint64_t generation,
     if ((report.success() || TouchesWorkingTree(report.outcome)) && callbacks_.defer_to_project) {
       callbacks_.defer_to_project(repository_root);
     }
-    if (callbacks_.request_redraw != nullptr) {
-      callbacks_.request_redraw();
+    if (callbacks_.request_frame != nullptr) {
+      callbacks_.request_frame();
     }
     return;
   }
@@ -134,8 +134,8 @@ void GitOperationService::Publish(const std::uint64_t generation,
       callbacks_.reload_open_buffers();
     }
   }
-  if (callbacks_.request_redraw != nullptr) {
-    callbacks_.request_redraw();
+  if (callbacks_.request_frame != nullptr) {
+    callbacks_.request_frame();
   }
 }
 
