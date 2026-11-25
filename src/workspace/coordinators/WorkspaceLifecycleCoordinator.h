@@ -12,9 +12,16 @@ class PersistenceCoordinator;
 class WorkspacePluginRuntime;
 class RecentsService;
 
+class PersistenceService;
+class RemoteHostService;
+class ControlChannelService;
+
 class LifecycleCoordinator {
  public:
   struct Services {
+    PersistenceService& persistence_store;
+    RemoteHostService& remote_hosts;
+    ControlChannelService& control_channel;
     PersistenceCoordinator& persistence;
     WorkspacePluginRuntime& plugins;
     RecentsService& recents;
@@ -36,10 +43,7 @@ class LifecycleCoordinator {
     std::function<void()> release_host_terminals;
     std::function<void()> record_inactive_host_terminals;
     std::function<void()> persist_active_project;
-    std::function<void()> flush_persisted_state;
-    std::function<void()> persist_remote_mirrors;
     std::function<void()> shutdown_project_search_runtime;
-    std::function<void()> stop_control_channel;
     std::function<void()> stop_debug_sessions;
   };
 

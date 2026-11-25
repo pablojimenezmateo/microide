@@ -26,6 +26,8 @@
 #include "util/InvokeIfSet.h"
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/persistence/RecentsService.h"
+#include "workspace/persistence/PersistenceService.h"
+#include "workspace/control/ControlChannelService.h"
 
 namespace microide::workspace {
 
@@ -120,10 +122,10 @@ void LifecycleCoordinator::Shutdown() {
   operations_.record_inactive_host_terminals();
   services_.persistence.SaveWorkspaceSession();
   services_.recents.FlushPendingSave();
-  operations_.flush_persisted_state();
-  operations_.persist_remote_mirrors();
+  services_.persistence_store.FlushPendingWrites();
+  services_.remote_hosts.PersistMirrors();
   operations_.shutdown_project_search_runtime();
-  operations_.stop_control_channel();
+  services_.control_channel.Stop();
   operations_.stop_debug_sessions();
 }
 
@@ -270,6 +272,9 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
       context_,
       quit_requested_,
       LifecycleCoordinator::Services{
+          .persistence_store = persistence_service_,
+          .remote_hosts = MakeRemoteHostService(),
+          .control_channel = control_channel_service_,
           .persistence = MakePersistenceCoordinator(),
           .plugins = plugin_runtime_,
           .recents = recents_service_,
@@ -356,10 +361,7 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
                   MakeProjectCatalogService().PersistActiveEntry();
                 }
               },
-          .flush_persisted_state = [this]() { persistence_service_.FlushPendingWrites(); },
-          .persist_remote_mirrors = [this]() { MakeRemoteHostService().PersistMirrors(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
-          .stop_control_channel = [this]() { control_channel_service_.Stop(); },
           .stop_debug_sessions =
               [this]() {
                 debug_service_.StopAllDebugging();
