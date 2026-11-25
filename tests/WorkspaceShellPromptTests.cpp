@@ -357,6 +357,38 @@ void TestWorkspaceShellAReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich() {
   util::SetCrashPointHook(nullptr);
 }
 
+void TestWorkspaceShellASessionThatCannotBeSavedSaysUnsavedWorkIsUnprotected() {
+  util::CrashPointControl::Install();
+  TemporaryDirectory temp_dir;
+  ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "notes.txt", "base text\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, root / "notes.txt");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("unsaved ");
+  const auto warning = [&shell]() -> std::string {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.message.starts_with("Could not save ")) {
+        return row.message;
+      }
+    }
+    return {};
+  };
+  std::string arm_error;
+  Expect(util::CrashPointControl::Arm("fail=ENOSPC:durable.writing", &arm_error), "armed: " + arm_error);
+  WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  util::CrashPointControl::Disarm();
+  (void)shell.HandleScheduledWake();
+  const std::string said = warning();
+  Expect(said.find("space") != std::string::npos && said.find("crash") != std::string::npos,
+         "a session the disk cannot take says so and what it costs: '" + said + "'");
+  WorkspaceShellTestAccess::FlushSessionStateForCrashSafety(shell);
+  (void)shell.HandleScheduledWake();
+  Expect(warning().empty(), "the next flush that lands takes the warning down: '" + warning() + "'");
+  util::SetCrashPointHook(nullptr);
+}
+
 void TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1610,6 +1642,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
   AddTest(tests, "WorkspaceShell/AReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich",
           TestWorkspaceShellAReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich);
+  AddTest(tests, "WorkspaceShell/ASessionThatCannotBeSavedSaysUnsavedWorkIsUnprotected",
+          TestWorkspaceShellASessionThatCannotBeSavedSaysUnsavedWorkIsUnprotected);
   AddTest(tests, "WorkspaceShell/ADiskFailureDuringASaveKeepsTheEditAndSaysWhy",
           TestWorkspaceShellADiskFailureDuringASaveKeepsTheEditAndSaysWhy);
   AddTest(tests, "WorkspaceShell/AFailedSaveSaysWhy", TestWorkspaceShellAFailedSaveSaysWhy);

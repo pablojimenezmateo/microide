@@ -256,4 +256,19 @@ void PersistenceService::DeleteState(const std::filesystem::path& target_path) c
   write_queue_.QueueDelete(target_path);
 }
 
+std::optional<PersistenceService::WriteFailureChange> PersistenceService::TakeWriteFailureChange() const {
+  const std::uint64_t revision = write_queue_.failure_revision();
+  if (revision == reported_failure_revision_) {
+    return std::nullopt;
+  }
+  reported_failure_revision_ = revision;
+  const std::optional<persistence::PersistedRecordWriteQueue::WriteFailure> failure = write_queue_.CurrentFailure();
+  if (!failure.has_value()) {
+    return WriteFailureChange{};
+  }
+  return WriteFailureChange{.message = "Could not save the editor's " + failure->path.filename().string() +
+                                       " state: " + failure->reason +
+                                       ". Unsaved edits are not protected against a crash until it saves."};
+}
+
 }

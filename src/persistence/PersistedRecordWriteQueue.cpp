@@ -2,6 +2,7 @@
 
 #include "persistence/PersistedRecordWriter.h"
 #include "util/Log.h"
+#include "util/TextFileIO.h"
 
 #include <system_error>
 #include <utility>
@@ -69,9 +70,13 @@ void PersistedRecordWriteQueue::ApplyWrite(const std::filesystem::path& path, co
               (cause ? ": " + cause.message() : std::string()) + ")");
     std::lock_guard lock(memo_mutex_);
     written_body_.erase(key);
+    SetFailureLocked(key, WriteFailure{.path = path,
+                                       .reason = cause ? util::DescribeWriteError(cause)
+                                                       : std::string(PersistedRecordWriterErrorName(stage))});
     return;
   }
   std::lock_guard lock(memo_mutex_);
+  SetFailureLocked(key, std::nullopt);
   if (body.size() > kMaxMemoizedBodyBytes) {
     written_body_.erase(key);
   } else {
@@ -99,6 +104,7 @@ void PersistedRecordWriteQueue::QueueDelete(const std::filesystem::path& path) {
     {
       std::lock_guard lock(memo_mutex_);
       written_body_.erase(key);
+      SetFailureLocked(key, std::nullopt);
     }
     std::error_code error;
     std::filesystem::remove(path, error);
@@ -106,6 +112,30 @@ void PersistedRecordWriteQueue::QueueDelete(const std::filesystem::path& path) {
     std::filesystem::remove(PersistedRecordWriter::BackupPathFor(path), error);
     Finish(sequence);
   });
+}
+
+void PersistedRecordWriteQueue::SetFailureLocked(const std::string& key, std::optional<WriteFailure> failure) {
+  const auto it = failures_.find(key);
+  if (!failure.has_value()) {
+    if (it != failures_.end()) {
+      failures_.erase(it);
+      failure_revision_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    return;
+  }
+  if (it != failures_.end() && it->second.reason == failure->reason) {
+    return;
+  }
+  failures_[key] = std::move(*failure);
+  failure_revision_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+std::optional<PersistedRecordWriteQueue::WriteFailure> PersistedRecordWriteQueue::CurrentFailure() const {
+  std::lock_guard lock(memo_mutex_);
+  if (failures_.empty()) {
+    return std::nullopt;
+  }
+  return failures_.begin()->second;
 }
 
 std::size_t PersistedRecordWriteQueue::applied_write_count() const {

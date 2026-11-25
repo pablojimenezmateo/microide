@@ -564,6 +564,11 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() {
     constexpr Uint32 kDapPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
   }
+  if (!persistence_service_.WritesSettled()) {
+    in_flight = true;
+    constexpr Uint32 kStateWritePollMs = 64;
+    wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kStateWritePollMs) : kStateWritePollMs;
+  }
   if (util::ConsumeOwedWake()) {
     in_flight = true;
     constexpr Uint32 kWakeOwedPollMs = 32;
@@ -669,6 +674,16 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
+  if (const auto change = persistence_service_.TakeWriteFailureChange(); change.has_value()) {
+    if (change->message.has_value()) {
+      Notify(NotificationService::Request{.tone = NotificationService::Tone::Error,
+                                          .key = std::string(kStateWriteFailedNotificationKey),
+                                          .message = *change->message,
+                                          .sticky = true});
+    } else if (notification_service_.DismissKey(kStateWriteFailedNotificationKey)) {
+      RequestPreparedFrame();
+    }
+  }
   if (notification_service_.ExpireDue(SDL_GetTicks())) {
     return EventResult{.handled = true, .redraw = RenderInvalidation{.frame = true}};
   }

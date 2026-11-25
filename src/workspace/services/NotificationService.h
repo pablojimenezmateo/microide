@@ -18,6 +18,7 @@ inline constexpr std::string_view kProjectIndexTruncatedNotificationKey =
     "project.index.truncated";
 
 inline constexpr std::string_view kFileOpenInProgressNotificationKey = "editor.open.reading";
+inline constexpr std::string_view kStateWriteFailedNotificationKey = "persistence.write-failed";
 
 struct NotificationAction {
   std::string label;

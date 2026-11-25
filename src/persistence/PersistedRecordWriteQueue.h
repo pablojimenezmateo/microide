@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <optional>
 #include <string>
 #include <mutex>
 #include <unordered_map>
@@ -36,6 +38,13 @@ class PersistedRecordWriteQueue {
 
   std::size_t applied_write_count() const;
 
+  struct WriteFailure {
+    std::filesystem::path path;
+    std::string reason;
+  };
+  std::optional<WriteFailure> CurrentFailure() const;
+  std::uint64_t failure_revision() const { return failure_revision_.load(std::memory_order_acquire); }
+
   bool settled() const {
     return completed_sequence_.load(std::memory_order_acquire) == submitted_sequence_.load(std::memory_order_acquire);
   }
@@ -49,6 +58,10 @@ class PersistedRecordWriteQueue {
   mutable std::mutex memo_mutex_;
   std::unordered_map<std::string, std::vector<std::byte>> written_body_;
   std::size_t applied_writes_ = 0;
+  std::map<std::string, WriteFailure> failures_;
+  std::atomic<std::uint64_t> failure_revision_{0};
+
+  void SetFailureLocked(const std::string& key, std::optional<WriteFailure> failure);
 
   std::uint64_t NextSequence() { return submitted_sequence_.fetch_add(1, std::memory_order_acq_rel) + 1; }
   void Finish(std::uint64_t sequence) {

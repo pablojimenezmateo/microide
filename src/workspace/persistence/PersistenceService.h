@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -48,10 +50,16 @@ class PersistenceService {
 
   bool WritesSettled() const { return write_queue_.settled(); }
 
+  struct WriteFailureChange {
+    std::optional<std::string> message;
+  };
+  std::optional<WriteFailureChange> TakeWriteFailureChange() const;
+
  private:
   mutable std::unordered_map<std::string, std::vector<std::byte>> backup_recovery_baseline_;
 
   mutable persistence::PersistedRecordWriteQueue write_queue_;
+  mutable std::uint64_t reported_failure_revision_ = 0;
 };
 
 }
