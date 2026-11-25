@@ -1,13 +1,25 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
+#include "support/SoftwareCanvas.h"
 
+#include "util/JsonValue.h"
 #include "util/PerformanceCounters.h"
+#include "workspace/control/ControlProtocol.h"
 #include "workspace/registries/WorkspaceSettingsRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 namespace microide::tests {
 namespace {
@@ -205,6 +217,224 @@ void TestForceStartedControlChannelSurvivesSettingChange() {
          "the force-started control channel survives a live settings change");
 }
 
+int ConnectControlSocket(const std::filesystem::path& path) {
+  const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    return -1;
+  }
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::snprintf(address.sun_path, sizeof(address.sun_path), "%s", path.c_str());
+  if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    ::close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+class ControlLineGenerator {
+ public:
+  ControlLineGenerator(std::uint64_t seed, std::vector<std::string> commands, std::vector<std::string> words)
+      : state_(seed * 6364136223846793005ull + 1442695040888963407ull),
+        commands_(std::move(commands)),
+        words_(std::move(words)) {}
+
+  std::uint64_t Next(std::uint64_t bound) {
+    state_ = state_ * 6364136223846793005ull + 1442695040888963407ull;
+    return (state_ >> 33) % bound;
+  }
+
+  std::string Line() {
+    util::JsonObject request;
+    const std::uint64_t id_kind = Next(10);
+    if (id_kind < 6) {
+      request["id"] = util::JsonValue(static_cast<std::int64_t>(Next(1000000)));
+    } else if (id_kind == 6) {
+      request["id"] = util::JsonValue("seven");
+    } else if (id_kind == 7) {
+      request["id"] = util::JsonValue(1.5);
+    } else if (id_kind == 8) {
+      request["id"] = util::JsonValue(static_cast<std::int64_t>(-1) - static_cast<std::int64_t>(Next(1u << 30)));
+    }
+    const std::uint64_t kind = Next(20);
+    if (kind < 9) {
+      std::string line = commands_[Next(commands_.size())];
+      for (std::uint64_t arg = Next(3); arg > 0; --arg) {
+        line += " " + words_[Next(words_.size())];
+      }
+      request["command"] = util::JsonValue(std::move(line));
+    } else if (kind < 16) {
+      const auto verbs = workspace::ControlQueryVerbs();
+      std::string verb(verbs[Next(verbs.size())]);
+      request["query"] = util::JsonValue(verb);
+      const std::uint64_t args = Next(8);
+      if (args == 1) {
+        request["args"] = util::JsonValue(util::JsonObject{});
+      } else if (args == 2) {
+        util::JsonObject object;
+        object["path"] = util::JsonValue(words_[Next(words_.size())]);
+        object["recent"] = util::JsonValue(true);
+        object["lines"] = util::JsonValue(static_cast<std::int64_t>(Next(5)) - 2);
+        object["id"] = util::JsonValue(static_cast<std::int64_t>(Next(4)));
+        request["args"] = util::JsonValue(std::move(object));
+      } else if (args == 3) {
+        request["args"] = util::JsonValue(util::JsonArray{util::JsonValue(1.0), util::JsonValue("x")});
+      } else if (args == 4) {
+        request["args"] = util::JsonValue("text");
+      }
+    } else if (kind == 16) {
+      request["command"] = util::JsonValue("");
+      request["query"] = util::JsonValue("tabs");
+    } else if (kind == 17) {
+      request["command"] = util::JsonValue(static_cast<std::int64_t>(3));
+    } else {
+      static const char* const kMalformed[] = {
+          "{", "[]", "42", "\"query\"", "{\"query\":", "{\"query\":\"tabs\"}}", "{\"id\":1}", "null",
+          "{\"query\":\"\\ud800\"}", "\xff\xfe{}", "{\"query\":\"tabs\",\"query\":\"editor\"}"};
+      return kMalformed[Next(std::size(kMalformed))];
+    }
+    return util::SerializeJson(util::JsonValue(std::move(request)));
+  }
+
+ private:
+  std::uint64_t state_;
+  std::vector<std::string> commands_;
+  std::vector<std::string> words_;
+};
+
+bool CommandIsSafeToFuzz(const std::string& command) {
+  static const std::vector<std::string> kForbidden = {
+      "quit", "project-open", "project-close", "open-file", "open-folder", "save-as", "key", "pointer",
+      "restart", "set-setting"};
+  static const std::vector<std::string> kForbiddenPrefixes = {"debug-", "tests-", "remote-", "breakpoint-",
+                                                              "terminal-"};
+  if (std::find(kForbidden.begin(), kForbidden.end(), command) != kForbidden.end()) {
+    return false;
+  }
+  return std::none_of(kForbiddenPrefixes.begin(), kForbiddenPrefixes.end(),
+                      [&](const std::string& prefix) { return command.starts_with(prefix); });
+}
+
+void TestEveryControlLineGetsOneReplyInOrder() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+  std::filesystem::create_directories(temp.path() / "run");
+  ScopedEnvVar xdg_runtime("XDG_RUNTIME_DIR", (temp.path() / "run").string());
+  const std::filesystem::path root = temp.path() / "repo";
+  WriteFile(root / "notes.txt", "alpha\nbeta\ngamma\n");
+  WriteFile(root / "src" / "main.cpp", "int main() {\n  return 0;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "notes.txt", "alpha\nchanged\n");
+
+  constexpr int kWidth = 1200;
+  constexpr int kHeight = 800;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "notes.txt");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "set-setting control.enabled true"),
+         "the control channel is enabled");
+  Expect(WorkspaceShellTestAccess::IsControlChannelRunning(shell), "the control channel starts");
+
+  std::vector<std::string> commands;
+  const util::JsonValue catalogue = WorkspaceShellTestAccess::ControlQuery(shell, "commands");
+  for (const util::JsonValue& entry : catalogue.AsArray()) {
+    const std::string& name = entry["command"].AsString();
+    if (!name.empty() && !entry["plugin"].AsBool(false) && CommandIsSafeToFuzz(name)) {
+      commands.push_back(name);
+    }
+  }
+  Expect(commands.size() > 50, "the catalogue lists the commands to fuzz, " + std::to_string(commands.size()));
+  const std::vector<std::string> words = {
+      "notes.txt", (root / "notes.txt").string(), "src/main.cpp", "1", "0", "-3", "99999999999999999999",
+      "true", "--force", "a b", "\"quoted\"", "\xc3\xa9t\xc3\xa9", std::string(300, 'w'), "HEAD", "../outside",
+      "*", "%s%n", "main"};
+
+  const std::filesystem::path socket = temp.path() / "run" / "microide" / (std::to_string(::getpid()) + ".sock");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  for (const std::uint64_t seed : {1u, 2u, 3u}) {
+    ControlLineGenerator generator(seed, commands, words);
+    std::vector<int> fds;
+    for (int connection = 0; connection < 3; ++connection) {
+      fds.push_back(ConnectControlSocket(socket));
+      Expect(fds.back() >= 0, "a client connects to the control socket");
+    }
+    std::vector<std::vector<std::string>> sent(fds.size());
+    std::vector<std::string> received(fds.size());
+    const auto pump = [&] {
+      WorkspaceShellTestAccess::ConsumeControlCallbacks(shell);
+      for (std::size_t c = 0; c < fds.size(); ++c) {
+        char buffer[65536];
+        ssize_t count = 0;
+        while ((count = ::recv(fds[c], buffer, sizeof(buffer), MSG_DONTWAIT)) > 0) {
+          received[c].append(buffer, static_cast<std::size_t>(count));
+        }
+      }
+    };
+    const auto replies = [&](std::size_t c) {
+      return static_cast<std::size_t>(std::count(received[c].begin(), received[c].end(), '\n'));
+    };
+    for (int step = 0; step < 120; ++step) {
+      const std::size_t c = generator.Next(fds.size());
+      std::string payload;
+      for (std::uint64_t n = 1 + generator.Next(3); n > 0; --n) {
+        std::string line = generator.Line();
+        payload += line + (generator.Next(4) == 0 ? "\r\n" : "\n");
+        sent[c].push_back(std::move(line));
+      }
+      const std::size_t split = generator.Next(payload.size() + 1);
+      Expect(::send(fds[c], payload.data(), split, MSG_NOSIGNAL) == static_cast<ssize_t>(split),
+             "the first part of a request batch is sent");
+      pump();
+      Expect(::send(fds[c], payload.data() + split, payload.size() - split, MSG_NOSIGNAL) ==
+                 static_cast<ssize_t>(payload.size() - split),
+             "the rest of a request batch is sent");
+      const bool answered = WaitUntil(
+          [&] {
+            pump();
+            return replies(c) >= sent[c].size();
+          },
+          std::chrono::seconds(10), std::chrono::milliseconds(2));
+      Expect(answered, "seed " + std::to_string(seed) + " step " + std::to_string(step) + ": the batch ending in " +
+                           sent[c].back() + " is answered");
+      if (generator.Next(4) == 0) {
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+      }
+    }
+    pump();
+    for (std::size_t c = 0; c < fds.size(); ++c) {
+      std::vector<std::string> lines;
+      std::size_t start = 0;
+      for (std::size_t end = received[c].find('\n'); end != std::string::npos;
+           start = end + 1, end = received[c].find('\n', start)) {
+        lines.push_back(received[c].substr(start, end - start));
+      }
+      Expect(lines.size() == sent[c].size(), "seed " + std::to_string(seed) + ": connection " + std::to_string(c) +
+                                                 " gets one reply per request line, " + std::to_string(lines.size()) +
+                                                 " for " + std::to_string(sent[c].size()));
+      for (std::size_t i = 0; i < std::min(lines.size(), sent[c].size()); ++i) {
+        const std::optional<util::JsonValue> reply = util::ParseJson(lines[i]);
+        Expect(reply.has_value() && reply->IsObject(), "every reply is a JSON object: " + lines[i].substr(0, 200));
+        const workspace::ControlRequest request = workspace::ParseControlRequest(sent[c][i]);
+        const bool id_matches = request.id.has_value() ? (*reply)["id"].AsInt(-1) == *request.id
+                                                       : !(*reply).HasKey("id") || (*reply)["id"].IsNull();
+        Expect(id_matches, "reply " + std::to_string(i) + " answers its own request: " + sent[c][i].substr(0, 200) +
+                               " -> " + lines[i].substr(0, 200));
+      }
+      ::close(fds[c]);
+    }
+  }
+  const util::JsonValue invariants = WorkspaceShellTestAccess::ControlQuery(shell, "invariants");
+  Expect(invariants["ok"].AsBool(false), "the shell's invariants hold after the fuzzed lines: " +
+                                            util::SerializeJson(invariants).substr(0, 400));
+}
+
 }
 
 void TestRestoredSettingsAreCanonicalized() {
@@ -291,6 +521,8 @@ void TestControlCommandRepeatsTheSameRejectionMessage() {
 }
 
 void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShellControlSettings/EveryControlLineGetsOneReplyInOrder",
+          TestEveryControlLineGetsOneReplyInOrder);
   AddTest(tests, "WorkspaceShellControlSettings/ControlCommandRepeatsTheSameRejectionMessage",
           TestControlCommandRepeatsTheSameRejectionMessage);
   AddTest(tests, "WorkspaceShellControlSettings/ForceStartedControlChannelSurvivesSettingChange",

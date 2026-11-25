@@ -315,8 +315,15 @@ What it left, by workstream:
    request answered once by its own response, responses and events reach the
    main thread in the adapter's order, every reverse request is answered. On the
    transport before the fix it fails the same way (answers only after the 30 s
-   write timeout). Still open as this item: the control-command sequence fuzzer
-   and the libFuzzer form of `ViewportEditSequenceFuzz`. Previously: **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
+   write timeout). The control-command one too:
+   `WorkspaceShellControlSettings/EveryControlLineGetsOneReplyInOrder` sends a
+   real shell, over three socket connections, batches of random catalogue
+   commands with hostile arguments, every query verb with wrong-typed args,
+   malformed lines, odd ids and CRLF endings, each batch split at a random byte,
+   with frames rendered between: every line gets exactly one JSON reply carrying
+   its own id, in order, and the shell's invariants hold (dropping the reply to
+   a malformed line fails it). It found nothing. Still open as this item: the
+   libFuzzer form of `ViewportEditSequenceFuzz`. Previously: **W8 sequence fuzzers** are not built: `ControlCommandFuzz`, `LspSessionFuzz` and
    `DapSessionFuzz` (scripted fake servers answering late, out of order and for old
    versions), and the libFuzzer form of `ViewportEditSequenceFuzz`. The stateful
    multi-view unit sweep (`TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue`)

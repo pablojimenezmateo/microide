@@ -59,6 +59,7 @@
   static bool IsControlChannelRunning(const WorkspaceShell& shell) {
     return shell.control_channel_service_.IsRunning();
   }
+  static void ConsumeControlCallbacks(WorkspaceShell& shell) { shell.ConsumeControlCallbacks(); }
   static ControlChannelService::CommandOutcome ExecuteControlCommand(
       WorkspaceShell& shell, const std::string& command_line) {
     return shell.ExecuteControlCommand(command_line);
