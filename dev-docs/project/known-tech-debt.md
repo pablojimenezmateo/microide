@@ -191,109 +191,6 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      window, and `qa-scale`'s layout seed 2 at 1.25 still meets a stale 1x8 px
      line at ui.scale 1.1 (an app paint defect).
 
-### TD-2026-11-09-436 — soak triage, 2026-11-09: what the first four hours left open. [OPEN]
-
-The soak runner's first four hours on `6d7e96e07` produced 113 signatures. The
-2026-11-09 pass fixed the classes it could reproduce or prove with a failing-first
-test (inverted std::clamp at ui.scale 3; overlapping status-bar segments; the find
-widget, tab-strip contents, banner and merge-toolbar buttons leaving their area;
-the crash-safety flush missing edits to a non-active buffer) and left these:
-
-- **A tab drag abandoned with Escape, then released, paints stale: FIXED
-  2026-11-25.** The motion of a tab (or path) drag never recorded the pointer,
-  so after Escape the tooltip was laid out at the press point, and the release
-  moved it without asking for a frame. Drags now record the pointer like every
-  other gesture (`QaFlowRegression/ATabDragAbandonedWithEscapeThenReleasedPaintsFresh`,
-  8953 stale pixels before).
-- **Deterministic stale frames whose minimal replay still fails at `193dda043`:**
-  `9e662fe598fe` (tab drag across three panes: the bare gesture is fresh, so a
-  precondition of the 198-action minimal matters), `7f858b8312bb`, `b5c3ab96f87c`,
-  `5faca6fc43a7`, `8043295890fd`, `ee495f65b1b5`; `2de80b070bd6`'s replay now stops
-  at a different stale frame (450) before its own (3060).
-- **Nineteen "clean buffer differs from its file on disk" signatures**, all flaky at
-  a 0% replay rate. `0a81fa8b3` makes the oracle save both sides' bytes beside the
-  next sighting (`mismatch-*.buffer` / `.disk`, summary inlined in FINDING.md);
-  chase them from that evidence. Second pass (same day): the runner threw a known
-  signature's later sightings away, so that evidence never reached a bundle --
-  `8381257b6` keeps them under `sightings/`. The first bytes in hand fixed two
-  causes: adopting the disk baseline left the undo clean point behind
-  (`994643047`; code.py, trailing-ws.txt -- which writer made the file equal the
-  dirty buffer is still not identified) and Revert File split a binary file's lone
-  CRs into lines (`571042f73`; binary.bin, deterministic). The other signatures
-  (bom, crlf, link-to-crlf, mixed, tabs, data.json, ...) wait for their sightings.
-- **Reopened after this pass's fixes, waiting for a post-fix sighting:**
-  `d36a78ef295c` (an Untitled buffer missing after kill -9 although `193dda043`
-  arms the flush for every buffer -- seen at `8c740eb00` in two cells). Note that a
-  `QA-STALE` signature keys on its shape only, so `49a23ffecdf7`/`2eef96d45d54`
-  reopening means "some one-/two-clip stale frame", not the status-bar defect.
-- **Banner over another pane's strip** (`95c502fb591f`, `62b9153820d6`): the
-  control source lays the banner on `layout.editor_surface`, the whole editor area,
-  not the active pane -- check which rect paint uses with a split open.
-- Not yet looked at: the undo-algebra findings (5), the leak findings (fds,
-  threads, children), the idle-wake and latency findings, the two crashes
-  (`707c77a79c1d`, `7ab9a5476905`, flaky), focus-on-a-hidden-overlay
-  (`1dd177bb2104`) and the status-bar Ln/Col disagreement (`5a2cb8ba7f6b`).
-- **Containment breach, 2026-11-09 06:23 (fixed; one question open).** A soak
-  run's git escaped its scratch project into the checkout: "qa commit 29" on
-  main, `qa-branch-0..3`, two stash/pop pairs, the checkout switched to another
-  branch, and `qa-branch-3` pushed to GitHub. Mechanism: the project sat under
-  `build/soak/runs/`, its `.git` was no longer a repository (the monkey's
-  `delete-file` creates `.git/qa-deleted`, so a removed `.git` comes back as a
-  plain directory), the app's `HasGitMarker` still read it as one, and git's
-  upward search found the checkout -- for the monkey's `git -C` and the app's own
-  git (which is how the switch and the push happened). Fixed by a ceiling in the
-  app's single git choke point (`Git/CommandNeverReachesAnEnclosingRepository`),
-  the harness fences (`tools/qa/test_containment.py`) and the runner's alarm
-  (`AGENT.md` § A containment breach). Open: what removed the project's `.git` in
-  the first place (the app's tree delete, or a monkey op) is not identified.
-- **A truncated tab's background one device pixel past its pane** (soak
-  `49a23ffecdf7` sighting at `9e17f0048`, release, 1440x900 at ui.scale 2): a
-  narrow pane's last tab ("Welc…") painted its background over the divider at
-  x=1151 in the full frame; a partial frame clipped to the pane did not. The
-  strip layout keeps tabs inside fractional-width strips
-  (`TabStripService/EditorStripContentsStayInsideANarrowStrip`), so the extra
-  pixel comes from the strip rect or the paint. The sighting's replay is not
-  deterministic. Its signature now carries `clip-edge|line` (`8ff6e03f7`), so its
-  next sighting is filed on its own.
-- **An editable Welcome placeholder, and a breadcrumb that changed undamaged**
-  (soak `538a455016ef`, its 640x480 ui.scale 1.25 replay, 936 actions after
-  ddmin; the replay's step `type alpha` after `focus-other-group 999999`). The
-  top pane's strip showed `*empty.txt` while the pane drew the Welcome text with
-  the typed `a` in it ("amicroide"), and the pane's breadcrumb went from
-  "Welcome" to "Untitled" with no rect requested for it -- the partial frame kept
-  "Welcome". Two defects: (1) a keystroke reached the welcome surface's viewport
-  (and its `placeholder` flag cleared) while a file tab was active in that
-  group; (2) the breadcrumb label is drawn from state that more than one path
-  changes, and no prep-time check repaints it when it changes -- the
-  `PreparedFrameState::painted_*` per-group pattern fits (`painted_breadcrumb`,
-  damaging `EditorGroupRect::breadcrumb`). Neither reproduced in a short fixture
-  (closing a pane's last tab and typing, or with a split and
-  `focus-other-group`), so both wait for a shorter replay or a fixture that
-  reaches an editable placeholder.
-- **The stale-paint signature's `elsewhere` surface is a catch-all.** A box whose
-  centre is on no surface the `ui` query names (`ControlUiQuery.cpp` lists nine:
-  no splitter, no merge/compare pane, no gap beside a scrollbar) gets
-  `elsewhere`, so `ee7ad7b12a7e` (`elsewhere|outside|area`) held three unrelated
-  defects after its first fix: the merge panes' shared scroll (`8fc1d580f`), and
-  two sightings at `6da237807` not yet chased. Naming more rects in the `ui`
-  answer, or keying `elsewhere` on the nearest surface, would split them.
-  Most of the merging was a units bug, fixed in `498eea75b`: the line's bbox and
-  first pixel are device pixels, the clips and surfaces logical units, so at
-  density 2 (most soak cells) nearly every box landed `elsewhere|outside`. The
-  line now carries `scale=` and the bucketing scales by it; what is left of this
-  entry is the genuinely unnamed rects.
-- **`ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread` and
-  `IdenticalRewriteWithSplitViewsReadsOnce` flaked under load (fixed).** About 1
-  in 48 and 1 in 64 with 48 copies in parallel. Instrumented, the failing runs
-  posted the second phase's confirm and never applied it before the assertions:
-  `FileReadService::FlushPendingReads` (and `CancelAllAndFlush`) returned early on
-  "nothing pending, nothing in the mailbox", which is also what a flush sees
-  between a worker dropping its pending count and posting its completion. The
-  shortcut is gone (`FileReadService/AFlushNeverReturnsBeforeTheCompletionLands`,
-  failing 2000 of 2000 before); 0 in 384 and 0 in 192 after. The production
-  callers are project switch and teardown, where the late completion arrived
-  after the project it was read for.
-
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 
 The 2026-11-08 implementation of `dev-docs/project/safety-plan.md` (its tracker has
@@ -579,7 +476,7 @@ cross-subsystem bug-hunt passes 5–24 closeout) — now lives in:
   above, with the per-pass review summaries that headed this file) and
   `2026-11-08-resolved-debt-ledger.md` (TD-406, 408, 429-434) and
   `2026-11-13-resolved-debt-ledger.md` (TD-437 to 439, 441 to 443, 445 onward) and
-  `2026-11-25-resolved-debt-ledger.md` (TD-440, 444, 449, 451, 453, 454, 455)
+  `2026-11-25-resolved-debt-ledger.md` (TD-436, 440, 444, 449, 451, 453, 454, 455)
 - `CHANGELOG.md` — shipped, user-facing release history
 - `openspec/changes/archive/` — the full proposal/spec/tasks record per shipped change
 
