@@ -703,7 +703,7 @@ PROFILES: dict[str, dict[str, float]] = {
     # profiles kill three times in 1500 steps; the restore that loses a buffer
     # was the soak's largest severe family on a budget of a few kills a day.
     "crash": {"type": 22, "text": 8, "chord": 12, "file": 8, "command": 5, "element": 8, "burst": 4,
-              "external": 3, "setting": 2, "kill9": 8},
+              "external": 3, "setting": 2, "kill9": 8, "diskfull": 3},
     # The Lua plugin host: the bundled data-only plugins loaded, their commands
     # run, their surfaces (a panel tab, inline insets, lenses, highlights) under
     # the pointer and the keys, and the host reloaded under all of it.
@@ -808,7 +808,7 @@ class Monkey:
             "terminal": self.terminal_action, "file": self.file_action,
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
             "tooling": self.tooling_action, "remote": self.remote_action, "plugin": self.plugin_action,
-            "scale": self.scale_action,
+            "scale": self.scale_action, "diskfull": self.diskfull_action,
         }
         self._plugin_commands: list[str] | None = None
         self._tooling_ready = False
@@ -1573,6 +1573,67 @@ class Monkey:
         self._report_kill(f"kill -9 at step {self.step_index}", self.data.kill9_and_check(self.rng, choose=choose))
         return "kill9:point" if choose is not None else "kill9"
 
+    def diskfull_action(self) -> str:
+        """A full disk at one write step of saving the focused, dirty file (the
+        crash-points query's fail=ENOSPC rule, util/CrashPoint.h FaultPoint):
+        the file keeps its bytes, the buffer its edit, a row says why, no
+        staging file is left. Recorded as an external row so a replay fails the
+        same save the same way."""
+        buffer = self.app.query("buffer")
+        if buffer.get("kind") != "editor" or not buffer.get("path") or not buffer.get("dirty") \
+                or buffer.get("readOnly"):
+            return self.type_action()
+        name = Path(buffer["path"]).name
+        site, target = self.rng.choice([("durable.writing", f"{name} (staging)"),
+                                        ("durable.fsyncing", f"{name} (staging)"),
+                                        ("durable.renaming", name)])
+        rule = f"fail=ENOSPC:{site}@{target}#1"
+        self.app.record_external({"external": "diskfull", "target": rule})
+        self._report(f"disk full at step {self.step_index}", self._fail_save(rule))
+        return "diskfull"
+
+    def _fail_save(self, rule: str) -> list[tuple[str, str]]:
+        buffer = self.app.query("buffer")
+        path = buffer.get("path")
+        if buffer.get("kind") != "editor" or not path or not buffer.get("dirty"):
+            return []
+        name = Path(path).name
+        try:
+            before = Path(path).read_bytes()
+        except OSError:
+            before = None
+        try:
+            self.app.query("crash-points", {"arm": rule})
+        except q.QaFailure:
+            return []
+        said = False
+        try:
+            self.app.send_line("save", record=False)
+            deadline = time.monotonic() + 5.0 * q.SLOW_FACTOR
+            while time.monotonic() < deadline and not said:
+                said = any(f"Failed to save {name}" in (row.get("message") or "")
+                           for row in self.app.query("notifications"))
+                time.sleep(0.05)
+        finally:
+            with contextlib.suppress(q.QaFailure):
+                self.app.query("crash-points", {"disarm": True})
+        found: list[tuple[str, str]] = []
+        try:
+            after = Path(path).read_bytes()
+        except OSError:
+            after = None
+        if after != before:
+            found.append(("data", f"a save of {name} that failed on a full disk ({rule}) changed the file"))
+        if not self.app.query("buffer").get("dirty"):
+            found.append(("data", f"a save of {name} that failed on a full disk ({rule}) left the buffer clean"))
+        if not said:
+            found.append(("data", f"a save of {name} that failed on a full disk ({rule}) said nothing"))
+        left = self.data.staging_leftovers(self.app.pid)
+        if left:
+            found.append(("data", f"a save of {name} that failed on a full disk ({rule}) left "
+                                  f"{', '.join(p.name for p in left)}"))
+        return found
+
     # ---- replaying the outside world -------------------------------------------
 
     def replay_churn(self, row: dict[str, Any]) -> None:
@@ -1601,6 +1662,8 @@ class Monkey:
             self._report_kill("kill -9 (replayed)",
                               self.data.kill9_and_check(self.rng, waited=bool(row.get("waited")),
                                                         point=row.get("point")))
+        elif row.get("external") == "diskfull":
+            self._report("disk full (replayed)", self._fail_save(row.get("target", "")))
         elif row.get("external") == "remote-fault":
             if self.host is not None:
                 self.host.fault(row.get("target", ""))

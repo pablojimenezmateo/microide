@@ -118,10 +118,12 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    `LocalWriteFaultMatrix/EveryInjectedWriteFailureLeavesTheOldFile` (every
    site x errno x create/replace), `WorkspaceShell/ADiskFailureDuringASaveKeepsTheEditAndSaysWhy`
    and the QA flow `save-disk-full` (the file keeps its bytes, the buffer its
-   edit, a row says why, no staging file, the next save writes it). Still open:
-   a monkey oracle that arms a random fail rule mid-run (beside
-   `DataOracle.kill9_and_check`), so the session and user-config writers meet a
-   full disk too, not only an editor save.
+   edit, a row says why, no staging file, the next save writes it). The `crash`
+   profile's monkey now does it at random (`diskfull`: a one-shot ENOSPC at a
+   random step of saving the focused dirty file, recorded so a replay fails the
+   same save). Still open: a full disk under the session and user-config
+   writers, whose failure has no row to show and needs its own oracle (the next
+   flush stages everything again).
 4. **A save killed part-way is not held to old-or-new bytes.** The point-kill
    oracle (`DataOracle.kill9_and_check`) checks what the buffers come back as; for
    the FILE a killed save was writing it only checks "back clean means the file
