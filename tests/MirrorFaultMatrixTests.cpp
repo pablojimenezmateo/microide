@@ -84,6 +84,9 @@ void JournalForPowerCut(std::size_t index, const char* site, std::string_view wh
 }
 
 int DiskStepHook(const char* site, std::string_view what) {
+  if (std::string_view(site).starts_with("tree-op.")) {
+    return 0;
+  }
   const std::size_t index = g_disk_steps.fetch_add(1);
   if (!g_power_log_dir.empty()) {
     JournalForPowerCut(index, site, what);

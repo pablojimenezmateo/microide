@@ -11,6 +11,7 @@
 #include "platform/FsOps.h"
 #include "platform/Trash.h"
 #include "util/CrashPoint.h"
+#include "util/DurableFile.h"
 #include "util/PathMatch.h"
 
 #include <fcntl.h>
@@ -323,7 +324,7 @@ class Batch {
   }
 
   std::string CreateEmptyOver(const fs::path& path, const fs::path& staged) {
-    const fs::path fresh = FreeStagingPath(path);
+    const fs::path fresh = util::UniqueTemporaryPath(path);
     if (ExclusiveCreateEmptyFile(fresh) <= 0) {
       return "Failed to create the file";
     }
@@ -339,18 +340,8 @@ class Batch {
     return {};
   }
 
-  fs::path FreeStagingPath(const fs::path& victim) {
-    for (;;) {
-      fs::path staged = victim.parent_path() /
-                        (".microide-staged-" + std::to_string(stage_seq_++) + "-" + victim.filename().string());
-      if (!NodeExists(staged)) {
-        return staged;
-      }
-    }
-  }
-
   std::optional<fs::path> LinkAside(const fs::path& victim) {
-    const fs::path staged = FreeStagingPath(victim);
+    const fs::path staged = util::UniqueTemporaryPath(victim);
     if (::linkat(AT_FDCWD, victim.c_str(), AT_FDCWD, staged.c_str(), 0) != 0) {
       return std::nullopt;
     }
@@ -361,7 +352,7 @@ class Batch {
   }
 
   bool StageAside(const fs::path& victim) {
-    const fs::path staged = FreeStagingPath(victim);
+    const fs::path staged = util::UniqueTemporaryPath(victim);
     if (!platform::MovePathNoOverwrite(victim, staged)) {
       return false;
     }
@@ -431,7 +422,6 @@ class Batch {
 
   std::vector<Undo> undo_;
   std::vector<fs::path> staged_;
-  std::size_t stage_seq_ = 0;
   fs::path resulting_path_;
 };
 
