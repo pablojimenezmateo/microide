@@ -1,6 +1,7 @@
 #include "project/LocalTreeOps.h"
 
 #include <cerrno>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -9,6 +10,7 @@
 
 #include "platform/FsOps.h"
 #include "platform/Trash.h"
+#include "util/CrashPoint.h"
 #include "util/PathMatch.h"
 
 #include <fcntl.h>
@@ -36,6 +38,11 @@ bool NodeExists(const fs::path& path) {
   return fs::symlink_status(path, error).type() != fs::file_type::not_found;
 }
 
+bool IsDirectoryNoFollow(const fs::path& path) {
+  std::error_code error;
+  return fs::symlink_status(path, error).type() == fs::file_type::directory;
+}
+
 bool IsReservedPathComponent(const fs::path& path) {
   for (const auto& component : path) {
     const std::string name = component.string();
@@ -54,6 +61,8 @@ struct Undo {
     RestoreStaged,
     RecreateDirectory,
     Untrash,
+    RemoveStagedLink,
+    ExchangeBack,
   };
   Kind kind;
   fs::path a;
@@ -96,6 +105,7 @@ class Batch {
         continue;
       }
       fs::remove(staged, error);
+      util::CrashPoint("tree-op.disposed", staged.native());
     }
     return result;
   }
@@ -130,6 +140,11 @@ class Batch {
     if (!EnsureParentDirectories(path)) {
       return "Failed to create the parent directory";
     }
+    if (overwrite && NodeExists(path) && !IsDirectoryNoFollow(path)) {
+      if (const std::optional<fs::path> staged = LinkAside(path)) {
+        return CreateEmptyOver(path, *staged);
+      }
+    }
     if (overwrite && NodeExists(path)) {
       if (!StageAside(path)) {
         return "Could not set aside the existing " + path.filename().string();
@@ -142,6 +157,7 @@ class Batch {
     if (created < 0) {
       return "Failed to create the file";
     }
+    util::CrashPoint("tree-op.created", path.native());
     undo_.push_back({Undo::Kind::RemoveCreatedFile, path, {}});
     resulting_path_ = path;
     return {};
@@ -186,6 +202,9 @@ class Batch {
       if (!overwrite) {
         return "The destination path already exists";
       }
+      if (std::optional<std::string> replaced = ReplaceInOneStep(source, destination)) {
+        return *replaced;
+      }
       if (!StageAside(destination)) {
         return "Could not set aside the existing " + destination.filename().string();
       }
@@ -197,6 +216,7 @@ class Batch {
       return NodeExists(destination) ? "The destination path already exists"
                                      : "Failed to rename the path";
     }
+    util::CrashPoint("tree-op.moved", destination.native());
     undo_.push_back({Undo::Kind::RenameBack, destination, source});
     resulting_path_ = destination;
     return {};
@@ -275,21 +295,80 @@ class Batch {
     return {};
   }
 
-  bool StageAside(const fs::path& victim) {
-    for (;;) {
-      const fs::path staged = victim.parent_path() /
-                              (".microide-staged-" + std::to_string(stage_seq_++) + "-" +
-                               victim.filename().string());
-      if (NodeExists(staged)) {
-        continue;
+  std::optional<std::string> ReplaceInOneStep(const fs::path& source, const fs::path& destination) {
+    if (!IsDirectoryNoFollow(source) && !IsDirectoryNoFollow(destination)) {
+      const std::optional<fs::path> staged = LinkAside(destination);
+      if (!staged.has_value()) {
+        return std::nullopt;
       }
-      if (!platform::MovePathNoOverwrite(victim, staged)) {
-        return false;
+      if (::rename(source.c_str(), destination.c_str()) != 0) {
+        return std::string("Failed to rename the path");
       }
-      undo_.push_back({Undo::Kind::RestoreStaged, victim, staged});
-      staged_.push_back(staged);
-      return true;
+      util::CrashPoint("tree-op.replaced", destination.native());
+      undo_.push_back({Undo::Kind::RestoreStaged, destination, *staged});
+      undo_.push_back({Undo::Kind::RenameBack, destination, source});
+      resulting_path_ = destination;
+      return std::string();
     }
+    if (!platform::ExchangePaths(source, destination)) {
+      return std::nullopt;
+    }
+    util::CrashPoint("tree-op.exchanged", destination.native());
+    undo_.push_back({Undo::Kind::ExchangeBack, source, destination});
+    if (!StageAside(source)) {
+      return "Could not set aside the existing " + destination.filename().string();
+    }
+    resulting_path_ = destination;
+    return std::string();
+  }
+
+  std::string CreateEmptyOver(const fs::path& path, const fs::path& staged) {
+    const fs::path fresh = FreeStagingPath(path);
+    if (ExclusiveCreateEmptyFile(fresh) <= 0) {
+      return "Failed to create the file";
+    }
+    if (::rename(fresh.c_str(), path.c_str()) != 0) {
+      std::error_code error;
+      fs::remove(fresh, error);
+      return "Failed to create the file";
+    }
+    util::CrashPoint("tree-op.replaced", path.native());
+    undo_.push_back({Undo::Kind::RestoreStaged, path, staged});
+    undo_.push_back({Undo::Kind::RemoveCreatedFile, path, {}});
+    resulting_path_ = path;
+    return {};
+  }
+
+  fs::path FreeStagingPath(const fs::path& victim) {
+    for (;;) {
+      fs::path staged = victim.parent_path() /
+                        (".microide-staged-" + std::to_string(stage_seq_++) + "-" + victim.filename().string());
+      if (!NodeExists(staged)) {
+        return staged;
+      }
+    }
+  }
+
+  std::optional<fs::path> LinkAside(const fs::path& victim) {
+    const fs::path staged = FreeStagingPath(victim);
+    if (::linkat(AT_FDCWD, victim.c_str(), AT_FDCWD, staged.c_str(), 0) != 0) {
+      return std::nullopt;
+    }
+    util::CrashPoint("tree-op.linked-aside", staged.native());
+    undo_.push_back({Undo::Kind::RemoveStagedLink, staged, {}});
+    staged_.push_back(staged);
+    return staged;
+  }
+
+  bool StageAside(const fs::path& victim) {
+    const fs::path staged = FreeStagingPath(victim);
+    if (!platform::MovePathNoOverwrite(victim, staged)) {
+      return false;
+    }
+    util::CrashPoint("tree-op.staged-aside", staged.native());
+    undo_.push_back({Undo::Kind::RestoreStaged, victim, staged});
+    staged_.push_back(staged);
+    return true;
   }
 
   static fs::path TopmostMissingAncestorOrSelf(const fs::path& path) {
@@ -337,6 +416,12 @@ class Batch {
           break;
         case Undo::Kind::Untrash:
           (void)platform::MovePathNoOverwrite(it->b, it->a);
+          break;
+        case Undo::Kind::RemoveStagedLink:
+          fs::remove(it->a, error);
+          break;
+        case Undo::Kind::ExchangeBack:
+          (void)platform::ExchangePaths(it->a, it->b);
           break;
       }
     }

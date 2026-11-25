@@ -11,6 +11,9 @@
 #ifndef RENAME_NOREPLACE
 #define RENAME_NOREPLACE (1 << 0)
 #endif
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
 
 namespace microide::platform {
 
@@ -131,6 +134,10 @@ bool MovePathNoOverwrite(const std::filesystem::path& source,
     return false;
   }
   return true;
+}
+
+bool ExchangePaths(const std::filesystem::path& a, const std::filesystem::path& b) {
+  return ::syscall(SYS_renameat2, AT_FDCWD, a.c_str(), AT_FDCWD, b.c_str(), RENAME_EXCHANGE) == 0;
 }
 
 }

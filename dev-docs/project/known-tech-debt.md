@@ -292,10 +292,22 @@ What it left, by workstream:
    `WriteTextFileAtomically`, and since 2026-11-25 errno injection at its write,
    fsync and rename (TD-452 item 3: ENOSPC, EIO, EROFS, EXDEV, ...; a 5 s fsync
    stall is `delay=5000:durable.fsyncing`) with the editor save shown to keep the
-   edit and say why. Not yet: crash points in replace-in-files, merge writes and
-   rename/move (the session and user-config writers go through `DurableFile`
-   and have them); the same check for every other write path; the write-path
-   inventory table for `editor-essentials.md`. The monkey cannot fill the disk
+   edit and say why. Replace-in-files and merge writes go through the same
+   `FileWriteGate` -> `DurableFile` path and so have its points; since
+   2026-11-25 `WorkspaceShell/AReplaceAllThatCannotWriteOneFileKeepsItAndSaysWhich`
+   fails one file of a replace-all at each site (the others are replaced, it
+   keeps its bytes, the search view names it and why). The tree ops (rename,
+   move, create, delete) have crash points (`tree-op.*`), and the kill matrix
+   `LocalWriteFaultMatrix/EveryCrashPointOfAnOverwritingTreeOpLeavesTheOldOrTheNewTree`
+   found that an overwriting rename or create moved the destination aside
+   before putting the new one in place: a kill between left no file at the
+   destination at all. A file is now replaced in one `rename(2)` after a hard
+   link keeps the old one for the batch's undo, a folder by
+   `renameat2(RENAME_EXCHANGE)` (a kill after the swap leaves the old folder
+   under the source's name, nothing lost); where neither works (no hard
+   links, no exchange) the old two-step path remains. A kill can still leave
+   a `.microide-staged-*` entry behind (clutter, never the only copy). Not
+   yet: the write-path inventory table for `editor-essentials.md`. The monkey cannot fill the disk
    either (needs a size-limited filesystem for its fixture).
 4. **W8 sequence fuzzers -- the LSP one landed 2026-11-25, and found a
    deadlock.** `WorkspaceLspClient/AnswersEveryRequestOnceWhateverOrderTheServerReplies`

@@ -15,4 +15,6 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
 bool MovePathNoOverwrite(const std::filesystem::path& source,
                          const std::filesystem::path& destination);
 
+bool ExchangePaths(const std::filesystem::path& a, const std::filesystem::path& b);
+
 }

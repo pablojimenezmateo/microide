@@ -11,11 +11,13 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "project/LocalTreeOps.h"
 #include "util/CrashPoint.h"
 #include "util/CrashPointControl.h"
 #include "util/Parse.h"
@@ -187,6 +189,109 @@ void TestEveryInjectedWriteFailureLeavesTheOldFile() {
   util::SetCrashPointHook(nullptr);
 }
 
+struct TreeCase {
+  std::string name;
+  std::string mode;
+};
+
+void SetUpTree(const std::filesystem::path& dir, std::string_view mode) {
+  std::error_code ignored;
+  std::filesystem::remove_all(dir, ignored);
+  std::filesystem::create_directories(dir);
+  if (mode == "tree-rename-dir") {
+    WriteFile(dir / "from" / "inner.txt", "moved in\n");
+    WriteFile(dir / "to" / "inner.txt", "old inner\n");
+    WriteFile(dir / "to" / "only-old.txt", "only in the old folder\n");
+    return;
+  }
+  WriteFile(dir / "from.txt", "the renamed file\n");
+  WriteFile(dir / "to.txt", "the overwritten file\n");
+}
+
+bool ApplyTreeMode(const std::filesystem::path& dir, std::string_view mode) {
+  using TreeOp = project::FileWriteGate::TreeOp;
+  TreeOp op;
+  op.overwrite = true;
+  if (mode == "tree-create-over") {
+    op.kind = TreeOp::Kind::CreateFile;
+    op.path = dir / "to.txt";
+  } else {
+    op.kind = TreeOp::Kind::Rename;
+    op.path = dir / (mode == "tree-rename-dir" ? "from" : "from.txt");
+    op.new_path = dir / (mode == "tree-rename-dir" ? "to" : "to.txt");
+  }
+  return project::ApplyLocalTreeOps(std::span<const TreeOp>(&op, 1)).ok;
+}
+
+std::string DescribeTree(const std::filesystem::path& dir) {
+  std::string out;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
+    out += " " + entry.path().lexically_relative(dir).string();
+    if (entry.is_regular_file()) {
+      out += "=" + ReadAll(entry.path()).substr(0, 24);
+    }
+  }
+  return out;
+}
+
+std::optional<std::string> ContentAt(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error)) {
+    return std::nullopt;
+  }
+  return ReadAll(path);
+}
+
+std::string TreeStateProblem(const std::filesystem::path& dir, std::string_view mode) {
+  if (mode == "tree-rename-dir") {
+    const auto at_to = ContentAt(dir / "to" / "inner.txt");
+    const auto at_from = ContentAt(dir / "from" / "inner.txt");
+    const bool old_state = at_to == "old inner\n" && ContentAt(dir / "to" / "only-old.txt").has_value() &&
+                           at_from == "moved in\n";
+    const bool new_state = at_to == "moved in\n" && !ContentAt(dir / "to" / "only-old.txt").has_value() &&
+                           !std::filesystem::exists(dir / "from");
+    const bool swapped = at_to == "moved in\n" && !ContentAt(dir / "to" / "only-old.txt").has_value() &&
+                         at_from == "old inner\n" && ContentAt(dir / "from" / "only-old.txt").has_value();
+    return old_state || new_state || swapped
+               ? std::string()
+               : "the folder is neither the old one, the moved one, nor the moved one with the old one under "
+                 "the source's name";
+  }
+  const auto at_to = ContentAt(dir / "to.txt");
+  if (mode == "tree-create-over") {
+    return at_to == "the overwritten file\n" || at_to == "" ? std::string()
+                                                           : "to.txt is neither its old bytes nor the new empty file";
+  }
+  const auto at_from = ContentAt(dir / "from.txt");
+  const bool old_state = at_to == "the overwritten file\n" && at_from == "the renamed file\n";
+  const bool new_state = at_to == "the renamed file\n" && !at_from.has_value();
+  return old_state || new_state ? std::string() : "neither the old pair nor the renamed file";
+}
+
+void TestEveryCrashPointOfAnOverwritingTreeOpLeavesTheOldOrTheNewTree() {
+  for (const TreeCase& c : std::vector<TreeCase>{{"rename a file over a file", "tree-rename-file"},
+                                                 {"rename a folder over a folder", "tree-rename-dir"},
+                                                 {"create a file over a file", "tree-create-over"}}) {
+    TemporaryDirectory temp;
+    const std::filesystem::path dir = temp.path() / "project";
+    const std::filesystem::path unused = temp.path() / "unused";
+    WriteFile(unused, "");
+    SetUpTree(dir, c.mode);
+    const HelperRun clean = RunHelper(dir, unused, c.mode, std::numeric_limits<std::size_t>::max());
+    Expect(clean.exit_code == 0 && clean.steps > 0,
+           c.name + ": an undisturbed op succeeds and passes crash points (" + std::to_string(clean.steps) + ")");
+    Expect(TreeStateProblem(dir, c.mode).empty(), c.name + ": an undisturbed op leaves the new tree:" + DescribeTree(dir));
+    for (std::size_t step = 0; step < clean.steps; ++step) {
+      SetUpTree(dir, c.mode);
+      const HelperRun run = RunHelper(dir, unused, c.mode, step);
+      Expect(run.killed, c.name + ": the helper is killed at step " + std::to_string(step));
+      const std::string problem = TreeStateProblem(dir, c.mode);
+      Expect(problem.empty(), c.name + ": a kill at step " + std::to_string(step) + " of " +
+                                  std::to_string(clean.steps) + " left " + problem + ":" + DescribeTree(dir));
+    }
+  }
+}
+
 }
 
 bool IsLocalWriteFaultClient(int argc, char** argv) { return argc > 1 && std::string_view(argv[1]) == kHelperFlag; }
@@ -204,6 +309,13 @@ int RunLocalWriteFaultClient(int argc, char** argv) {
   }
   g_kill_at.store(*kill_at);
   util::SetCrashPointHook(&KillAtStep);
+  if (mode.starts_with("tree-")) {
+    const bool applied = ApplyTreeMode(target, mode);
+    util::SetCrashPointHook(nullptr);
+    std::printf("%zu\n", g_steps.load());
+    std::fflush(stdout);
+    return applied ? 0 : 1;
+  }
   std::error_code error;
   const bool ok = util::WriteTextFileAtomically(
       target, content, &error, mode == "create" ? util::WriteTarget::CreateNew : util::WriteTarget::Replace);
@@ -216,6 +328,8 @@ int RunLocalWriteFaultClient(int argc, char** argv) {
 void RegisterLocalWriteFaultMatrixTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LocalWriteFaultMatrix/EveryCrashPointOfASaveLeavesTheOldOrTheNewFile",
           TestEveryCrashPointOfASaveLeavesTheOldOrTheNewFile);
+  AddTest(tests, "LocalWriteFaultMatrix/EveryCrashPointOfAnOverwritingTreeOpLeavesTheOldOrTheNewTree",
+          TestEveryCrashPointOfAnOverwritingTreeOpLeavesTheOldOrTheNewTree);
   AddTest(tests, "LocalWriteFaultMatrix/EveryInjectedWriteFailureLeavesTheOldFile",
           TestEveryInjectedWriteFailureLeavesTheOldFile);
 }

@@ -355,6 +355,32 @@ void TestAnOverwritingRenameLeavesNoStagingEntry() {
          "and the replaced file is gone, not parked under a hidden name");
 }
 
+void TestAFailedBatchUndoesItsOverwrites() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "A");
+  WriteFile(root / "b.txt", "B");
+  WriteFile(root / "c.txt", "C");
+  WriteFile(root / "from" / "inner.txt", "FROM");
+  WriteFile(root / "to" / "inner.txt", "TO");
+  WriteFile(root / "to" / "only.txt", "ONLY");
+  WriteFile(root / "occupied.txt", "OCCUPIED");
+  const std::vector<TreeOp> ops = {
+      {.kind = TreeOp::Kind::Rename, .path = root / "a.txt", .new_path = root / "b.txt", .overwrite = true},
+      {.kind = TreeOp::Kind::Rename, .path = root / "from", .new_path = root / "to", .overwrite = true},
+      {.kind = TreeOp::Kind::CreateFile, .path = root / "c.txt", .overwrite = true},
+      {.kind = TreeOp::Kind::Rename, .path = root / "missing.txt", .new_path = root / "occupied.txt"},
+  };
+  const auto result = microide::project::LocalFileWriteGate().ApplyTreeOps(ops);
+  Expect(!result.ok && result.failed_index == 3, "the batch fails at its last op");
+  Expect(ReadFile(root / "a.txt") == "A" && ReadFile(root / "b.txt") == "B", "the overwritten file is back");
+  Expect(ReadFile(root / "from" / "inner.txt") == "FROM" && ReadFile(root / "to" / "inner.txt") == "TO" &&
+             ReadFile(root / "to" / "only.txt") == "ONLY",
+         "the overwritten folder is back");
+  Expect(ReadFile(root / "c.txt") == "C", "the file a create emptied is back");
+  Expect(CountEntries(root) == 6, "with no staging debris left behind");
+}
+
 void TestANonRecursiveDeleteRefusesANonEmptyDirectory() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -384,6 +410,7 @@ void RegisterFileTreeOpsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/FileTreeOps", TestFileOperationService);
   AddTest(tests, "Project/TreeOpCopy", TestTreeOpCopy);
   AddTest(tests, "Project/ATreeBatchIsAllOrNothing", TestATreeBatchIsAllOrNothing);
+  AddTest(tests, "Project/AFailedBatchUndoesItsOverwrites", TestAFailedBatchUndoesItsOverwrites);
   AddTest(tests, "Project/AnOverwritingRenameLeavesNoStagingEntry",
           TestAnOverwritingRenameLeavesNoStagingEntry);
   AddTest(tests, "Project/ANonRecursiveDeleteRefusesANonEmptyDirectory",
