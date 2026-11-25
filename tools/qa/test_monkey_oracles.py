@@ -1818,5 +1818,90 @@ class CleanBufferTests(unittest.TestCase):
         app.project = None
         self.assertEqual(oracle.staging_leftovers(42), [])
 
+
+class UndoAlgebraGuardTests(unittest.TestCase):
+    """When UndoAlgebra.check stands aside, and what it counts: the conditions
+    mutation-test.sh found no test held (65 mutants of check survived)."""
+
+    def check(self, app, asked=2):
+        oracle = monkey_oracles.UndoAlgebra(app, random.Random(0))
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.001):
+            return oracle, oracle.check(asked)
+
+    def test_a_redo_that_loses_text_is_a_finding_with_both_texts(self):
+        app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+        oracle, found = self.check(app)
+        self.assertEqual(found, [("undo", "2 undo(s) then 2 redo(s) changed the text of CHANGELOG.md (3 -> 2 chars)")])
+        self.assertEqual(oracle.evidence, {"undo-before.txt": b"abc", "undo-after.txt": b"ab"})
+
+    def test_only_the_undos_that_applied_are_redone(self):
+        app = _UndoEditor(["a", "ab"], at=1)
+        lines = []
+        app.on_line = lines.append
+        _, found = self.check(app, asked=4)
+        self.assertEqual(found, [])
+        self.assertEqual(lines, ["undo"] * 4 + ["redo"], "one undo applied, so one redo")
+
+    def test_an_editor_not_in_front_is_not_checked(self):
+        for ui in ({"focus": "sidebar"}, {"focus": "editor", "overlay": {"visible": True}},
+                   {"focus": "editor", "modal": "dirty-prompt"}, {"focus": "editor", "menu": {"open": True}}):
+            app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+            app.last_ui = ui
+            lines = []
+            app.on_line = lines.append
+            oracle, found = self.check(app)
+            self.assertEqual(found, [], ui)
+            self.assertEqual(lines, [], ui)
+            self.assertEqual(oracle.evidence, {}, ui)
+        app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+        app.last_ui = {"focus": "editor", "overlay": {"visible": False}, "menu": {"open": False}}
+        self.assertEqual(len(self.check(app)[1]), 1, "a hidden overlay and a closed menu are not in the way")
+
+    def test_a_read_only_or_textless_buffer_is_not_checked(self):
+        for extra in ({"readOnly": True}, {"text": None}):
+            app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+            answer = app.query
+
+            def query(verb, args=None, extra=extra, answer=answer):
+                out = answer(verb, args)
+                if verb == "buffer":
+                    out.update(extra)
+                    if out.get("text") is None:
+                        del out["text"]
+                return out
+            app.query = query
+            lines = []
+            app.on_line = lines.append
+            self.assertEqual(self.check(app)[1], [], extra)
+            self.assertEqual(lines, [], extra)
+
+    def test_a_buffer_without_revisions_counts_every_undo(self):
+        app = _UndoEditor(["a", "ab"], at=1)
+        answer = app.query
+        app.query = lambda verb, args=None: {k: v for k, v in answer(verb, args).items() if k != "revision"}
+        lines = []
+        app.on_line = lines.append
+        self.check(app, asked=3)
+        self.assertEqual(lines.count("redo"), 3)
+
+    def test_a_tab_that_changes_under_the_commands_ends_the_check(self):
+        for field in ("path", "kind"):
+            app = _UndoEditor(["a", "ab", "abc"], at=2, redo_drops=True)
+            answer = app.query
+            calls = {"n": 0}
+
+            def query(verb, args=None, field=field):
+                out = answer(verb, args)
+                if verb == "buffer":
+                    calls["n"] += 1
+                    if calls["n"] > 1:
+                        out[field] = "elsewhere"
+                return out
+            app.query = query
+            lines = []
+            app.on_line = lines.append
+            self.assertEqual(self.check(app)[1], [], field)
+            self.assertNotIn("redo", lines, field)
+
 if __name__ == "__main__":
     unittest.main()
