@@ -6,6 +6,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import hashlib
+import json
 import os
 import random
 import re
@@ -1902,6 +1903,88 @@ class UndoAlgebraGuardTests(unittest.TestCase):
             app.on_line = lines.append
             self.assertEqual(self.check(app)[1], [], field)
             self.assertNotIn("redo", lines, field)
+
+
+class UntitledNameTests(unittest.TestCase):
+    def oracle(self, docs, tabs=None):
+        app = mock.Mock()
+        app.query.side_effect = lambda verb, args=None: (
+            [dict(d) for d in docs] if verb == "documents" else
+            (tabs if not isinstance(tabs, Exception) else (_ for _ in ()).throw(tabs)))
+        return monkey_oracles.DataOracle(app)
+
+    def test_two_texts_under_one_untitled_name_are_a_data_finding_with_the_tabs(self):
+        docs = [{"path": "", "title": "Untitled-1", "sha256": "a", "project": "/p"},
+                {"path": "", "title": "Untitled-1", "sha256": "b", "project": "/p"},
+                {"path": "/p/x.txt", "title": "x.txt", "sha256": "c", "project": "/p"}]
+        oracle = self.oracle(docs, tabs=[{"title": "Untitled-1", "group": 0}])
+        self.assertEqual(oracle.check_untitled_names(),
+                         [("data", "2 different unsaved buffers are all titled Untitled-1")])
+        untitled = json.loads(oracle.untitled_evidence["untitled-documents.json"])
+        self.assertEqual([d["sha256"] for d in untitled], ["a", "b"], "only the pathless buffers")
+        self.assertEqual(json.loads(oracle.untitled_evidence["tabs.json"]), [{"title": "Untitled-1", "group": 0}])
+        self.assertIn(b"\n ", oracle.untitled_evidence["tabs.json"], "indented for reading")
+
+    def test_one_buffer_in_two_panes_or_a_titled_file_is_fine(self):
+        same = [{"path": "", "title": "Untitled-1", "sha256": "a", "project": "/p"}] * 2
+        self.assertEqual(self.oracle(same).check_untitled_names(), [])
+        files = [{"path": "/p/a/x.txt", "title": "x.txt", "sha256": "a", "project": "/p"},
+                 {"path": "/p/b/x.txt", "title": "x.txt", "sha256": "b", "project": "/p"}]
+        self.assertEqual(self.oracle(files).check_untitled_names(), [], "files with one name are not untitled")
+        other_projects = [{"path": "", "title": "Untitled-1", "sha256": "a", "project": "/p"},
+                          {"path": "", "title": "Untitled-1", "sha256": "b", "project": "/q"}]
+        self.assertEqual(self.oracle(other_projects).check_untitled_names(), [], "each project numbers its own")
+        nameless = [{"path": "", "title": "", "sha256": "a"}, {"path": "", "title": "", "sha256": "b"}]
+        self.assertEqual(self.oracle(nameless).check_untitled_names(), [])
+
+    def test_the_documents_given_are_the_ones_judged(self):
+        oracle = self.oracle([{"path": "", "title": "Untitled-1", "sha256": "a", "project": "/p"},
+                              {"path": "", "title": "Untitled-1", "sha256": "b", "project": "/p"}])
+        self.assertEqual(oracle.check_untitled_names([]), [], "an explicit list is not replaced by a query")
+
+    def test_tabs_that_cannot_be_asked_leave_the_rest_of_the_evidence(self):
+        docs = [{"path": "", "title": "Untitled-2", "sha256": "a", "project": "/p"},
+                {"path": "", "title": "Untitled-2", "sha256": "b", "project": "/p"}]
+        oracle = self.oracle(docs, tabs=RuntimeError("busy"))
+        self.assertEqual(len(oracle.check_untitled_names()), 1)
+        self.assertEqual(oracle.untitled_evidence["tabs.json"], b"null")
+
+
+class TerminalOriginsEdgeTests(unittest.TestCase):
+    def log(self, pids, stack=("  #0 0x1 in StartPty", "  #1 0x2 in OpenTerminal")):
+        return "".join(f"microide terminal-life: start pid={pid}\n" + "".join(line + "\n" for line in stack)
+                       for pid in pids)
+
+    def test_more_than_twenty_shells_are_cut_with_an_ellipsis(self):
+        pids = set(range(100, 121))
+        text = monkey_oracles.terminal_origins(self.log(sorted(pids)), pids)
+        first = text.splitlines()[0]
+        self.assertTrue(first.startswith("21 alive shell(s) started here: 100 (never stopped)"), first)
+        self.assertTrue(first.endswith(" ..."), first)
+        self.assertNotIn("120 (", first)
+        twenty = set(range(100, 120))
+        self.assertFalse(monkey_oracles.terminal_origins(self.log(sorted(twenty)), twenty)
+                         .splitlines()[0].endswith(" ..."), "exactly twenty fit")
+
+    def test_with_a_binary_the_stack_is_symbolized_without_its_frame_numbers(self):
+        seen = {}
+
+        def symbolize(block, binary):
+            seen["block"], seen["binary"] = block, binary
+            return "StartPty at TerminalPty.cpp:12\n"
+        with mock.patch.object(monkey_oracles.q, "symbolize_backtrace", side_effect=symbolize):
+            text = monkey_oracles.terminal_origins(self.log([7]), {7}, Path("/bin/microide"))
+        self.assertEqual(seen["block"], "microide terminal-life: start\n0x1 in StartPty\n0x2 in OpenTerminal")
+        self.assertEqual(seen["binary"], Path("/bin/microide"))
+        self.assertIn("StartPty at TerminalPty.cpp:12", text)
+        self.assertNotIn("#0", text)
+
+    def test_lines_between_starts_end_a_stack(self):
+        text = "microide terminal-life: start pid=1\n  #0 a\nother line\n  #1 not-part\n"
+        out = monkey_oracles.terminal_origins(text, {1})
+        self.assertIn("  #0 a", out)
+        self.assertNotIn("not-part", out)
+        self.assertEqual(monkey_oracles.terminal_origins("", set()), "")
 
 if __name__ == "__main__":
     unittest.main()
