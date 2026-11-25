@@ -925,6 +925,40 @@ void TestTheSearchSidebarsStatusLineStaysInsideAShortSidebar() {
   Expect(shown > 0, "some heights show the status line");
 }
 
+void TestTheOutputPanelLaysOutOnlyTheRowsThatFit() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  constexpr int kWidth = 1024;
+  constexpr int kHeight = 648;
+  for (const bool with_lines : {true, false}) {
+    WorkspaceShell shell;
+    Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+    TestAccess::SetWindowSize(shell, kWidth, kHeight);
+    TestAccess::ShowOutputChannelWithLines(shell, "git", with_lines ? 40 : 0);
+    SoftwareCanvas canvas(kWidth, kHeight);
+    std::size_t painted = 0;
+    for (float panel = 40.0f; panel <= 140.0f; panel += 2.0f) {
+      TestAccess::SetBottomPanelHeight(shell, panel);
+      shell.Render(canvas.renderer(), kWidth, kHeight);
+      (void)shell.ConsumePendingRenderInvalidation();
+      const SDL_FRect content = TestAccess::BottomPanelContent(shell);
+      for (const SDL_FRect& rect : TestAccess::OutputBodyPaintedRects(shell)) {
+        ++painted;
+        Expect(rect.y + rect.h <= content.y + content.h + 0.01f,
+               std::string(with_lines ? "a row" : "the empty hint") + " at a panel " + std::to_string(panel) +
+                   " tall ends at " + std::to_string(rect.y + rect.h) + ", past its content's bottom " +
+                   std::to_string(content.y + content.h));
+      }
+    }
+    Expect(painted > 0, "some heights lay rows out");
+  }
+}
+
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/TheQuickOpenCaretSitsInItsField", TestTheQuickOpenCaretSitsInItsField);
@@ -961,6 +995,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/EveryClickableElementTheUiNamesIsAHoverTarget",
           TestEveryClickableElementTheUiNamesIsAHoverTarget);
   AddTest(tests, "QaFlowRegressionUx/AClickAnywhereBehindAModalMovesNoFocus", TestAClickAnywhereBehindAModalMovesNoFocus);
+  AddTest(tests, "QaFlowRegressionUx/TheOutputPanelLaysOutOnlyTheRowsThatFit",
+          TestTheOutputPanelLaysOutOnlyTheRowsThatFit);
   AddTest(tests, "QaFlowRegressionUx/TheSearchSidebarsStatusLineStaysInsideAShortSidebar",
           TestTheSearchSidebarsStatusLineStaysInsideAShortSidebar);
   AddTest(tests, "QaFlowRegressionUx/ADiffUnderAMaximizedPanelListsNoControls",

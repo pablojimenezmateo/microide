@@ -283,9 +283,11 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
     const std::uint64_t row_style = style.value();
     const std::size_t count = entries != nullptr ? entries->size() : 0;
     const std::uint64_t first_serial = inputs.channels->FirstEntrySerial(inputs.channel_id);
+    const float content_bottom = inputs.content.y + inputs.content.h;
     for (int row = 0; row < inputs.visible_rows; ++row) {
       const int index = inputs.first_row + row;
-      if (index < 0 || static_cast<std::size_t>(index) >= count) {
+      if (index < 0 || static_cast<std::size_t>(index) >= count ||
+          inputs.text_y + static_cast<float>(row + 1) * inputs.line_height > content_bottom) {
         break;
       }
       const auto entry = static_cast<std::size_t>(index);
@@ -311,7 +313,7 @@ void PrepareBottomPanelOutputFrame(PreparedFrameState& frame, const BottomPanelO
       units.push_back(DerivedDamage::Unit{.rect = render::SnapToDevicePixelsF(inputs.renderer, painted.rect),
                                           .fingerprint = FingerprintOf(painted, row_style)});
     }
-    if (count == 0 && !inputs.empty_label.empty()) {
+    if (count == 0 && !inputs.empty_label.empty() && inputs.text_y + inputs.line_height <= content_bottom) {
       body.hint = inputs.empty_label;
       body.hint_rect = MakeRect(inputs.text_x, inputs.text_y, inputs.text_width,
                                 std::max(0.0f, inputs.content.y + inputs.content.h - inputs.text_y));

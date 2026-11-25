@@ -1055,6 +1055,19 @@
     return SDL_FPoint{panel_layout.content_rect.x + 12.0f,
                       panel_layout.text_y + panel_layout.line_height * (static_cast<float>(row) + 0.5f)};
   }
+  static std::vector<SDL_FRect> OutputBodyPaintedRects(const WorkspaceShell& shell) {
+    std::vector<SDL_FRect> rects;
+    for (const auto& row : shell.frame_state_.output_body.rows) {
+      rects.push_back(row.rect);
+    }
+    if (!shell.frame_state_.output_body.hint.empty()) {
+      rects.push_back(shell.frame_state_.output_body.hint_rect);
+    }
+    return rects;
+  }
+  static SDL_FRect BottomPanelContent(WorkspaceShell& shell) {
+    return ::microide::workspace::BottomPanelContentRect(CurrentLayout(shell));
+  }
   static int OutputPanelScrollRow(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.output.scroll_row;
   }
