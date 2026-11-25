@@ -423,7 +423,7 @@ class RecordingTests(unittest.TestCase):
         self.assertEqual(q.finding_lines([failed], carried), [])
 
     def test_an_app_that_died_with_its_recorder_is_not_a_crash(self):
-        app = SimpleNamespace(new_log_lines=lambda: [], alive=lambda: False, proc=SimpleNamespace(returncode=134),
+        app = SimpleNamespace(new_log_lines=lambda: [], injected_write_failures=set(), alive=lambda: False, proc=SimpleNamespace(returncode=134),
                               recording=True, findings=[], recent_log=[],
                               log_tail=lambda size=0: "[FATAL src/record_syscall.cc:1:f()] \n -> Assertion `x' failed to hold. tee\n",
                               _write_finding=lambda label, found: None)
