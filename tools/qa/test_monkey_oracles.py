@@ -2779,5 +2779,193 @@ class Kill9SavedFilesTests(Kill9LapTests):
     def test_a_buffer_the_lap_left_dirty_is_not_excused(self):
         self.assertIn(self.LINK, self.link_case(autosave="on_focus_change", keep_x=True))
 
+
+class LeakEvidenceFormatTests(unittest.TestCase):
+    @staticmethod
+    def stat(pid, comm, state="S", start=500):
+        rest = [state] + ["0"] * 18 + [str(start)] + ["0"] * 5
+        return f"{pid} ({comm}) " + " ".join(rest)
+
+    def test_children_by_program_with_state_age_and_command(self):
+        report = monkey_oracles.ResourceOracle.children_report([
+            (11, self.stat(11, "bash", "S", 500), b"/bin/bash\0-l\0"),
+            (12, self.stat(12, "sle) ep", "Z", 900), b"sleep\x0030\0"),
+            (13, self.stat(13, "bash", "R", 300), b"/usr/bin/bash\0"),
+        ], uptime=20.0, ticks=100)
+        self.assertEqual(report, "3 direct children by program: {'bash': 2, 'sleep': 1}\n"
+                                 "pid state age_s  command\n"
+                                 "11 S     15.0  /bin/bash -l\n"
+                                 "12 Z     11.0  sleep 30\n"
+                                 "13 R     17.0  /usr/bin/bash\n")
+
+    def test_a_child_with_an_unreadable_stat_or_no_command_line(self):
+        report = monkey_oracles.ResourceOracle.children_report([
+            (11, "11 (x) S 1 2", b"x\0"),
+            (12, self.stat(12, "y"), b""),
+            (13, self.stat(13, "z", start=10).replace(" 10 ", " ten "), b"z\0"),
+        ], uptime=10.0, ticks=100)
+        self.assertEqual(report, "3 direct children by program: {'?': 1}\n"
+                                 "pid state age_s  command\n"
+                                 "12 S      5.0  \n")
+
+    def test_a_long_command_line_is_cut_at_two_hundred(self):
+        report = monkey_oracles.ResourceOracle.children_report(
+            [(5, self.stat(5, "p"), b"p\0" + b"a" * 300)], uptime=10.0, ticks=100)
+        line = report.splitlines()[2]
+        self.assertEqual(line, "5 S      5.0  " + ("p " + "a" * 300)[:200])
+
+    def test_a_descriptor_is_counted_by_what_it_points_at(self):
+        kind = monkey_oracles.ResourceOracle.fd_kind
+        self.assertEqual(kind("pipe:[123]"), "pipe")
+        self.assertEqual(kind("anon_inode:[eventfd]"), "anon_inode")
+        self.assertEqual(kind("socket:[1:2]"), "socket")
+        self.assertEqual(kind("/dev/pts/3"), "/dev/pts")
+        self.assertEqual(kind("/dev/null"), "/dev/null")
+        self.assertEqual(kind("/home/u/a.txt"), "file:.txt")
+        self.assertEqual(kind("/home/u/odd:name.log"), "file:.log")
+        self.assertEqual(kind("/home/u/Makefile"), "file:")
+        self.assertEqual(monkey_oracles.ResourceOracle.fds_report(
+            ["pipe:[1]", "pipe:[2]", "/dev/null", "/a/b.txt", "pipe:[3]"]),
+            "    3  pipe\n    1  /dev/null\n    1  file:.txt\n")
+
+    def test_threads_now_against_the_baseline(self):
+        report = monkey_oracles.ResourceOracle.threads_report(
+            collections.Counter({"worker": 5, "main": 1}), collections.Counter({"worker": 2, "gone": 3}))
+        self.assertEqual(report, "threads by name: now (at the baseline, change)\n"
+                                 "     5  (   2, +3)  worker\n"
+                                 "     1  (   0, +1)  main\n"
+                                 "     0  (   3, -3)  gone\n")
+
+    def test_the_evidence_reads_the_logs_in_order_and_names_the_origins(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        app = mock.Mock()
+        app.work = directory
+        app.binary = None
+        app.actions = []
+        oracle = monkey_oracles.ResourceOracle(app)
+        first = directory / "microide-2.log"
+        second = directory / "microide-1.log"
+        first.write_text("microide terminal-life: start pid=99\n")
+        second.write_text("  #0 0x1 in StartPty\n")
+        os.utime(first, (1, 1))
+        os.utime(second, (2, 2))
+        (directory / "other.log").write_text("microide terminal-life: start pid=98\n")
+        with mock.patch.object(monkey_oracles, "terminal_origins", wraps=monkey_oracles.terminal_origins) as origins:
+            out = oracle._what_it_holds(os.getpid())
+        log_text, alive, binary = origins.call_args.args
+        self.assertEqual(log_text, "microide terminal-life: start pid=99\n  #0 0x1 in StartPty\n",
+                         "microide logs only, oldest first")
+        self.assertIsNone(binary)
+        self.assertNotIn("children-origin.txt", out, "no alive child has a traced start")
+        self.assertNotIn("rss-timeline.txt", out)
+        oracle.rss_steps = [(0, 0, 1), (1, 0, 2)]
+        with mock.patch.object(monkey_oracles, "terminal_origins", return_value="origins\n"):
+            out = oracle._what_it_holds(os.getpid())
+        self.assertEqual(out["children-origin.txt"], b"origins\n")
+        self.assertTrue(out["rss-timeline.txt"].startswith(b"step  actions  rss_kb"))
+        app.binary = "/bin/microide"
+        with mock.patch.object(monkey_oracles, "terminal_origins", return_value="") as origins:
+            oracle._what_it_holds(os.getpid())
+        self.assertEqual(origins.call_args.args[2], Path("/bin/microide"))
+
+
+class LeakEvidenceReaderTests(unittest.TestCase):
+    def test_uptime_is_the_boot_clock_or_zero(self):
+        uptime = monkey_oracles.ResourceOracle._uptime
+        self.assertAlmostEqual(uptime(), time.clock_gettime(time.CLOCK_BOOTTIME), delta=2.0)
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "u").write_text("123.5 9999.0\n")
+        self.assertEqual(uptime(directory / "u"), 123.5)
+        for text in ("", "garbage 1\n"):
+            (directory / "u").write_text(text)
+            self.assertEqual(uptime(directory / "u"), 0.0, repr(text))
+        self.assertEqual(uptime(directory / "missing"), 0.0)
+
+    def test_a_gone_process_has_no_children_no_descriptors_and_no_child_record(self):
+        gone = 2 ** 22 + 12345
+        oracle = monkey_oracles.ResourceOracle
+        self.assertEqual(oracle._child_pids(gone), [])
+        self.assertIsNone(oracle._read_child(gone))
+        self.assertEqual(oracle._fd_targets(gone), [])
+        holds = monkey_oracles.ResourceOracle(mock.Mock(work=None, binary=None, actions=[]))._what_it_holds(gone)
+        self.assertTrue(holds["children.txt"].startswith(b"0 direct children by program: {}"))
+        self.assertEqual(holds["fds.txt"], b"\n")
+
+    def test_this_process_reads_as_itself(self):
+        child = monkey_oracles.ResourceOracle._read_child(os.getpid())
+        self.assertEqual(child[0], os.getpid())
+        self.assertTrue(child[1].startswith(f"{os.getpid()} ("))
+        self.assertIn(b"python", child[2])
+        with open(__file__) as held:
+            self.assertIn(os.path.realpath(__file__), monkey_oracles.ResourceOracle._fd_targets(os.getpid()))
+            del held
+
+    def test_a_descriptor_closed_while_it_is_listed_is_skipped(self):
+        read, write = os.pipe()
+        real = os.readlink
+
+        def closing(path, *args, **kwargs):
+            if str(path).endswith(f"/{write}"):
+                raise FileNotFoundError(path)
+            return real(path, *args, **kwargs)
+        try:
+            with mock.patch.object(monkey_oracles.os, "readlink", side_effect=closing):
+                targets = monkey_oracles.ResourceOracle._fd_targets(os.getpid())
+        finally:
+            os.close(read)
+            os.close(write)
+        self.assertTrue(any(t.startswith("pipe:") for t in targets))
+
+    def test_a_command_line_or_log_that_is_not_utf8_is_still_read(self):
+        report = monkey_oracles.ResourceOracle.children_report(
+            [(5, LeakEvidenceFormatTests.stat(5, "p"), b"caf\xe9\0x\0")], uptime=10.0, ticks=100)
+        self.assertIn("caf\ufffd x", report)
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        (directory / "microide-1.log").write_bytes(b"\xff microide terminal-life: start pid=1\n")
+        app = mock.Mock(work=directory, binary=None, actions=[])
+        with mock.patch.object(monkey_oracles, "terminal_origins", return_value="") as origins:
+            monkey_oracles.ResourceOracle(app)._what_it_holds(os.getpid())
+        self.assertTrue(origins.call_args.args[0].startswith("\ufffd microide"))
+
+    def test_the_start_field_must_be_there_and_a_number(self):
+        stat20 = "5 (p) S " + " ".join(["0"] * 18) + " 500"
+        stat19 = "5 (p) S " + " ".join(["0"] * 18)
+        report = monkey_oracles.ResourceOracle.children_report([(5, stat20, b"p\0"), (6, stat19, b"q\0")],
+                                                               uptime=10.0, ticks=100)
+        self.assertEqual(report.splitlines()[2:], ["5 S      5.0  p"])
+
+    def test_the_program_is_the_first_word_whatever_follows(self):
+        report = monkey_oracles.ResourceOracle.children_report(
+            [(5, LeakEvidenceFormatTests.stat(5, "p"), b"/bin/sh\0-c\0a b\0")], uptime=10.0, ticks=100)
+        self.assertTrue(report.startswith("1 direct children by program: {'sh': 1}"), report)
+        self.assertEqual(monkey_oracles.ResourceOracle.fd_kind("socket:[1:2:3]"), "socket")
+
+
+class LeakEvidenceChildTests(unittest.TestCase):
+    def test_the_children_of_a_process_are_listed(self):
+        import subprocess
+        child = subprocess.Popen(["sleep", "30"])
+        try:
+            self.assertIn(child.pid, monkey_oracles.ResourceOracle._child_pids(os.getpid()))
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_an_unreadable_log_is_passed_over(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        locked = directory / "microide-1.log"
+        locked.write_text("secret\n")
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o600)
+        (directory / "microide-2.log").write_text("readable\n")
+        app = mock.Mock(work=directory, binary=None, actions=[])
+        with mock.patch.object(monkey_oracles, "terminal_origins", return_value="") as origins:
+            monkey_oracles.ResourceOracle(app)._what_it_holds(os.getpid())
+        self.assertEqual(origins.call_args.args[0], "readable\n")
+
 if __name__ == "__main__":
     unittest.main()

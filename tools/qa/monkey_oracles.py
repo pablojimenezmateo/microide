@@ -967,61 +967,105 @@ class ResourceOracle:
         lines += [f"  {kb:10d}  {mapped}" for mapped, kb in by_name.most_common(12)]
         return "\n".join(lines) + "\n"
 
-    def _what_it_holds(self, pid: int) -> dict[str, bytes]:
-        base = Path(f"/proc/{pid}")
+    @staticmethod
+    def children_report(children: list[tuple[int, str, bytes]], uptime: float, ticks: int) -> str:
+        """`children.txt`: each child (pid, its /proc stat, its raw cmdline) with its
+        state, age and command line, under a count of them by program."""
         lines = ["pid state age_s  command"]
-        ticks = os.sysconf("SC_CLK_TCK")
-        try:
-            uptime = float(Path("/proc/uptime").read_text().split()[0])
-        except (OSError, ValueError):
-            uptime = 0.0
         kinds: collections.Counter[str] = collections.Counter()
-        try:
-            children = [int(c) for task in (base / "task").iterdir()
-                        for c in (task / "children").read_text().split()]
-        except (OSError, ValueError):
-            children = []
-        for child in children:
-            try:
-                stat = Path(f"/proc/{child}/stat").read_text()
-                fields = stat[stat.rfind(")") + 2:].split()
-                age = uptime - int(fields[19]) / ticks
-                argv = Path(f"/proc/{child}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-                lines.append(f"{child} {fields[0]} {age:8.1f}  {argv.strip()[:200]}")
-                kinds[argv.split(" ", 1)[0].rsplit("/", 1)[-1] or "?"] += 1
-            except (OSError, ValueError, IndexError):
+        for child, stat, cmdline in children:
+            fields = stat[stat.rfind(")") + 2:].split()
+            if len(fields) <= 19 or not fields[19].isdigit():
                 continue
+            age = uptime - int(fields[19]) / ticks
+            argv = cmdline.replace(b"\0", b" ").decode(errors="replace").strip()
+            lines.append(f"{child} {fields[0]} {age:8.1f}  {argv[:200]}")
+            kinds[Path(argv.partition(" ")[0]).name or "?"] += 1
         lines.insert(0, f"{len(children)} direct children by program: {dict(kinds.most_common())}")
-        fd_kinds: collections.Counter[str] = collections.Counter()
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def fd_kind(target: str) -> str:
+        """What a descriptor points at, as fds.txt counts it: a pseudo-file's kind
+        (`pipe`, `socket`, `anon_inode`), the terminal, a device, or a file by its
+        extension."""
+        if ":" in target and not target.startswith("/"):
+            return target.partition(":")[0]
+        if target.startswith("/dev/pts"):
+            return "/dev/pts"
+        if target.startswith("/dev"):
+            return target
+        return "file:" + Path(target).suffix
+
+    @staticmethod
+    def fds_report(targets: list[str]) -> str:
+        kinds = collections.Counter(ResourceOracle.fd_kind(target) for target in targets)
+        return "\n".join(f"{n:5d}  {kind}" for kind, n in kinds.most_common()) + "\n"
+
+    @staticmethod
+    def threads_report(now: collections.Counter[str], baseline: collections.Counter[str]) -> str:
+        lines = ["threads by name: now (at the baseline, change)"]
+        for thread, count in now.most_common():
+            was = baseline.get(thread, 0)
+            lines.append(f"  {count:4d}  ({was:4d}, {count - was:+d})  {thread}")
+        for thread, was in baseline.items():
+            if thread not in now:
+                lines.append(f"     0  ({was:4d}, {-was:+d})  {thread}")
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _uptime(path: Path = Path("/proc/uptime")) -> float:
+        """Seconds since boot, the clock /proc/<pid>/stat's start times count on;
+        0.0 when it cannot be read."""
         try:
-            for fd in (base / "fd").iterdir():
-                with contextlib.suppress(OSError):
-                    target = os.readlink(fd)
-                    kind = target.split(":", 1)[0] if ":" in target and not target.startswith("/") else \
-                        ("/dev/pts" if target.startswith("/dev/pts") else
-                         target if target.startswith("/dev") else "file:" + Path(target).suffix)
-                    fd_kinds[kind] += 1
+            return float(path.read_text().split()[0])
+        except (OSError, ValueError, IndexError):
+            return 0.0
+
+    @staticmethod
+    def _child_pids(pid: int) -> list[int]:
+        try:
+            return [int(c) for task in Path(f"/proc/{pid}/task").iterdir()
+                    for c in (task / "children").read_text().split()]
+        except (OSError, ValueError):
+            return []
+
+    @staticmethod
+    def _read_child(pid: int) -> tuple[int, str, bytes] | None:
+        try:
+            return pid, Path(f"/proc/{pid}/stat").read_text(), Path(f"/proc/{pid}/cmdline").read_bytes()
         except OSError:
-            pass
-        threads = self._thread_names(pid)
-        thread_lines = ["threads by name: now (at the baseline, change)"]
-        for thread, count in threads.most_common():
-            was = self.baseline_threads.get(thread, 0)
-            thread_lines.append(f"  {count:4d}  ({was:4d}, {count - was:+d})  {thread}")
-        for thread, was in self.baseline_threads.items():
-            if thread not in threads:
-                thread_lines.append(f"     0  ({was:4d}, {-was:+d})  {thread}")
-        out = {"children.txt": ("\n".join(lines) + "\n").encode(),
-               "fds.txt": ("\n".join(f"{n:5d}  {k}" for k, n in fd_kinds.most_common()) + "\n").encode(),
-               "threads.txt": ("\n".join(thread_lines) + "\n").encode(),
+            return None
+
+    @staticmethod
+    def _fd_targets(pid: int) -> list[str]:
+        targets = []
+        try:
+            descriptors = list(Path(f"/proc/{pid}/fd").iterdir())
+        except OSError:
+            return []
+        for fd in descriptors:
+            try:
+                targets.append(os.readlink(fd))
+            except OSError:
+                continue
+        return targets
+
+    def _what_it_holds(self, pid: int) -> dict[str, bytes]:
+        pids = self._child_pids(pid)
+        children = [child for child in map(self._read_child, pids) if child is not None]
+        out = {"children.txt": self.children_report(children, self._uptime(), os.sysconf("SC_CLK_TCK")).encode(),
+               "fds.txt": self.fds_report(self._fd_targets(pid)).encode(),
+               "threads.txt": self.threads_report(self._thread_names(pid), self.baseline_threads).encode(),
                "memory.txt": self._memory(pid).encode()}
         work = getattr(self.app, "work", None)
+        logs = sorted(Path(work).glob("microide*.log"), key=lambda p: p.stat().st_mtime) if work else []
         log_text = ""
-        for log in sorted(Path(work).glob("microide*.log"), key=lambda p: p.stat().st_mtime) if work else []:
+        for log in logs:
             with contextlib.suppress(OSError):
                 log_text += log.read_text(errors="replace")
         binary = getattr(self.app, "binary", None)
-        origins = terminal_origins(log_text, set(children), Path(binary) if binary else None)
+        origins = terminal_origins(log_text, set(pids), Path(binary) if binary else None)
         if origins:
             out["children-origin.txt"] = origins.encode()
         if timeline := self.rss_timeline():
