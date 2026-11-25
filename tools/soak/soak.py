@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import json
 import math
 import os
@@ -58,6 +59,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -183,6 +185,37 @@ def ensure_worktree() -> None:
         WORKTREE.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "worktree", "add", "--detach", str(WORKTREE), FOLLOW_REF], cwd=REPO,
                        capture_output=True)
+
+
+class BackgroundBuild:
+    """build_all on a copy of the state, on its own thread, so the scheduling loop
+    keeps reaping, timing out and starting jobs through a build -- minutes with a
+    warm ccache, an hour for six cold configurations, during which the loop used
+    to stand still. `finish` hands back the keys the build changed; the loop
+    folds them into its own state, the only copy it saves."""
+
+    def __init__(self, state: dict[str, Any], log) -> None:
+        self.before = copy.deepcopy(state)
+        self.after = copy.deepcopy(state)
+        self.error: str | None = None
+        self.thread = threading.Thread(target=self._run, args=(log,), name="soak-build", daemon=True)
+        self.thread.start()
+
+    def _run(self, log) -> None:
+        try:
+            build_all(self.after, log)
+        except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
+            self.error = str(error)
+
+    def done(self) -> bool:
+        return not self.thread.is_alive()
+
+    def finish(self, state: dict[str, Any]) -> str | None:
+        self.thread.join()
+        for key, value in self.after.items():
+            if self.before.get(key) != value:
+                state[key] = value
+        return self.error
 
 
 def build_all(state: dict[str, Any], log) -> None:
@@ -2564,6 +2597,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     last_build = 0.0
+    building: BackgroundBuild | None = None
     last_housekeeping = 0.0
     deadline = time.time() + args.max_hours * 3600 if args.max_hours else None
     mode = "fixed" if args.fixed else "following the load"
@@ -2597,16 +2631,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         # used to wait for every running job to end first -- a drain that left the
         # soak at zero jobs 4.5 hours a day, waiting on hour-long ASan jobs for a
         # build that took seconds.
-        if now - last_build > args.build_interval and not build_paused():
-            if not state.get("good") or driver_root(state) == WORKTREE or refresh_due(state):
-                try:
-                    build_all(state, log)
-                except Exception as error:  # noqa: BLE001 - a broken build never stops the runner
-                    log(f"build step failed: {error}")
-                verify_fixed(state, log)
-                recheck_open(state, log)
-                save_state(state)
+        if building is not None and building.done():
+            error = building.finish(state)
+            building = None
+            if error is not None:
+                log(f"build step failed: {error}")
+            verify_fixed(state, log)
+            recheck_open(state, log)
+            save_state(state)
             last_build = time.time()
+        if building is None and now - last_build > args.build_interval and not build_paused():
+            if not state.get("good") or driver_root(state) == WORKTREE or refresh_due(state):
+                building = BackgroundBuild(state, log)
+            else:
+                last_build = time.time()
+        if building is not None and (not state.get("good") or driver_root(state) == WORKTREE):
+            time.sleep(1.0)
             continue
         for job in list(jobs):
             if job.proc.poll() is not None or now - job.started > job.type.timeout:

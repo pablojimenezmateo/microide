@@ -167,9 +167,10 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      shows nothing. The monkey no longer opens them by the hundred, so the
      finding will go quiet with its cause unknown; a finding's `state.json` now
      holds the `terminals` and `projects` answers for the next sighting.
-   - **A build stops the runner's loop.** `build_all` runs in the scheduling
-     loop: while it builds (minutes with a warm ccache, an hour for six cold
-     configurations) no job is started or reaped and no timeout is enforced.
+   - **A build stopped the runner's loop: FIXED 2026-11-25.** The build runs on
+     its own thread on a copy of the state (`BackgroundBuild`); the loop keeps
+     reaping, timing out and starting jobs, and folds in what the build changed
+     when it ends (`test_background_build`).
    - **Rows of one step are replayed with a settle between them.** The run
      sends a step's rows back to back unless they are a burst; a replay settles
      after each. Fixed where it was seen to matter (the window correction);
