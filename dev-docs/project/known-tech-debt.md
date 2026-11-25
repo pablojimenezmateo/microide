@@ -423,7 +423,10 @@ What it left, by workstream:
    invariants, the redraw verifier, the data oracle). The guard audit landed
    (`validation-traps.md`), and with it the frame-token assert is armed in every
    build with assertions rather than under ASan alone.
-9. **Findings of the first hunts not yet fixed:** several redraw-verifier findings
+9. **DONE by 2026-11-25 (the ledger):** the focus-on-a-hidden-surface
+   findings are verified (c0c5719bdbce, 1dd177bb2104, b6cc343b6ee1) and the
+   stale-paint and latency families of those hunts are closed. Kept for the
+   record: **Findings of the first hunts not yet fixed:** several redraw-verifier findings
    (one is a panel tab's close-button hover left painted after a burst with Ctrl+wheel
    zoom), a 4 s answer to `type` of a Hebrew string (editing near the 300 KB
    single-line file under load), and a focus left on a hidden panel (first seen on a
