@@ -996,5 +996,68 @@ class LivenessTests(unittest.TestCase):
         computing = self.oracle(self.app(seconds=4.0, sched=(3.0, 0.5), helpers=(2.5, 4.0)))
         self.assertEqual(len(computing.check()), 1, "a main thread that computed is the app's own time")
 
+
+class IdleOracleCheckTests(unittest.TestCase):
+    """IdleOracle.check: the wake rate over a settled window, and what it saw."""
+
+    def run_window(self, wakes, logged=(), samples=("do_poll poll",)):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        log = directory / "app.log"
+        log.write_text("before the window\n")
+        app = mock.Mock()
+        app.log_path = log
+        app.ui.return_value = {"elements": []}
+        oracle = monkey_oracles.IdleOracle(app)
+        counts = iter(wakes)
+        sampled = iter(samples * 1000)
+
+        def sample():
+            if logged and log.read_text() == "before the window\n":
+                with open(log, "a") as out:
+                    out.write("".join(line + "\n" for line in logged))
+            return next(sampled)
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 0.04), \
+                mock.patch.object(oracle, "_main_thread_wakes", side_effect=lambda: next(counts)), \
+                mock.patch.object(oracle, "_sample_main_thread", side_effect=sample):
+            found = oracle.check()
+        app.settle_quiet.assert_called_once_with(most=1.0)
+        return oracle, found
+
+    def test_a_quiet_main_thread_files_nothing(self):
+        oracle, found = self.run_window([100, 104])
+        self.assertEqual(found, [])
+        self.assertFalse(oracle.reported)
+        self.assertIsNone(oracle.evidence)
+
+    def test_a_busy_main_thread_is_one_finding_with_what_it_did(self):
+        frames = [f"microide redraw frame: frame={i} reason=scheduled-partial dirty=1 bounds=1,2,3,4"
+                  for i in range(3)]
+        oracle, found = self.run_window([0, 40], logged=frames + ["other line"],
+                                        samples=("ep_poll epoll_wait", "futex_wait futex"))
+        self.assertEqual(found, [("idle", "the main thread woke 1000 times a second while the app was idle "
+                                          "(budget 250)")])
+        self.assertTrue(oracle.reported)
+        self.assertIn("voluntary wakes/s: 1000 (budget 250)", oracle.evidence)
+        self.assertIn("frames in the window: 3 {'scheduled-partial': 3}", oracle.evidence)
+        self.assertIn("log lines in the window: 4", oracle.evidence)
+        self.assertIn("ep_poll epoll_wait", oracle.evidence)
+        self.assertNotIn("before the window", oracle.evidence, "only what the window logged")
+        oracle.app.settle_quiet.reset_mock()
+        self.assertEqual(oracle.check(), [], "one finding per run")
+        oracle.app.settle_quiet.assert_not_called()
+
+    def test_the_budget_is_per_second_at_its_edge(self):
+        _, found = self.run_window([0, 10])
+        self.assertEqual(found, [], "exactly the budget is within it")
+        _, found = self.run_window([0, 11])
+        self.assertEqual(len(found), 1)
+
+    def test_an_app_that_went_away_files_nothing(self):
+        for wakes in ([None, 500], [0, None]):
+            oracle, found = self.run_window(wakes)
+            self.assertEqual(found, [])
+            self.assertFalse(oracle.reported)
+
 if __name__ == "__main__":
     unittest.main()
