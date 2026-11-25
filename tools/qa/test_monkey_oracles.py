@@ -873,5 +873,128 @@ class FrameLatencyTest(unittest.TestCase):
         app.log += self.frame(3, 900.0)
         self.assertEqual(oracle.check(), [], "a second slow frame of the same reason is not filed again")
 
+
+class InvariantOracleTests(unittest.TestCase):
+    def app(self, answers):
+        app = mock.Mock()
+        app.log_since.return_value = ""
+        asked = []
+
+        def query(verb, args=None):
+            asked.append((verb, args))
+            answer = answers[verb]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        app.query.side_effect = query
+        return app, asked
+
+    def test_each_broken_rule_is_one_finding_with_the_state_beside_it(self):
+        violations = {"violations": [{"rule": "tab-payload", "detail": "tab 2 has no editor"},
+                                     {"rule": "untitled-unique", "detail": "Untitled-1 twice"}]}
+        app, asked = self.app({"invariants": violations, "tabs": [{"title": "a"}], "documents": [], "editor": {}})
+        oracle = monkey_oracles.InvariantOracle(app)
+        found = oracle.check(deep=True)
+        self.assertEqual(found, [("invariant", "tab-payload: tab 2 has no editor"),
+                                 ("invariant", "untitled-unique: Untitled-1 twice")])
+        self.assertEqual(asked[0], ("invariants", {"deep": True}))
+        self.assertEqual(set(oracle.evidence), {"invariants.json", "tabs.json", "documents.json", "editor.json"})
+        self.assertIn(b"tab 2 has no editor", oracle.evidence["invariants.json"])
+        self.assertEqual(oracle.checks, 1)
+        self.assertEqual(oracle.check(), [], "a rule already reported is not filed again")
+        self.assertEqual(oracle.evidence, {}, "and a check that files nothing keeps no evidence")
+
+    def test_a_new_rule_is_filed_after_an_old_one(self):
+        app, _ = self.app({"invariants": {"violations": [{"rule": "a", "detail": "x"}]},
+                           "tabs": [], "documents": [], "editor": {}})
+        oracle = monkey_oracles.InvariantOracle(app)
+        oracle.check()
+        app.query.side_effect = lambda verb, args=None: (
+            {"violations": [{"rule": "a", "detail": "x"}, {"rule": "b", "detail": "y"}]}
+            if verb == "invariants" else {})
+        self.assertEqual(oracle.check(), [("invariant", "b: y")])
+
+    def test_a_clean_answer_files_nothing(self):
+        app, asked = self.app({"invariants": {"ok": True, "violations": []}})
+        oracle = monkey_oracles.InvariantOracle(app)
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.checks, 1)
+        self.assertEqual([verb for verb, _ in asked], ["invariants"], "no evidence is gathered for a clean answer")
+
+    def test_a_binary_without_the_query_is_not_asked_again(self):
+        app, asked = self.app({"invariants": monkey_oracles.q.QaFailure("unknown query \"invariants\"")})
+        oracle = monkey_oracles.InvariantOracle(app)
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(oracle.unavailable)
+        self.assertEqual(oracle.checks, 0)
+
+    def test_another_failure_or_a_gone_app_is_no_finding_and_is_asked_again(self):
+        app, asked = self.app({"invariants": monkey_oracles.q.QaFailure("timed out")})
+        oracle = monkey_oracles.InvariantOracle(app)
+        self.assertEqual(oracle.check(), [])
+        self.assertFalse(oracle.unavailable)
+        app.query.side_effect = monkey_oracles.q.AppGone("gone")
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.checks, 0)
+
+
+class LivenessTests(unittest.TestCase):
+    def app(self, what="query 'ui'", seconds=0.0, sched=None, stall="", waits="", helpers=None, profile=""):
+        from types import SimpleNamespace
+        return SimpleNamespace(slowest_answer=(what, seconds), slowest_sched=sched, slowest_stall=stall,
+                               slowest_waits=waits, slowest_helpers=helpers, slowest_profile=profile)
+
+    def oracle(self, app):
+        with mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            return monkey_oracles.Liveness(app, budget=2.0)
+
+    def test_an_answer_within_the_budget_files_nothing_and_resets_the_window(self):
+        app = self.app(seconds=2.0, stall="x", waits="w", helpers=(1.0, 2.0), profile="p")
+        self.assertEqual(self.oracle(app).check(), [])
+        self.assertEqual((app.slowest_answer, app.slowest_sched, app.slowest_stall, app.slowest_waits,
+                          app.slowest_helpers, app.slowest_profile), (("", 0.0), None, "", "", None, ""))
+
+    def test_a_late_answer_names_its_subject_and_carries_the_stall(self):
+        app = self.app(seconds=3.5, stall="#0 Frame()", waits="futex_wait", profile="perf lines")
+        oracle = self.oracle(app)
+        self.assertEqual(oracle.check(), [("latency", "the ui query took 3.50s to answer (budget 2.0s)")])
+        latency = oracle.evidence["latency.txt"].decode()
+        self.assertIn("query 'ui' took 3.50s (budget 2.0s)", latency)
+        self.assertIn("#0 Frame()", latency)
+        self.assertIn("futex_wait", latency)
+        self.assertEqual(oracle.evidence["latency-profile.txt"], b"perf lines")
+        oracle.app.slowest_answer = ("query 'ui'", 9.0)
+        self.assertEqual(oracle.check(), [], "one finding per subject per run")
+        oracle.app.slowest_answer = (repr("format-document"), 9.0)
+        self.assertEqual(len(oracle.check()), 1, "another subject is filed")
+
+    def test_a_late_answer_without_a_watchdog_stack_says_so(self):
+        oracle = self.oracle(self.app(seconds=3.0))
+        oracle.check()
+        self.assertIn("printed nothing", oracle.evidence["latency.txt"].decode())
+        self.assertNotIn("latency-profile.txt", oracle.evidence)
+
+    def test_where_the_main_thread_sat(self):
+        computing = self.oracle(self.app(seconds=4.0, sched=(3.0, 0.5)))
+        self.assertTrue(computing.check()[0][1].endswith("its main thread was mostly computing"))
+        self.assertIn("main thread over 4.00s", computing.evidence["latency.txt"].decode())
+        blocked = self.oracle(self.app(seconds=4.0, sched=(0.5, 0.5)))
+        self.assertTrue(blocked.check()[0][1].endswith("mostly blocked (I/O, a lock, a child)"))
+
+    def test_a_starved_machine_is_counted_not_filed(self):
+        oracle = self.oracle(self.app(seconds=4.0, sched=(0.5, 2.0)))
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.starved, 1)
+        self.assertEqual(oracle.reported, set(), "a starved answer leaves its subject open")
+
+    def test_a_wait_on_starved_helper_threads_is_counted_not_filed(self):
+        oracle = self.oracle(self.app(seconds=4.0, sched=(0.5, 0.5), helpers=(2.5, 4.0)))
+        self.assertEqual(oracle.check(), [])
+        self.assertEqual(oracle.starved, 1)
+        computing = self.oracle(self.app(seconds=4.0, sched=(3.0, 0.5), helpers=(2.5, 4.0)))
+        self.assertEqual(len(computing.check()), 1, "a main thread that computed is the app's own time")
+
 if __name__ == "__main__":
     unittest.main()
