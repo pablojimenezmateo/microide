@@ -816,6 +816,7 @@ class Monkey:
         self.undo = mo.UndoAlgebra(app, random.Random(seed ^ 0x0DD))
         self.resources = mo.ResourceOracle(app)
         self.liveness = mo.Liveness(app)
+        self.frames = mo.FrameLatency(app)
         self.invariants = mo.InvariantOracle(app)
         self.idle = mo.IdleOracle(app)
         self.structural = mo.StructuralDiffOracle(app)
@@ -1816,6 +1817,7 @@ class Monkey:
         timed = not self.app.recording
         if timed:
             self._report_with_evidence(label, self.liveness.check(), self.liveness.evidence)
+            self._report_with_evidence(label, self.frames.check(), self.frames.evidence)
         if index % INVARIANT_EVERY == INVARIANT_EVERY - 1:
             # The app's own structural rules, a few actions after whatever broke
             # one; every fourth time with the layout tables against a fresh build.

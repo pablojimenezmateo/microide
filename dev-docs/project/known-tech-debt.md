@@ -320,7 +320,11 @@ What it left, by workstream:
    multi-project switching (`project-open` re-roots the session away from the scratch
    copy), fake language servers and debug adapters, a remote-project soak job, and
    the 50 MB / submodule / large-history / empty-folder fixtures.
-6. **Oracle not built:** input-to-frame latency with the redraw trace attached. (The
+6. **DONE 2026-11-25:** `FrameLatency` reads each frame's prepare-and-paint
+   time off the redraw trace (`elapsed=`) on every timed monkey step and files
+   a frame over 0.5 s (slow factor applied) once per frame reason, the trace
+   before it as evidence; a timing finding, so the soak re-checks it before
+   trusting it. Was: **Oracle not built:** input-to-frame latency with the redraw trace attached. (The
    idle-wake oracle and more always-a-finding log markers landed; `util::Log` has no
    levels, so "any error line" stays the marker list.)
 7. **Measurement not built (W1.6/W1.7):** a periodic gcov job in the rotation,

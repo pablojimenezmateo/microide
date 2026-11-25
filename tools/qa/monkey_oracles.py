@@ -1185,6 +1185,48 @@ class Liveness:
         return [("latency", f"{subject} took {seconds:.2f}s to answer (budget {self.budget:.1f}s){where}")]
 
 
+_FRAME_LINE = re.compile(r"microide redraw frame: frame=(\d+) reason=(\S+) requested=(\S+) rendered=(\S+) "
+                         r".*? elapsed=([0-9.]+) ms")
+
+
+class FrameLatency:
+    """A frame that took longer than `budget` to prepare and paint, read off the
+    app's redraw trace (`microide redraw frame: ... elapsed=N ms`): the time
+    between the input and the picture, which an answer's latency (Liveness)
+    does not see when the slow part is the paint. One finding per run per frame
+    reason; the redraw trace before it is the evidence."""
+
+    def __init__(self, app: q.App, budget: float = 0.5):
+        self.app = app
+        self.budget_ms = budget * 1000.0 * q.SLOW_FACTOR
+        self.offset: int | None = None
+        self.reported: set[str] = set()
+        self.evidence: dict[str, bytes] = {}
+
+    def check(self) -> list[tuple[str, str]]:
+        self.evidence = {}
+        size = self.app._log_size()
+        if self.offset is None or size < self.offset:
+            self.offset = size
+            return []
+        text = self.app.log_since(self.offset, 4 * 1024 * 1024)
+        self.offset = size
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            match = _FRAME_LINE.search(line)
+            if match is None or float(match.group(5)) <= self.budget_ms:
+                continue
+            reason = match.group(2)
+            if reason in self.reported:
+                continue
+            self.reported.add(reason)
+            self.evidence = {"frame-latency.txt": "\n".join(lines[max(0, index - 40):index + 1]).encode() + b"\n"}
+            return [("latency", f"a {reason} frame took {float(match.group(5)):.0f} ms to prepare and paint "
+                                f"({match.group(3)} requested, {match.group(4)} rendered; budget "
+                                f"{self.budget_ms:.0f} ms)")]
+        return []
+
+
 def caret_bounds_reports(log: str, binary: Path | None = None) -> str:
     """Each `microide caret-bounds:` report in `log` with its backtrace lines;
     with `binary`, the frames resolved to function and file:line as a crash

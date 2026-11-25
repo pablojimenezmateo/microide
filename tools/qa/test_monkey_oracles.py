@@ -840,5 +840,38 @@ class UntitledNamesTests(unittest.TestCase):
         self.assertEqual(monkey_oracles.DataOracle(app).check_untitled_names(), [])
 
 
+
+class FrameLatencyTest(unittest.TestCase):
+    class FakeApp:
+        def __init__(self) -> None:
+            self.log = ""
+
+        def _log_size(self) -> int:
+            return len(self.log.encode())
+
+        def log_since(self, offset: int, max_bytes: int) -> str:
+            return self.log.encode()[offset:offset + max_bytes].decode()
+
+    @staticmethod
+    def frame(index: int, ms: float) -> str:
+        return (f"microide redraw frame: frame={index} reason=prepared requested=partial rendered=partial "
+                f"promoted=no dirty=1 clips=1 elapsed={ms:.2f} ms bounds=0,0,0,0\n")
+
+    def test_a_slow_frame_is_reported_once_and_a_quick_one_never(self) -> None:
+        app = self.FakeApp()
+        oracle = monkey_oracles.FrameLatency(app, budget=0.5)
+        oracle.budget_ms = 500.0
+        self.assertEqual(oracle.check(), [], "the first check only notes where the log is")
+        app.log += self.frame(1, 12.0)
+        self.assertEqual(oracle.check(), [], "a 12 ms frame is no finding")
+        app.log += self.frame(2, 800.0)
+        found = oracle.check()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0][0], "latency")
+        self.assertIn("800 ms", found[0][1])
+        self.assertIn("frame-latency.txt", oracle.evidence)
+        app.log += self.frame(3, 900.0)
+        self.assertEqual(oracle.check(), [], "a second slow frame of the same reason is not filed again")
+
 if __name__ == "__main__":
     unittest.main()
