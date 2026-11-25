@@ -1420,8 +1420,8 @@ class StructuralDiffOracle:
         found: list[tuple[str, str]] = []
         hunks: dict[int, list[dict[str, Any]]] = collections.defaultdict(list)
         for index, row in enumerate(rows):
-            if row.get("hunk", -1) >= 0:
-                hunks[row["hunk"]].append(row)
+            if (hunk := row.get("hunk")) is not None and hunk >= 0:
+                hunks[hunk].append(row)
             if row.get("textTruncated"):
                 continue
             for side, present in (("left", row.get("leftLine", 0) > 0), ("right", row.get("rightLine", 0) > 0)):

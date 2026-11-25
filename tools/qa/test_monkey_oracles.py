@@ -1186,7 +1186,11 @@ def _diff_row(kind="changed", left=1, right=1, left_text="a", right_text="b", le
 class StructuralDiffOracleTests(unittest.TestCase):
     def check(self, rows, **diff):
         app = mock.Mock()
-        app.query.return_value = {"available": True, "rows": rows, **diff}
+
+        def query(verb, args=None):
+            self.assertEqual((verb, args), ("compare", None))
+            return {"available": True, "rows": rows, **diff}
+        app.query.side_effect = query
         oracle = monkey_oracles.StructuralDiffOracle(app)
         found = [message for kind, message in oracle.check()]
         self.assertTrue(all(kind == "diff" for kind, _ in oracle.check()))
@@ -2966,6 +2970,158 @@ class LeakEvidenceChildTests(unittest.TestCase):
         with mock.patch.object(monkey_oracles, "terminal_origins", return_value="") as origins:
             monkey_oracles.ResourceOracle(app)._what_it_holds(os.getpid())
         self.assertEqual(origins.call_args.args[0], "readable\n")
+
+
+class StructuralDiffDetailTests(StructuralDiffOracleTests):
+    REAL = "changes more than whitespace, and shows it as layout only (no novel token, no added or deleted line)"
+
+    def test_a_row_outside_any_hunk_is_not_joined_to_one(self):
+        row = _diff_row(left_text="x = 1", right_text="x = 2")
+        del row["hunk"]
+        _, found = self.check([row])
+        self.assertEqual(found, [])
+
+    def test_a_cut_row_does_not_stop_the_rows_after_it(self):
+        cut = _diff_row(kind="unchanged", left_spans=[[0, 1]], textTruncated=True, hunk=-1)
+        bad = _diff_row(kind="unchanged", left_text="a", right_text="a", right_spans=[[0, 1]], hunk=-1)
+        _, found = self.check([cut, bad])
+        self.assertEqual(found, ["the right side of row 2 (unchanged, right line 1) marks novel tokens on a side "
+                                 "that did not change"])
+
+    def test_a_side_with_no_line_number_is_absent(self):
+        row = _diff_row(kind="added", left_text="", right_text="new", left_spans=[[0, 1]], right_spans=[[0, 3]])
+        del row["leftLine"]
+        _, found = self.check([row])
+        self.assertEqual(found, ["the left side of row 1 (added, left line None) marks novel tokens on a side "
+                                 "that is absent"])
+        row = _diff_row(kind="deleted", right=0, left_text="old", right_text="", left_spans=[[0, 3]],
+                        right_spans=[[0, 1]])
+        _, found = self.check([row])
+        self.assertEqual(found, ["the right side of row 1 (deleted, right line 0) marks novel tokens on a side "
+                                 "that is absent"])
+        del row["rightLine"]
+        _, found = self.check([row])
+        self.assertEqual(found, ["the right side of row 1 (deleted, right line None) marks novel tokens on a side "
+                                 "that is absent"])
+
+    def test_both_sides_of_a_row_are_judged(self):
+        row = _diff_row(kind="added", left=0, left_text="", right_text="abc", left_spans=[[0, 1]],
+                        right_spans=[[0, 9]])
+        _, found = self.check([row])
+        self.assertEqual(found, ["the left side of row 1 (added, left line 0) marks novel tokens on a side that is "
+                                 "absent",
+                                 "the right side of row 1 (added, right line 1) has a novel span [0, 9) outside its "
+                                 "3-byte line or out of order"])
+        row = _diff_row(left_text="\u00e9", right_text="abcd", left_spans=[[0, 1]], right_spans=[[0, 9]])
+        _, found = self.check([row])
+        self.assertEqual(len(found), 2, "a split on the left does not stop the right")
+
+    def test_a_side_with_no_text_is_an_empty_line(self):
+        row = _diff_row(left_text="x", right_text="y", left_spans=[[0, 2]])
+        del row["leftText"]
+        _, found = self.check([row])
+        self.assertIn("has a novel span [0, 2) outside its 0-byte line or out of order", found[0])
+
+    def test_an_empty_span_is_out_of_order(self):
+        _, found = self.check([_diff_row(left_text="ab", right_text="ac", left_spans=[[1, 1]])])
+        self.assertIn("has a novel span [1, 1) outside its 2-byte line", found[0])
+
+    def test_the_split_evidence_is_the_row_the_side_and_the_bytes(self):
+        row = _diff_row(left_text="\u00e9", right_text="e", left_spans=[[0, 1]])
+        oracle, _ = self.check([row])
+        evidence = oracle.evidence["split-span-row-1.json"]
+        self.assertEqual(json.loads(evidence), {"row": row, "side": "left", "bytes": "c3a9"})
+        self.assertTrue(evidence.startswith(b'{\n "row": {\n  "kind"'), evidence[:30])
+        oracle, _ = self.check([row, dict(row)])
+        self.assertEqual(set(oracle.evidence), {"split-span-row-1.json", "split-span-row-2.json"})
+
+    def test_a_cut_row_list_drops_only_its_last_hunk(self):
+        rows = [_diff_row(left_text="x = 1", right_text="x = 1", hunk=0),
+                _diff_row(left_text="y = 1", right_text="y = 2", hunk=1),
+                _diff_row(left_text="z = 1", right_text="z = 2", hunk=2)]
+        _, found = self.check(rows, rowsTruncated=True)
+        self.assertEqual(found, [f"hunk 2 {self.REAL}"])
+
+    def test_a_hunk_with_a_cut_row_does_not_stop_the_hunks_after_it(self):
+        rows = [_diff_row(left_text="x = 1", right_text="x = 2", hunk=0, textTruncated=True),
+                _diff_row(left_text="y = 1", right_text="y = 2", hunk=1)]
+        _, found = self.check(rows)
+        self.assertEqual(found, [f"hunk 2 {self.REAL}"])
+
+    def test_a_layout_only_hunk_over_several_rows_is_judged_as_one_text(self):
+        rows = [_diff_row(left_text="call(a,", right_text="call(a, b)", left_spans=[[0, 4]], hunk=0),
+                _diff_row(kind="deleted", right=0, left_text="     b)", right_text="", hunk=0)]
+        oracle, found = self.check(rows)
+        self.assertEqual(found, ["hunk 1 changes only whitespace and line breaks, and marks tokens novel"])
+        self.assertEqual(json.loads(oracle.evidence["structural-hunk-1.json"]), rows)
+        rows = [_diff_row(left_text="call(a, b)", right_text="call(a,", right_spans=[[0, 4]], hunk=0),
+                _diff_row(kind="added", left=0, left_text="", right_text="     b)", hunk=0)]
+        _, found = self.check(rows)
+        self.assertEqual(found, ["hunk 1 changes only whitespace and line breaks, and marks tokens novel"])
+
+    def test_a_comment_or_a_quote_anywhere_in_the_hunk_excuses_its_marks(self):
+        for left, right in (("a  # x", "a # x"), ("a /* x */", "a  /* x */"), ("a // b", "a  // b"),
+                            ("f('a  b')", "f('a b')")):
+            _, found = self.check([_diff_row(left_text=left, right_text=right, left_spans=[[0, 1]])])
+            self.assertEqual(found, [], left)
+
+    def test_an_added_or_deleted_line_with_text_shows_the_change(self):
+        for kind, left, right in (("deleted", 1, 0), ("added", 0, 1)):
+            rows = [_diff_row(left_text="x = 1", right_text="x = 2", hunk=0),
+                    _diff_row(kind=kind, left=left, right=right, left_text="q" if left else "",
+                              right_text="q" if right else "", hunk=0)]
+            _, found = self.check(rows)
+            self.assertEqual(found, [], kind)
+        rows = [_diff_row(left_text="x = 1", right_text="x = 2", hunk=0),
+                _diff_row(kind="changed", left_text="q", right_text="r", hunk=0)]
+        _, found = self.check(rows)
+        self.assertEqual(found, [f"hunk 1 {self.REAL}"], "a changed row is not an added or deleted line")
+
+
+class StructuralDiffHunkTextTests(StructuralDiffOracleTests):
+    """How a hunk's two texts are put together: the lines of each side, in order,
+    a missing text an empty line, a side with no line number not there."""
+
+    def test_a_row_without_its_text_is_an_empty_line_of_its_side(self):
+        rows = [_diff_row(left_text="x", right_text="x", hunk=0, left_spans=[[0, 1]]),
+                _diff_row(kind="changed", left_text="y", right_text="y", hunk=0)]
+        del rows[1]["leftText"]
+        del rows[1]["rightText"]
+        _, found = self.check(rows)
+        self.assertEqual(found, ["hunk 1 changes only whitespace and line breaks, and marks tokens novel"])
+
+    def test_a_side_without_a_line_number_adds_nothing_to_its_text(self):
+        rows = [_diff_row(left_text="x", right_text="x", hunk=0, left_spans=[[0, 1]]),
+                _diff_row(kind="added", left_text="ghost", right_text="", hunk=0)]
+        del rows[1]["leftLine"]
+        rows[1]["rightLine"] = 0
+        _, found = self.check(rows)
+        self.assertEqual(found, ["hunk 1 changes only whitespace and line breaks, and marks tokens novel"])
+        rows[1]["leftLine"] = 0
+        del rows[1]["rightLine"]
+        rows[1]["rightText"] = "ghost"
+        rows[1]["leftText"] = ""
+        _, found = self.check(rows)
+        self.assertEqual(found, ["hunk 1 changes only whitespace and line breaks, and marks tokens novel"])
+
+    def test_an_added_line_without_text_does_not_show_a_change(self):
+        for missing in ("leftText", "rightText"):
+            extra = _diff_row(kind="added", left=0, left_text="", right_text="   ", hunk=0)
+            del extra[missing]
+            rows = [_diff_row(left_text="x = 1", right_text="x = 2", hunk=0), extra]
+            _, found = self.check(rows)
+            self.assertEqual(len(found), 1, missing)
+
+    def test_the_real_change_evidence_is_its_rows(self):
+        rows = [_diff_row(left_text="x = 1", right_text="x = 2", hunk=4)]
+        oracle, found = self.check(rows)
+        self.assertEqual(found, ["hunk 5 changes more than whitespace, and shows it as layout only (no novel token, "
+                                 "no added or deleted line)"])
+        evidence = oracle.evidence["structural-hunk-5.json"]
+        self.assertEqual(json.loads(evidence), rows)
+        self.assertTrue(evidence.startswith(b'[\n {\n  "kind"'), evidence[:20])
+        oracle, _ = self.check([_diff_row(left_text="f(a,  b)", right_text="f(a, b)", left_spans=[[4, 5]], hunk=2)])
+        self.assertTrue(oracle.evidence["structural-hunk-3.json"].startswith(b'[\n {\n  "kind"'))
 
 if __name__ == "__main__":
     unittest.main()
