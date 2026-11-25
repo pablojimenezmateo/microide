@@ -149,6 +149,7 @@ struct CompareTabState {
   CompareVisibleLayoutCache visible_layouts;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
+  std::uint64_t token_windows_model_revision = 0;
   std::uint64_t derived_right_content_revision = 0;
   util::LineEnding derived_right_line_ending = util::LineEnding::LF;
   compare::CompareTextBuffer derived_left_content;

@@ -428,11 +428,15 @@
     shell.context_.prompts.surface.selected_button = selected_button;
     shell.ConfirmPromptSurface();
   }
-  static bool OpenWorkingTreeComparison(WorkspaceShell& shell,
-                                        const std::filesystem::path& path,
-                                        const std::string& left_ref,
-                                        const std::string& left_label) {
+  static bool OpenWorkingTreeComparisonUnsettled(WorkspaceShell& shell, const std::filesystem::path& path,
+                                                 const std::string& left_ref, const std::string& left_label) {
     return shell.OpenWorkingTreeComparison(path, left_ref, left_label);
+  }
+  static bool OpenWorkingTreeComparison(WorkspaceShell& shell, const std::filesystem::path& path,
+                                        const std::string& left_ref, const std::string& left_label) {
+    const bool opened = shell.OpenWorkingTreeComparison(path, left_ref, left_label);
+    SettleCompareLoads(shell);
+    return opened;
   }
   static bool OpenComparePickerForPath(WorkspaceShell& shell,
                                        const std::filesystem::path& path) {
@@ -464,11 +468,17 @@
   }
   static void ActivateComparePickerSelection(WorkspaceShell& shell) {
     shell.MakeCompareMergeService().interactions().OpenSelectedCommit();
+    SettleCompareLoads(shell);
   }
   static void StageCompareHunk(WorkspaceShell& shell) { shell.StageCompareHunk(); }
   static void UnstageCompareHunk(WorkspaceShell& shell) { shell.UnstageCompareHunk(); }
   static void StageCompareSelectedLines(WorkspaceShell& shell) {
     shell.StageCompareSelectedLines();
+  }
+  static bool OpenBranchHeadComparisonUnsettled(WorkspaceShell& shell, const std::filesystem::path& path,
+                                                const std::string& left_ref, const std::string& left_label,
+                                                const std::string& right_ref, const std::string& right_label) {
+    return shell.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
   }
   static bool OpenBranchHeadComparison(WorkspaceShell& shell,
                                        const std::filesystem::path& path,
@@ -476,7 +486,9 @@
                                        const std::string& left_label,
                                        const std::string& right_ref,
                                        const std::string& right_label) {
-    return shell.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+    const bool opened = shell.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+    SettleCompareLoads(shell);
+    return opened;
   }
   static bool OpenMergeEditor(WorkspaceShell& shell,
                               const std::filesystem::path& base_path,

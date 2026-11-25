@@ -29,12 +29,6 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
           .ensure_active_tab_visible = [this]() { tab_strip_chrome_.EnsureActiveTabVisible(); },
           .dismiss_overlay = [this](bool restore_focus) { DismissOverlay(restore_focus); },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .build_compare_tab_entry =
-              [this](const std::filesystem::path& path,
-                     const project::GitCommitEntry& commit,
-                     std::size_t selected_row) {
-                return BuildCompareTabEntry(path, commit, selected_row);
-              },
           .rebuild_compare_tab_entry =
               [this](const std::filesystem::path& path, const CompareTabState& compare_state,
                      const CompareRevisionSides* sides) {
@@ -129,9 +123,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 return file_read_service_.Begin({
                     .path = shared_request->path,
                     .on_worker =
-                        [shared_request, result](std::string& bytes) {
-                          RunCompareTabLoad(*shared_request, std::move(bytes), *result);
-                        },
+                        [shared_request, result](std::string&) { RunCompareTabLoad(*shared_request, *result); },
                     .on_complete =
                         [this, result](project::FileReadService::Completion completion) {
                           MakeDiffTabCoordinator().ApplyCompareTabLoad(
@@ -139,7 +131,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                               completion.status == project::FileReadService::Status::Cancelled,
                               completion.ok(), *result);
                         },
-                    .read_path = shared_request->right_is_working_tree(),
+                    .read_path = false,
                 });
               },
           .begin_git_conflict_prefetch =

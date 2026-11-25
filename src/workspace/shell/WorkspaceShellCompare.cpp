@@ -553,14 +553,14 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
       language_contract_.ResolveDiffSyntax(compare_tab.right_viewport.language_id());
   std::size_t left_first_changed_line = 0;
   std::size_t right_first_changed_line = 0;
-  const bool content_changed =
+  const bool model_stale =
       !compare_tab.derived_fingerprint_valid ||
       compare_tab.derived_right_content_revision != right_content_revision ||
       compare_tab.derived_right_line_ending != right_line_ending ||
       compare_tab.derived_left_content != compare_tab.left_content ||
       compare_tab.derived_ignore_whitespace != ignore_whitespace ||
       compare_tab.derived_syntax != compare_tab.build_options.syntax;
-  if (content_changed) {
+  if (model_stale) {
     util::PerformanceTrace::Scope rebuild_scope(
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
     std::string right_content = compare_tab.right_viewport.SerializeDocumentText(right_line_ending);
@@ -590,6 +590,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
             : CountCompareTextLines(*compare_tab.left_content);
     MarkCompareModelBuilt(compare_tab, compare_tab.build_options, left_line_count);
   }
+  const bool content_changed = compare_tab.token_windows_model_revision != compare_tab.model_revision;
   CompareTabReviewRefreshInput review_input{
       .repository_root = context_.current_project_state.root,
       .git_entry = std::nullopt,
@@ -622,6 +623,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare_tab.token_windows_stale = false;
     compare_tab.syntax_highlighting_enabled = true;
     compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
+    compare_tab.token_windows_model_revision = compare_tab.model_revision;
   }
   compare_tab.scrollbar_marker_cache_valid = false;
   compare_tab.scrollbar_marker_cache.clear();

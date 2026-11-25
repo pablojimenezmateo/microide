@@ -142,6 +142,9 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
 }
 
 bool CompareTabTakesReviewMarks(const CompareTabState& compare_tab) {
+  if (compare_tab.load_pending) {
+    return false;
+  }
   if (compare_tab.review_mode == compare::CompareReviewMode::Branch) {
     return true;
   }

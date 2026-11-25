@@ -204,7 +204,7 @@ void TestAStagingDiffStepsButTakesNoMarks() {
   TestAccess::OpenTreeContextMenuForPath(fixture.shell, workspace::TreeContextTargetKind::File, fixture.file);
   Expect(TestAccess::ExecuteContextMenuAction(fixture.shell, WorkspaceShell::ActionId::CompareHead),
          "the file's Compare with HEAD opens the working tree against HEAD");
-  TestAccess::FlushPendingFileReads(fixture.shell);
+  TestAccess::SettleCompareLoads(fixture.shell);
   fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the staging diff");
   TestAccess::FlushPendingFileReads(fixture.shell);
   fixture.ExpectFresh(workspace::RenderInvalidation{.full = true}, "the loaded staging diff");

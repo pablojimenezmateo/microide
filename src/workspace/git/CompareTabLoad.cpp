@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "project/GitCompareService.h"
+#include "util/TextFileIO.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
 
 namespace microide::workspace {
@@ -13,9 +14,17 @@ std::size_t CountCompareTextLines(const std::string_view text) {
                       : static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
 }
 
-void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_bytes,
-                       CompareTabLoadResult& result) {
+void RunCompareTabLoad(const CompareTabLoadRequest& request, CompareTabLoadResult& result) {
   result.built_options = request.build_options;
+  if (request.collect_review_files == compare::CompareReviewMode::Commit) {
+    result.review_files = project::CollectGitCommitChangedFiles(request.root, *request.launcher, request.left_ref);
+  } else if (request.collect_review_files == compare::CompareReviewMode::Branch) {
+    std::vector<std::filesystem::path>& paths = result.review_files.emplace();
+    for (const project::GitBranchFileEntry& entry :
+         project::CollectGitBranchOutgoingFiles(request.root, *request.launcher, request.left_ref)) {
+      paths.push_back(entry.relative_path);
+    }
+  }
 
   std::optional<project::GitFileContentAtCommit> left = project::ReadGitFileAtCommit(
       request.root, *request.launcher, request.path, request.left_ref);
@@ -28,7 +37,15 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_b
   result.left_line_count = CountCompareTextLines(*result.left);
 
   bool right_exists = true;
-  if (!request.right_is_working_tree()) {
+  std::string right_bytes;
+  if (request.right_is_working_tree()) {
+    util::TextFileReadResult working = util::ReadTextFileClassified(request.path);
+    if (working.is_error()) {
+      return;
+    }
+    right_exists = working.status != util::TextFileReadStatus::Missing;
+    right_bytes = std::move(working.content);
+  } else {
     std::optional<project::GitFileContentAtCommit> right = project::ReadGitFileAtCommit(
         request.root, *request.launcher, request.path, request.right_ref);
     if (!right.has_value() || right->truncated) {

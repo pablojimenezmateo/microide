@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "compare/CompareModel.h"
 #include "compare/CompareReviewTypes.h"
@@ -19,6 +21,7 @@ struct CompareTabLoadRequest {
   std::string left_ref;
   std::string right_ref = "WORKTREE";
   compare::CompareBuildOptions build_options;
+  std::optional<compare::CompareReviewMode> collect_review_files;
 
   [[nodiscard]] bool right_is_working_tree() const {
     return right_ref.empty() || right_ref == "WORKTREE";
@@ -34,10 +37,10 @@ struct CompareTabLoadResult {
   compare::CompareModel model;
   compare::CompareBuildOptions built_options;
   std::size_t left_line_count = 0;
+  std::optional<std::vector<std::filesystem::path>> review_files;
 };
 
-void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_bytes,
-                       CompareTabLoadResult& result);
+void RunCompareTabLoad(const CompareTabLoadRequest& request, CompareTabLoadResult& result);
 
 struct CompareTabRefreshRequest {
   std::filesystem::path path;

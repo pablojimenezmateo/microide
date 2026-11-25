@@ -23,10 +23,6 @@ class DiffTabCoordinator {
     std::function<void()> ensure_active_tab_visible;
     std::function<void(bool)> dismiss_overlay;
     std::function<void()> request_frame;
-    std::function<std::optional<TabEntry>(const std::filesystem::path&,
-                                          const project::GitCommitEntry&,
-                                          std::size_t)>
-        build_compare_tab_entry;
     std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&,
                                           const CompareRevisionSides*)>
         rebuild_compare_tab_entry;
@@ -104,6 +100,8 @@ class DiffTabCoordinator {
                            CompareTabLoadResult& result);
 
  private:
+  bool LoadsOffThread(const std::filesystem::path& normalized_path,
+                      const project::GitRevisionBlobCache* prefetched) const;
   bool AddCompareTab(TabEntry tab, bool load_off_thread);
   void ActivateCompareTab(std::size_t index, bool dismiss_overlay);
   void ActivateMergeTab(std::size_t index);

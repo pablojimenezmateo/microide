@@ -409,6 +409,26 @@
   static void FlushPendingFileReads(WorkspaceShell& shell) {
     shell.file_read_service_.FlushPendingReads();
   }
+  static void SettleCompareLoads(WorkspaceShell& shell) {
+    for (int round = 0; round < 4; ++round) {
+      bool posted = false;
+      for (EditorGroup& group : shell.context_.current_project_state.editor_groups) {
+        if (!group.has_active_tab() || !group.active_tab().compare.has_value()) {
+          continue;
+        }
+        CompareTabState& compare = *group.active_tab().compare;
+        posted = (compare.load_pending && !compare.pending_load.armed() &&
+                  shell.MakeDiffTabCoordinator().StartPendingCompareLoad(compare)) ||
+                 (compare.refresh_owed && !compare.pending_refresh.armed() &&
+                  shell.MakeDiffTabCoordinator().StartCompareTabRefresh(compare)) ||
+                 compare.pending_load.armed() || compare.pending_refresh.armed() || posted;
+      }
+      if (!posted) {
+        return;
+      }
+      shell.file_read_service_.FlushPendingReads();
+    }
+  }
   static void DeliverCancelledCompareLoad(WorkspaceShell& shell, std::uint64_t id) {
     microide::workspace::CompareTabLoadResult empty;
     shell.MakeDiffTabCoordinator().ApplyCompareTabLoad(id, true,

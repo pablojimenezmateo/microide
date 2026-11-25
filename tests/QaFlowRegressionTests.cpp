@@ -145,6 +145,9 @@ void TestMarkingAnOutgoingFileReviewedMarksItsRow() {
   (void)DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
                                MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
   Expect(TestAccess::ActiveTabIsCompare(shell), "clicking the outgoing row should open its diff");
+  Expect(!TestAccess::ExecuteCommandLine(shell, "mark-branch-file-reviewed"),
+         "a diff still loading has no changes to mark");
+  TestAccess::SettleCompareLoads(shell);
   Expect(TestAccess::ExecuteCommandLine(shell, "mark-branch-file-reviewed"),
          "mark-branch-file-reviewed should run on the outgoing diff");
 

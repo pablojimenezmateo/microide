@@ -59,6 +59,20 @@ std::size_t IndexOfReviewFile(const std::vector<std::filesystem::path>& review_f
              : static_cast<std::size_t>(found - review_files.begin());
 }
 
+std::optional<compare::CompareReviewMode> OwedReviewFiles(const CompareTabState& compare) {
+  const bool collected = compare.review_mode == compare::CompareReviewMode::Commit ||
+                         compare.review_mode == compare::CompareReviewMode::Branch;
+  return collected && compare.review_files.empty() ? std::optional(compare.review_mode) : std::nullopt;
+}
+
+bool ComparesTwoFixedRevisions(const CompareTabState& compare) {
+  return project::IsFullGitObjectId(compare.commit_hash) && project::IsFullGitObjectId(compare.right_ref);
+}
+
+bool CompareRefreshReadsGit(const CompareTabState& compare) {
+  return !CompareLeftSideIsHeld(compare) || compare.right_ref != "WORKTREE";
+}
+
 }
 
 std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& path, bool editable) {
@@ -145,6 +159,19 @@ bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput rig
   return AddCompareTab(std::move(*compare_tab), false);
 }
 
+bool DiffTabCoordinator::LoadsOffThread(const std::filesystem::path& normalized_path,
+                                        const project::GitRevisionBlobCache* prefetched) const {
+  if (!operations_.begin_compare_tab_load) {
+    return false;
+  }
+  if (prefetched == nullptr) {
+    return true;
+  }
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(normalized_path, error);
+  return !error && size >= kAsyncCompareThresholdBytes;
+}
+
 bool DiffTabCoordinator::AddCompareTab(TabEntry tab, bool load_off_thread) {
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
     return false;
@@ -187,11 +214,17 @@ void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,
   if (!state_.focused_group().open_tabs[index].compare.has_value()) {
     return;
   }
-  if (only_when_clean && state_.focused_group().open_tabs[index].compare->right_viewport.dirty()) {
+  CompareTabState& compare = *state_.focused_group().open_tabs[index].compare;
+  if ((only_when_clean && compare.right_viewport.dirty()) || compare.load_pending ||
+      ComparesTwoFixedRevisions(compare)) {
     return;
   }
-  auto rebuilt = operations_.rebuild_compare_tab_entry(
-      normalized_path, state_.focused_group().open_tabs[index].compare.value(), nullptr);
+  if (CompareRefreshReadsGit(compare) && operations_.begin_compare_tab_refresh) {
+    compare.refresh_owed = true;
+    (void)StartCompareTabRefresh(compare);
+    return;
+  }
+  auto rebuilt = operations_.rebuild_compare_tab_entry(normalized_path, compare, nullptr);
   if (rebuilt.has_value() && rebuilt->compare.has_value()) {
     state_.focused_group().open_tabs[index] = std::move(*rebuilt);
   }
@@ -218,39 +251,28 @@ void DiffTabCoordinator::RestoreMergeViewState(MergeTabState& rebuilt_merge,
 }
 
 void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
-  const std::vector<std::filesystem::path> review_files =
-      project::CollectGitCommitChangedFiles(state_.root, state_.launcher(), commit.hash);
-  if (const auto existing_index =
-          FindOpenCompareTabIndex(state_.overlay.workflow.compare_picker.path, commit.hash, "WORKTREE");
+  const std::filesystem::path path = state_.overlay.workflow.compare_picker.path;
+  if (const auto existing_index = FindOpenCompareTabIndex(path, commit.hash, "WORKTREE");
       existing_index.has_value()) {
     operations_.sync_active_editor_tab();
-    RefreshExistingCompareTab(*existing_index, state_.overlay.workflow.compare_picker.path, false);
+    RefreshExistingCompareTab(*existing_index, util::NormalizedPath(path), false);
     ActivateCompareTab(*existing_index, true);
     return;
   }
-
-  auto compare_tab = operations_.build_compare_tab_entry(state_.overlay.workflow.compare_picker.path,
-                                                         commit, 0);
-  if (!compare_tab.has_value()) {
+  if (!OpenWorkingTreeComparison(path, commit.hash, commit.short_hash)) {
     return;
   }
-
-  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return;
-  }
-  operations_.sync_active_editor_tab();
-  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
-  TabEntry& opened = state_.focused_group().open_tabs.back();
+  TabEntry& opened = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
   if (opened.compare.has_value()) {
-    opened.compare->opened_from_commit_picker = true;
-    opened.compare->review_mode = compare::CompareReviewMode::Commit;
-    opened.compare->review_files = review_files;
-    opened.compare->review_file_index =
-        IndexOfReviewFile(review_files, util::NormalizedPath(opened.compare->path), state_.root);
+    CompareTabState& compare = *opened.compare;
+    compare.opened_from_commit_picker = true;
+    compare.review_mode = compare::CompareReviewMode::Commit;
+    if (!compare.load_pending) {
+      compare.review_files = project::CollectGitCommitChangedFiles(state_.root, state_.launcher(), commit.hash);
+      compare.review_file_index = IndexOfReviewFile(compare.review_files, compare.path, state_.root);
+    }
   }
-  SelectFirstChangeOnOpen(opened);
-  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, true);
-  NotifyBufferOpenForEditableTab(opened, operations_);
+  operations_.dismiss_overlay(true);
 }
 
 bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
@@ -308,15 +330,7 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
     return true;
   }
 
-  const bool load_off_thread = [&] {
-    if (!operations_.begin_compare_tab_load ||
-        LiveBufferViewOfPath(state_.editor_groups, normalized_path) != nullptr) {
-      return false;
-    }
-    std::error_code error;
-    const std::uintmax_t size = std::filesystem::file_size(normalized_path, error);
-    return !error && size >= kAsyncCompareThresholdBytes;
-  }();
+  const bool load_off_thread = LoadsOffThread(normalized_path, prefetched);
 
   std::optional<TabEntry> compare_tab;
   if (load_off_thread) {
@@ -378,11 +392,10 @@ void DiffTabCoordinator::RefreshCompareTabsForPath(const std::filesystem::path& 
         }
         continue;
       }
-      if (project::IsFullGitObjectId(compare.commit_hash) && project::IsFullGitObjectId(compare.right_ref)) {
+      if (ComparesTwoFixedRevisions(compare)) {
         continue;
       }
-      const bool reads_git = !CompareLeftSideIsHeld(compare) || compare.right_ref != "WORKTREE";
-      if (reads_git && operations_.begin_compare_tab_refresh) {
+      if (CompareRefreshReadsGit(compare) && operations_.begin_compare_tab_refresh) {
         if (compare.pending_refresh.armed()) {
           operations_.cancel_file_read(compare.pending_refresh.id());
           compare.pending_refresh.Disarm();
@@ -475,6 +488,7 @@ bool DiffTabCoordinator::StartPendingCompareLoad(CompareTabState& compare_tab) {
       .left_ref = compare_tab.commit_hash,
       .right_ref = compare_tab.right_ref,
       .build_options = compare_tab.build_options,
+      .collect_review_files = OwedReviewFiles(compare_tab),
   });
   if (id == 0) {
     return false;
@@ -511,7 +525,8 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
           } else if (!result.left_ok) {
             message = "Could not read " + name + " at " + compare.commit_hash;
           } else if (!result.right_read) {
-            message = "Could not read " + name + " at " + compare.right_ref;
+            message = compare.right_ref == "WORKTREE" ? "Could not read " + name
+                                                      : "Could not read " + name + " at " + compare.right_ref;
           } else {
             message = "Cannot compare " + name + ": not a text file";
           }
@@ -528,6 +543,10 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
       compare.model = std::move(result.model);
       compare.build_options.syntax = result.built_options.syntax;
       MarkCompareModelBuilt(compare, result.built_options, result.left_line_count);
+      if (result.review_files.has_value()) {
+        compare.review_files = std::move(*result.review_files);
+        compare.review_file_index = IndexOfReviewFile(compare.review_files, compare.path, state_.root);
+      }
       AdoptLiveBufferForCompareRightSide(state_.editor_groups, compare,
                                          &compare.right_viewport);
       util::InvokeIfSet(operations_.refresh_compare_tab_derived_state, compare);
@@ -556,14 +575,8 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
     return true;
   }
 
-  const bool load_off_thread = [&] {
-    if (!operations_.begin_compare_tab_load) {
-      return false;
-    }
-    std::error_code error;
-    const std::uintmax_t size = std::filesystem::file_size(normalized_path, error);
-    return !error && size >= kAsyncCompareThresholdBytes;
-  }();
+  const bool load_off_thread =
+      LoadsOffThread(normalized_path, prefetched) || (review_files == nullptr && operations_.begin_compare_tab_load);
 
   std::optional<TabEntry> compare_tab;
   if (load_off_thread) {
@@ -597,15 +610,14 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
   compare_tab->compare->left_path = normalized_path;
   compare_tab->compare->right_path = normalized_path;
   compare_tab->compare->review_mode = compare::CompareReviewMode::Branch;
-  compare_tab->compare->review_files =
-      review_files != nullptr ? *review_files : [&]() {
-        std::vector<std::filesystem::path> paths;
-        for (const project::GitBranchFileEntry& entry :
-             project::CollectGitBranchOutgoingFiles(state_.root, state_.launcher(), left_ref)) {
-          paths.push_back(entry.relative_path);
-        }
-        return paths;
-      }();
+  if (review_files != nullptr) {
+    compare_tab->compare->review_files = *review_files;
+  } else if (!load_off_thread) {
+    for (const project::GitBranchFileEntry& entry :
+         project::CollectGitBranchOutgoingFiles(state_.root, state_.launcher(), left_ref)) {
+      compare_tab->compare->review_files.push_back(entry.relative_path);
+    }
+  }
   compare_tab->compare->review_file_index =
       IndexOfReviewFile(compare_tab->compare->review_files, normalized_path, state_.root);
   if (!load_off_thread && operations_.refresh_compare_tab_derived_state) {

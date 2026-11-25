@@ -3002,6 +3002,9 @@ void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
   std::filesystem::remove(missing_file);
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, missing_file, "HEAD", "HEAD"),
          "a missing working-tree file should still open as a whole-file-deleted diff");
+  Expect(!WorkspaceShellTestAccess::ActiveCompare(shell).load_pending &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).build_options.right_exists == false,
+         "whose working side is loaded as absent");
 
   std::string binary_bytes;
   binary_bytes.push_back('\0');
@@ -3009,7 +3012,8 @@ void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
   binary_bytes.push_back('\0');
   binary_bytes.append(" trailing");
   WriteFile(binary_file, binary_bytes);
-  Expect(!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, binary_file, "HEAD", "HEAD"),
+  (void)WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, binary_file, "HEAD", "HEAD");
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.read_only(),
          "a binary working-tree file must not open as an editable text compare");
 
   std::error_code ec;
@@ -3020,8 +3024,9 @@ void TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable() {
     const bool actually_locked = !probe.good();
     probe.close();
     if (actually_locked) {
-      Expect(!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, locked_file, "HEAD", "HEAD"),
-             "an unreadable working-tree file must not open as an empty compare");
+      (void)WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, locked_file, "HEAD", "HEAD");
+      Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.read_only(),
+             "an unreadable working-tree file must not open as an editable compare");
     }
     std::filesystem::permissions(locked_file, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::replace, ec);
