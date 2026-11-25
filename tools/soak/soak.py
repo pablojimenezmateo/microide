@@ -108,7 +108,7 @@ FINDINGS = SOAK / "findings"
 CORPUS = SOAK / "corpus"
 COVERAGE = SOAK / "coverage.json"
 RUN_LOG = SOAK / "runs.jsonl"
-DISK_BUDGET_GB = float(os.environ.get("MICROIDE_SOAK_DISK_GB", "25"))
+DISK_BUDGET_GB = float(os.environ.get("MICROIDE_SOAK_DISK_GB", "15"))
 
 
 # ---- builds ----------------------------------------------------------------------
@@ -429,12 +429,15 @@ def refresh_due(state: dict[str, Any]) -> bool:
     return not is_built(state, followed_head()) or any(True for _ in fixes_to_verify(state))
 
 
+BINARY_IDLE_SECONDS = 2 * 3600
+
+
 def prune_binaries(good: dict[str, Any]) -> None:
-    """Binaries no job has started on for six hours (mark_in_use), never the
-    current ones."""
+    """Binaries no job has started on for BINARY_IDLE_SECONDS (mark_in_use; the
+    longest job runs 70 minutes), never the current ones."""
     keep = {Path(entry["binary"]).parent for entry in good.values()}
     for build_dir in (SOAK / "bin").glob("*/*"):
-        if build_dir not in keep and time.time() - build_dir.stat().st_mtime > 6 * 3600:
+        if build_dir not in keep and time.time() - build_dir.stat().st_mtime > BINARY_IDLE_SECONDS:
             shutil.rmtree(build_dir, ignore_errors=True)
 
 
@@ -2404,7 +2407,7 @@ VERIFIED_PRUNED = ("evidence", "sightings", "verify")
 # finding verified, and the question its cause left open had nothing left to
 # walk back (e041d436ae59, 2026-11-21).
 ARCHIVE = SOAK / "archive"
-ARCHIVE_MAX_BYTES = int(float(os.environ.get("MICROIDE_SOAK_ARCHIVE_GB", "20")) * 1e9)
+ARCHIVE_MAX_BYTES = int(float(os.environ.get("MICROIDE_SOAK_ARCHIVE_GB", "5")) * 1e9)
 
 
 def bundle_tier(bundle: Path) -> int:
@@ -2505,16 +2508,62 @@ def sweep_orphan_runs(running: set[Path], log, now: float | None = None) -> int:
     return removed
 
 
+# A minimize or check killed mid-run leaves its scratch (minimize.py removes it
+# in a finally a SIGKILL skips); none runs longer than an hour and ten.
+STALE_SCRATCH_SECONDS = 6 * 3600
+# A finding with a fix booked, verified or closed is replayed from its actions;
+# its rr traces are not read again.
+RECORDING_DONE_STATUSES = ("fixed", "verified", "closed")
+
+
+def drop_stale_scratch() -> int:
+    freed = 0
+    for scratch in FINDINGS.glob("*/verify/minimize-*"):
+        with contextlib.suppress(OSError):
+            if time.time() - scratch.stat().st_mtime > STALE_SCRATCH_SECONDS:
+                freed += disk_usage(scratch)
+                shutil.rmtree(scratch, ignore_errors=True)
+    return freed
+
+
+def bundle_recordings(bundle: Path) -> list[Path]:
+    """A bundle's rr traces, newest first (the first sighting's under
+    evidence/, later ones under sightings/<date>-.../)."""
+    found = [p for p in (bundle / "evidence" / RECORDING, *bundle.glob(f"sightings/*/{RECORDING}")) if p.is_dir()]
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def drop_recordings(entries: dict[str, Any], *, open_beyond_newest: bool) -> int:
+    """Drops the traces of findings whose fix is booked, verified or closed, and
+    with `open_beyond_newest` every open finding's traces but its newest."""
+    freed = 0
+    for sig, entry in entries.items():
+        traces = bundle_recordings(FINDINGS / sig)
+        if entry.status not in RECORDING_DONE_STATUSES:
+            if not open_beyond_newest:
+                continue
+            traces = traces[1:]
+        for trace in traces:
+            freed += disk_usage(trace)
+            shutil.rmtree(trace, ignore_errors=True)
+    return freed
+
+
 def collect_garbage(log) -> None:
-    """Drops what nothing reads any more: verified bundles' evidence and the
+    """Drops what nothing reads any more: verified bundles' evidence, the traces
+    of findings with a fix booked or closed, a killed minimize's scratch, and the
     corpus prefixes too long for a run to start from."""
     freed = 0
-    for sig, entry in ledger().entries().items():
+    entries = ledger().entries()
+    for sig, entry in entries.items():
         if entry.status == "verified":
             freed += prune_verified_bundle(FINDINGS / sig)
+    freed += drop_recordings(entries, open_beyond_newest=False)
+    freed += drop_stale_scratch()
+    freed += trim_archive()
     removed, corpus_freed = mm.Corpus(CORPUS).prune()
     if freed or removed:
-        log(f"gc: {freed / 1e6:.0f} MB of verified evidence, {removed} unusable corpus prefixes "
+        log(f"gc: {freed / 1e6:.0f} MB of evidence, traces and scratch, {removed} unusable corpus prefixes "
             f"({corpus_freed / 1e6:.0f} MB)")
 
 
@@ -2522,8 +2571,12 @@ def enforce_disk_budget(log) -> None:
     budget = DISK_BUDGET_GB * 1e9
     if disk_usage(SOAK) <= budget:
         return
-    # Oldest verified bundles first, then the corpus's longest prefixes.
+    # Older traces of open findings first (the newest of each stays), then the
+    # oldest verified bundles, then the corpus's longest prefixes.
     entries = ledger().entries()
+    if drop_recordings(entries, open_beyond_newest=True) and disk_usage(SOAK) <= budget * 0.9:
+        log("disk budget: dropped open findings' older traces")
+        return
     verified = sorted((FINDINGS / sig for sig, e in entries.items() if e.status == "verified"),
                       key=lambda p: p.stat().st_mtime if p.exists() else 0)
     for path in verified:

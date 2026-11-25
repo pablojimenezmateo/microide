@@ -285,3 +285,39 @@ class DeadJobEvidenceTests(unittest.TestCase):
         self.assertIn("ended: killed by signal 6 (SIGABRT) after the hard timeout", report)
         self.assertIn("load (1/5/15 min):", report)
         self.assertIn("command: python3 run.py monkey", report)
+
+
+class RecordingPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.soak = scratch_soak(self)
+
+    def trace(self, sig: str, where: str, age: float) -> Path:
+        path = self.soak.FINDINGS / sig / where / self.soak.RECORDING
+        path.mkdir(parents=True)
+        (path / "trace").write_bytes(b"x" * 1000)
+        os.utime(path, (time.time() - age, time.time() - age))
+        return path
+
+    def test_a_done_finding_loses_its_traces_and_an_open_one_keeps_its_newest(self):
+        fixed = self.trace("aaaaaaaaaaaa", "evidence", 100)
+        old = self.trace("bbbbbbbbbbbb", "evidence", 300)
+        newest = self.trace("bbbbbbbbbbbb", "sightings/20261125-1", 10)
+        entries = {"aaaaaaaaaaaa": mock.Mock(status="fixed"), "bbbbbbbbbbbb": mock.Mock(status="new")}
+        self.assertGreater(self.soak.drop_recordings(entries, open_beyond_newest=False), 0)
+        self.assertFalse(fixed.exists())
+        self.assertTrue(old.exists() and newest.exists(), "an open finding keeps its traces in a gc")
+        self.soak.drop_recordings(entries, open_beyond_newest=True)
+        self.assertFalse(old.exists())
+        self.assertTrue(newest.exists(), "over budget an open finding keeps its newest trace")
+
+    def test_only_a_stale_minimize_scratch_goes(self):
+        stale = self.soak.FINDINGS / "cccccccccccc" / "verify" / "minimize-old"
+        live = self.soak.FINDINGS / "cccccccccccc" / "verify" / "minimize-live"
+        for path in (stale, live):
+            path.mkdir(parents=True)
+        long_ago = time.time() - self.soak.STALE_SCRATCH_SECONDS - 60
+        os.utime(stale, (long_ago, long_ago))
+        self.soak.drop_stale_scratch()
+        self.assertFalse(stale.exists())
+        self.assertTrue(live.exists(), "a minimize still running keeps its scratch")
+
