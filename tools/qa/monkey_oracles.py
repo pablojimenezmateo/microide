@@ -56,6 +56,19 @@ _WRITE_LOGGED = re.compile(r"^microide buffer-io: write path=(.+?) doc=\S+ rev=\
                            r"sha=([0-9a-f]+)", re.MULTILINE)
 
 
+_WRITING_LOGGED = re.compile(r"^microide buffer-io: writing path=(.+?) doc=\S+ rev=\S+ dirty=\d bytes=\d+ "
+                             r"sha=([0-9a-f]+)", re.MULTILINE)
+
+
+def _writings_logged(log: str) -> dict[str, set[str]]:
+    """The bytes the app logged it was ABOUT to write, per file (sha256 prefixes):
+    what a save killed part-way may have left in place of the old content."""
+    found: dict[str, set[str]] = {}
+    for match in _WRITING_LOGGED.finditer(log):
+        found.setdefault(match.group(1), set()).add(match.group(2))
+    return found
+
+
 def _writes_logged(log: str) -> dict[str, str]:
     """The files the app logged saving in `log`, each with the sha256 prefix of
     what it wrote (the last write of a path wins)."""
@@ -153,6 +166,9 @@ class DataOracle:
 
     def __init__(self, app: q.App):
         self.app = app
+        # The sha256 of the file a point kill's save trigger was about to write,
+        # before it wrote: one of the two contents the file may hold afterwards.
+        self.saved_file_before: str | None = None
         # Files for the evidence directory of the finding the last check made:
         # {file name: bytes}. The monkey writes them next to FINDING.md, so a
         # mismatch that does not replay still says how the two sides differ.
@@ -367,6 +383,7 @@ class DataOracle:
         except q.QaFailure:
             return False, [], None  # a binary without the query (an older build's replay)
         saved: str | None = None
+        self.saved_file_before = None
         after_trigger: list[dict[str, Any]] = []
         try:
             # An edit the flush has not staged: the restore owes the buffer as it
@@ -377,6 +394,7 @@ class DataOracle:
                 active = app.query("buffer")
                 if active.get("kind") == "editor" and active.get("path") and active.get("dirty"):
                     saved = str(active["path"])
+                    self.saved_file_before = _sha256_file(Path(saved))
                     app.send_line("save", record=False)
             elif trigger == "open" and app.project is not None:
                 # A file the recents list has not held: created, then opened.
@@ -455,6 +473,7 @@ class DataOracle:
         # before the relaunch starts another: path -> the sha256 prefix it wrote.
         log_mark = app._log_size() if hasattr(app, "_log_size") else None
         written: dict[str, str] = {}
+        writing: dict[str, set[str]] = {}
         # The killed process's state tree (its session records, primary and .bak):
         # what the relaunch restored from. Lost buffers whose staging the log shows
         # left no other trace of which record was read or why it lacked them.
@@ -463,7 +482,10 @@ class DataOracle:
 
         def keep_state() -> None:
             if log_mark is not None:
-                written.update(_writes_logged(app.log_since(log_mark, 16 * 1024 * 1024)))
+                killed_log = app.log_since(log_mark, 16 * 1024 * 1024)
+                written.update(_writes_logged(killed_log))
+                for path, shas in _writings_logged(killed_log).items():
+                    writing.setdefault(path, set()).update(shas)
             if self.last_kill_state is None:
                 return
             shutil.rmtree(self.last_kill_state, ignore_errors=True)
@@ -529,6 +551,14 @@ class DataOracle:
         # buffer's text was, and whether or not its content changed.
         logged_saves = {path: sha for path, sha in written.items()
                         if (_sha256_file(Path(path)) or "").startswith(sha)}
+        if saved_path is not None and saved_path in writing:
+            # A save killed part-way leaves the file as it was or as the save was
+            # writing it (the bytes it logged before the write), never a third
+            # thing: the durable write is a temporary and a rename.
+            now = _sha256_file(Path(saved_path))
+            if now != self.saved_file_before and not any((now or "").startswith(sha) for sha in writing[saved_path]):
+                out.append(("data", f"a save of {Path(saved_path).name} killed part-way{killed_at} left the file "
+                                    f"neither as it was nor as the save was writing it"))
         saved_before_kill: set[str] = {os.path.realpath(path) for path in logged_saves}
         if waited:
             by_key = {_doc_key(d): d for d in after}

@@ -124,12 +124,13 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    same save). Still open: a full disk under the session and user-config
    writers, whose failure has no row to show and needs its own oracle (the next
    flush stages everything again).
-4. **A save killed part-way is not held to old-or-new bytes.** The point-kill
-   oracle (`DataOracle.kill9_and_check`) checks what the buffers come back as; for
-   the FILE a killed save was writing it only checks "back clean means the file
-   holds it", because a save may change the buffer on its way (trailing
-   whitespace, a final newline, a formatter) and the bytes it would have written
-   are not known from outside. The `documents` query could report them.
+4. **A save killed part-way is not held to old-or-new bytes: FIXED
+   2026-11-25.** The app logs `buffer-io: writing` with the sha of the exact
+   bytes it is about to write (after the save's own transforms), and the point
+   kill records the file's sha just before its save trigger; after the relaunch
+   the file must hold one of the two (`DataOracle.kill9_and_check`). The
+   monkey's `diskfull` rule now names the resolved file, so a save through a
+   symlink is failed where it actually writes.
 5. **A real crash loses a coverage build's counters: DECIDED 2026-11-25, kept.**
    The fatal-signal handler will not flush the profile: the writer allocates
    and opens files, so a crash inside `malloc` would hang there and the soak

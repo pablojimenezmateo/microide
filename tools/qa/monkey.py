@@ -1583,7 +1583,7 @@ class Monkey:
         if buffer.get("kind") != "editor" or not buffer.get("path") or not buffer.get("dirty") \
                 or buffer.get("readOnly"):
             return self.type_action()
-        name = Path(buffer["path"]).name
+        name = Path(os.path.realpath(buffer["path"])).name
         site, target = self.rng.choice([("durable.writing", f"{name} (staging)"),
                                         ("durable.fsyncing", f"{name} (staging)"),
                                         ("durable.renaming", name)])

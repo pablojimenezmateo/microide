@@ -196,12 +196,26 @@ void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash, std::si
   }
 }
 
-void TextViewport::TraceBufferIo(std::string_view event) const {
+namespace {
+
+bool BufferIoTraceEnabled() {
   static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_BUFFER_IO");
-  if (!enabled || document_ == nullptr) {
+  return enabled;
+}
+
+}
+
+void TextViewport::TraceBufferIo(std::string_view event) const {
+  if (!BufferIoTraceEnabled() || document_ == nullptr) {
     return;
   }
-  const std::string bytes = SerializeDocumentText();
+  TraceBufferIo(event, SerializeDocumentText());
+}
+
+void TextViewport::TraceBufferIo(std::string_view event, std::string_view bytes) const {
+  if (!BufferIoTraceEnabled() || document_ == nullptr) {
+    return;
+  }
   util::Sha256 sha;
   sha.Update(bytes);
   const util::FileSignature& disk = document_->disk_signature;
@@ -247,6 +261,7 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
   }
   const util::WriteTarget target =
       document_->disk_signature.exists ? util::WriteTarget::Replace : util::WriteTarget::CreateNew;
+  TraceBufferIo("writing", text);
   const project::FileWriteGate::Result written = gate.WriteText(
       document_->path, text, project::FileWriteGate::Signature::Capture, target);
   if (!written.ok) {

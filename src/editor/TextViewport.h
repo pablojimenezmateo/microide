@@ -442,6 +442,7 @@ class TextViewport {
   static SelectionRange NormalizeRange(const SelectionRange& range);
 
   void TraceBufferIo(std::string_view event) const;
+  void TraceBufferIo(std::string_view event, std::string_view bytes) const;
 
  private:
   using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;
