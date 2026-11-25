@@ -417,7 +417,7 @@ void SdlTtfTextBackend::EnsureClusterAtlas() {
                                             std::max(1, TTF_GetFontHeight(font_)));
 }
 
-SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
+SurfacePtr SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
                                                            SDL_Color color) {
   if (font_ == nullptr || text.empty()) {
     return nullptr;
@@ -436,7 +436,7 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   const int total_width_px =
       std::max(1, static_cast<int>(std::ceil(static_cast<float>(text.size()) * cell_width_px)));
 
-  SDL_Surface* composite = AcquireCompositeSurface(total_width_px, font_height_px);
+  SurfacePtr composite = AcquireCompositeSurface(total_width_px, font_height_px);
   if (composite == nullptr) {
     return nullptr;
   }
@@ -448,39 +448,35 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
       continue;
     }
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
-    if (!ascii_atlas_->BlitInto(composite, dst_x, ch, color)) {
-      SDL_DestroySurface(composite);
+    if (!ascii_atlas_->BlitInto(composite.get(), dst_x, ch, color)) {
       return nullptr;
     }
   }
   return composite;
 }
 
-SDL_Surface* SdlTtfTextBackend::AcquireCompositeSurface(int width, int height) {
+SurfacePtr SdlTtfTextBackend::AcquireCompositeSurface(int width, int height) {
   util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
   const std::size_t pixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-  SDL_Surface* composite = nullptr;
+  SurfacePtr composite;
   if (SDL_BYTESPERPIXEL(texture_format_) == sizeof(std::uint32_t) &&
       pixels * sizeof(std::uint32_t) <= kMaxCompositeScratchBytes) {
     if (composite_scratch_.size() < pixels) {
       composite_scratch_.resize(std::max(pixels, composite_scratch_.size() * 2));
     }
-    composite = SDL_CreateSurfaceFrom(width, height, texture_format_, composite_scratch_.data(),
-                                      width * static_cast<int>(sizeof(std::uint32_t)));
+    composite.reset(SDL_CreateSurfaceFrom(width, height, texture_format_,
+                                          composite_scratch_.data(),
+                                          width * static_cast<int>(sizeof(std::uint32_t))));
   } else {
-    composite = SDL_CreateSurface(width, height, texture_format_);
+    composite.reset(SDL_CreateSurface(width, height, texture_format_));
   }
-  if (composite == nullptr) {
-    return nullptr;
-  }
-  if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
-    SDL_DestroySurface(composite);
+  if (composite == nullptr || !SDL_FillSurfaceRect(composite.get(), nullptr, 0)) {
     return nullptr;
   }
   return composite;
 }
 
-SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
+SurfacePtr SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
                                                           SDL_Color color) {
   util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeSurfaces);
   std::uint64_t cluster_rasterizations = 0;
@@ -503,7 +499,7 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
       1, static_cast<int>(std::ceil(static_cast<float>(std::max<std::size_t>(total_cells, 1)) *
                                     cell_width_px)));
 
-  SDL_Surface* composite = AcquireCompositeSurface(total_width_px, font_height_px);
+  SurfacePtr composite = AcquireCompositeSurface(total_width_px, font_height_px);
   if (composite == nullptr) {
     return nullptr;
   }
@@ -548,19 +544,19 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
     }
     if (ascii_cell && base == ' ') {
     } else if (ascii_cell && atlas_ok && ascii_atlas_ != nullptr &&
-               ascii_atlas_->BlitInto(composite, dst_x, static_cast<char>(base), color)) {
+               ascii_atlas_->BlitInto(composite.get(), dst_x, static_cast<char>(base), color)) {
     } else if (atlas_ok && cluster_atlas_ != nullptr &&
-               cluster_atlas_->BlitInto(composite, dst_x, span_px, cluster, color)) {
+               cluster_atlas_->BlitInto(composite.get(), dst_x, span_px, cluster, color)) {
       ++cluster_atlas_blits;
     } else {
       ++cluster_rasterizations;
-      SDL_Surface* glyph = TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), color);
+      const SurfacePtr glyph(
+          TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), color));
       if (glyph != nullptr) {
-        SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
+        SDL_SetSurfaceBlendMode(glyph.get(), SDL_BLENDMODE_NONE);
         SDL_Rect source{0, 0, std::min(glyph->w, span_px), std::min(glyph->h, font_height_px)};
         SDL_Rect destination{dst_x, 0, source.w, source.h};
-        SDL_BlitSurface(glyph, &source, composite, &destination);
-        SDL_DestroySurface(glyph);
+        SDL_BlitSurface(glyph.get(), &source, composite.get(), &destination);
       }
     }
     cell += width;
@@ -1473,7 +1469,7 @@ const StringTextureCache::Entry* SdlTtfTextBackend::ResolveEntry(StringTextureCa
     return cached;
   }
 
-  SDL_Surface* surface = nullptr;
+  SurfacePtr surface;
   {
     util::PerformanceTrace::Scope raster_scope("render::TextBackend::RasterizeString");
     if (CanUseFastAscii(text)) {
@@ -1488,17 +1484,12 @@ const StringTextureCache::Entry* SdlTtfTextBackend::ResolveEntry(StringTextureCa
   }
 
   util::PerformanceTrace::Scope upload_scope("render::TextBackend::UploadStringTexture");
-  SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+  SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface.get());
   if (texture == nullptr) {
-    SDL_DestroySurface(surface);
     return nullptr;
   }
   SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-
-  const int width = surface->w;
-  const int height = surface->h;
-  SDL_DestroySurface(surface);
-  return cache.Insert(text, color, texture, width, height);
+  return cache.Insert(text, color, texture, surface->w, surface->h);
 }
 
 }

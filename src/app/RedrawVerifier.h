@@ -11,6 +11,7 @@
 
 #include "app/SceneTexturePresenter.h"
 #include "render/PixelDiff.h"
+#include "render/SdlSurface.h"
 
 namespace microide::app {
 
@@ -48,14 +49,13 @@ class RedrawVerifier {
     if (!enabled_ || renderer == nullptr || scene == nullptr) {
       return std::nullopt;
     }
-    SDL_Surface* retained = SDL_RenderReadPixels(renderer, nullptr);
+    render::SurfacePtr retained(SDL_RenderReadPixels(renderer, nullptr));
     if (retained == nullptr || !BindReference(renderer, presentation)) {
-      SDL_DestroySurface(retained);
       SDL_SetRenderTarget(renderer, scene);
       return std::nullopt;
     }
     std::forward<RenderFull>(render_full)();
-    return CompareWithReference(renderer, scene, retained, frame);
+    return CompareWithReference(renderer, scene, retained.get(), frame);
   }
 
   void Destroy() { reference_.Destroy(); }

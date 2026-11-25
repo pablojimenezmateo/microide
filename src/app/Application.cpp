@@ -35,6 +35,7 @@
 #include "platform/SubprocessSandbox.h"
 #include "render/RasterDecode.h"
 #include "render/RendererInfo.h"
+#include "render/SdlSurface.h"
 #include "workspace/control/ControlSpec.h"
 #include "util/CoverageProfile.h"
 #include "util/StartupTrace.h"
@@ -162,13 +163,11 @@ void SetWindowIconFromAssets(SDL_Window* window) {
     return;
   }
 
-  SDL_Surface* icon =
-      SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32, rgba.data(), width * 4);
-  if (icon == nullptr) {
-    return;
+  const render::SurfacePtr icon(
+      SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32, rgba.data(), width * 4));
+  if (icon != nullptr) {
+    SDL_SetWindowIcon(window, icon.get());
   }
-  SDL_SetWindowIcon(window, icon);
-  SDL_DestroySurface(icon);
 }
 
 

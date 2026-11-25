@@ -6,6 +6,7 @@
 #if MICROIDE_HAS_SDL3_TTF
 
 #include <algorithm>
+#include <utility>
 
 namespace microide::render {
 
@@ -31,13 +32,6 @@ std::unique_ptr<GlyphClusterAtlas> GlyphClusterAtlas::Build(TTF_Font* font,
   return atlas;
 }
 
-GlyphClusterAtlas::~GlyphClusterAtlas() {
-  if (atlas_ != nullptr) {
-    SDL_DestroySurface(atlas_);
-    atlas_ = nullptr;
-  }
-}
-
 bool GlyphClusterAtlas::EnsureCapacityFor(std::size_t slot_index) {
   if (slot_index < allocated_slots_) {
     return true;
@@ -48,25 +42,19 @@ bool GlyphClusterAtlas::EnsureCapacityFor(std::size_t slot_index) {
   const std::size_t wanted =
       std::min(kMaxSlots, ((slot_index / kSlotsPerChunk) + 1) * kSlotsPerChunk);
   const int width = static_cast<int>(wanted) * slot_width_px_;
-  SDL_Surface* grown = SDL_CreateSurface(width, font_height_px_, format_);
-  if (grown == nullptr) {
-    return false;
-  }
-  if (!SDL_FillSurfaceRect(grown, nullptr, 0)) {
-    SDL_DestroySurface(grown);
+  SurfacePtr grown(SDL_CreateSurface(width, font_height_px_, format_));
+  if (grown == nullptr || !SDL_FillSurfaceRect(grown.get(), nullptr, 0)) {
     return false;
   }
   if (atlas_ != nullptr) {
-    SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
+    SDL_SetSurfaceBlendMode(atlas_.get(), SDL_BLENDMODE_NONE);
     SDL_Rect src{0, 0, atlas_->w, atlas_->h};
     SDL_Rect dst{0, 0, atlas_->w, atlas_->h};
-    if (!SDL_BlitSurface(atlas_, &src, grown, &dst)) {
-      SDL_DestroySurface(grown);
+    if (!SDL_BlitSurface(atlas_.get(), &src, grown.get(), &dst)) {
       return false;
     }
-    SDL_DestroySurface(atlas_);
   }
-  atlas_ = grown;
+  atlas_ = std::move(grown);
   allocated_slots_ = wanted;
   return true;
 }
@@ -112,23 +100,19 @@ const GlyphClusterAtlas::Slot* GlyphClusterAtlas::EnsureFilled(std::string_view 
   Slot slot;
   slot.x = static_cast<int>(slot_index) * slot_width_px_;
 
-  SDL_Surface* glyph = TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), kWhite);
-  if (glyph != nullptr && IsPureCoverage(glyph)) {
-    SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
+  const SurfacePtr glyph(TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), kWhite));
+  if (glyph != nullptr && IsPureCoverage(glyph.get())) {
+    SDL_SetSurfaceBlendMode(glyph.get(), SDL_BLENDMODE_NONE);
     const int w = std::min(glyph->w, slot_width_px_);
     const int h = std::min(glyph->h, font_height_px_);
     SDL_Rect src{0, 0, w, h};
     SDL_Rect dst{slot.x, 0, w, h};
-    if (w > 0 && h > 0 && SDL_BlitSurface(glyph, &src, atlas_, &dst)) {
+    if (w > 0 && h > 0 && SDL_BlitSurface(glyph.get(), &src, atlas_.get(), &dst)) {
       slot.w = w;
       slot.h = h;
       slot.cacheable = true;
     }
   }
-  if (glyph != nullptr) {
-    SDL_DestroySurface(glyph);
-  }
-
   const auto [it, inserted] = slots_.emplace(std::string(cluster), slot);
   if (!inserted || !it->second.cacheable) {
     return nullptr;
@@ -149,15 +133,15 @@ bool GlyphClusterAtlas::BlitInto(SDL_Surface* dst, int dst_x, int span_px,
   if (width <= 0) {
     return false;
   }
-  if (TintCopyCoverage(atlas_, dst, dst_x, slot->x, width, slot->h, color)) {
+  if (TintCopyCoverage(atlas_.get(), dst, dst_x, slot->x, width, slot->h, color)) {
     return true;
   }
-  SDL_SetSurfaceColorMod(atlas_, color.r, color.g, color.b);
-  SDL_SetSurfaceAlphaMod(atlas_, 255);
-  SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
+  SDL_SetSurfaceColorMod(atlas_.get(), color.r, color.g, color.b);
+  SDL_SetSurfaceAlphaMod(atlas_.get(), 255);
+  SDL_SetSurfaceBlendMode(atlas_.get(), SDL_BLENDMODE_NONE);
   SDL_Rect src{slot->x, 0, width, slot->h};
   SDL_Rect dst_rect{dst_x, 0, width, slot->h};
-  return SDL_BlitSurface(atlas_, &src, dst, &dst_rect);
+  return SDL_BlitSurface(atlas_.get(), &src, dst, &dst_rect);
 }
 
 }

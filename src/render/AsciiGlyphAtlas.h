@@ -2,6 +2,8 @@
 
 #if MICROIDE_HAS_SDL3_TTF
 
+#include "render/SdlSurface.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
@@ -17,7 +19,7 @@ class AsciiGlyphAtlas {
 
   AsciiGlyphAtlas(const AsciiGlyphAtlas&) = delete;
   AsciiGlyphAtlas& operator=(const AsciiGlyphAtlas&) = delete;
-  ~AsciiGlyphAtlas();
+  ~AsciiGlyphAtlas() = default;
 
   int FontHeightPx() const { return font_height_px_; }
 
@@ -27,7 +29,7 @@ class AsciiGlyphAtlas {
 
   bool EnsureAllSlotsFilled();
 
-  SDL_Surface* Surface() const { return atlas_; }
+  SDL_Surface* Surface() const { return atlas_.get(); }
   int SurfaceWidth() const { return atlas_ != nullptr ? atlas_->w : 0; }
   int SurfaceHeight() const { return font_height_px_; }
 
@@ -51,7 +53,7 @@ class AsciiGlyphAtlas {
   bool EnsureSlotFilled(std::size_t index, char ch);
 
   TTF_Font* font_ = nullptr;
-  SDL_Surface* atlas_ = nullptr;
+  SurfacePtr atlas_;
   int font_height_px_ = 0;
   int reserved_slot_width_ = 0;
   std::array<Slot, kSlotCount> slots_{};

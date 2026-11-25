@@ -72,11 +72,11 @@ std::optional<render::PixelDiffResult> RedrawVerifier::CompareWithReference(
     SDL_Surface* retained,
     const VerifiedFrameInfo& frame) {
   SDL_SetRenderClipRect(renderer, nullptr);
-  SDL_Surface* reference = SDL_RenderReadPixels(renderer, nullptr);
+  const render::SurfacePtr reference(SDL_RenderReadPixels(renderer, nullptr));
   SDL_SetRenderTarget(renderer, scene);
   std::optional<render::PixelDiffResult> result;
-  if (Diffable(retained) && Diffable(reference) && retained->format == reference->format) {
-    result = render::DiffPixels(View(retained), View(reference));
+  if (Diffable(retained) && Diffable(reference.get()) && retained->format == reference->format) {
+    result = render::DiffPixels(View(retained), View(reference.get()));
     ++verified_frame_count_;
     if (!result->identical()) {
       ++stale_frame_count_;
@@ -86,12 +86,10 @@ std::optional<render::PixelDiffResult> RedrawVerifier::CompareWithReference(
         const std::string stem =
             dump_directory_ + "/frame-" + std::to_string(frame.frame_index);
         (void)SDL_SaveBMP(retained, (stem + "-retained.bmp").c_str());
-        (void)SDL_SaveBMP(reference, (stem + "-reference.bmp").c_str());
+        (void)SDL_SaveBMP(reference.get(), (stem + "-reference.bmp").c_str());
       }
     }
   }
-  SDL_DestroySurface(reference);
-  SDL_DestroySurface(retained);
   return result;
 }
 

@@ -37,25 +37,18 @@ std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font,
   atlas->font_ = font;
   atlas->font_height_px_ = font_height;
   atlas->reserved_slot_width_ = reserved;
-  atlas->atlas_ = SDL_CreateSurface(static_cast<int>(kSlotCount) * reserved, font_height,
-                                    EnsureAlphaCapableFormat(surface_format));
+  atlas->atlas_.reset(SDL_CreateSurface(static_cast<int>(kSlotCount) * reserved, font_height,
+                                        EnsureAlphaCapableFormat(surface_format)));
   if (atlas->atlas_ == nullptr) {
     return nullptr;
   }
-  SDL_FillSurfaceRect(atlas->atlas_, nullptr, 0);
+  SDL_FillSurfaceRect(atlas->atlas_.get(), nullptr, 0);
 
   for (std::size_t i = 0; i < kSlotCount; ++i) {
     atlas->slots_[i].x = static_cast<int>(i) * reserved;
   }
 
   return atlas;
-}
-
-AsciiGlyphAtlas::~AsciiGlyphAtlas() {
-  if (atlas_ != nullptr) {
-    SDL_DestroySurface(atlas_);
-    atlas_ = nullptr;
-  }
 }
 
 bool AsciiGlyphAtlas::Covers(char ch) const {
@@ -72,20 +65,18 @@ bool AsciiGlyphAtlas::EnsureSlotFilled(std::size_t index, char ch) {
     return false;
   }
 
-  SDL_Surface* glyph = TTF_RenderText_Blended(font_, &ch, 1, kWhite);
+  const SurfacePtr glyph(TTF_RenderText_Blended(font_, &ch, 1, kWhite));
   if (glyph == nullptr) {
     slot.failed = true;
     return false;
   }
 
-  SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
+  SDL_SetSurfaceBlendMode(glyph.get(), SDL_BLENDMODE_NONE);
   const int w = std::min(glyph->w, reserved_slot_width_);
   const int h = std::min(glyph->h, font_height_px_);
   SDL_Rect src{0, 0, w, h};
   SDL_Rect dst{slot.x, 0, w, h};
-  const bool blitted = SDL_BlitSurface(glyph, &src, atlas_, &dst);
-  SDL_DestroySurface(glyph);
-  if (!blitted) {
+  if (!SDL_BlitSurface(glyph.get(), &src, atlas_.get(), &dst)) {
     slot.failed = true;
     return false;
   }
@@ -147,17 +138,17 @@ bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color c
   }
   const Slot& slot = slots_[index];
 
-  if (TintCopyCoverage(atlas_, dst, dst_x, slot.x, slot.w, slot.h, color)) {
+  if (TintCopyCoverage(atlas_.get(), dst, dst_x, slot.x, slot.w, slot.h, color)) {
     return true;
   }
 
-  SDL_SetSurfaceColorMod(atlas_, color.r, color.g, color.b);
-  SDL_SetSurfaceAlphaMod(atlas_, 255);
-  SDL_SetSurfaceBlendMode(atlas_, SDL_BLENDMODE_NONE);
+  SDL_SetSurfaceColorMod(atlas_.get(), color.r, color.g, color.b);
+  SDL_SetSurfaceAlphaMod(atlas_.get(), 255);
+  SDL_SetSurfaceBlendMode(atlas_.get(), SDL_BLENDMODE_NONE);
 
   SDL_Rect src{slot.x, 0, slot.w, slot.h};
   SDL_Rect dst_rect{dst_x, 0, slot.w, slot.h};
-  return SDL_BlitSurface(atlas_, &src, dst, &dst_rect);
+  return SDL_BlitSurface(atlas_.get(), &src, dst, &dst_rect);
 }
 
 }

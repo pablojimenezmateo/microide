@@ -2,6 +2,7 @@
 
 #if MICROIDE_HAS_SDL3_TTF
 
+#include "render/SdlSurface.h"
 #include "util/TransparentStringHash.h"
 
 #include <SDL3/SDL.h>
@@ -24,7 +25,7 @@ class GlyphClusterAtlas {
 
   GlyphClusterAtlas(const GlyphClusterAtlas&) = delete;
   GlyphClusterAtlas& operator=(const GlyphClusterAtlas&) = delete;
-  ~GlyphClusterAtlas();
+  ~GlyphClusterAtlas() = default;
 
   bool BlitInto(SDL_Surface* dst, int dst_x, int span_px, std::string_view cluster,
                 SDL_Color color);
@@ -50,7 +51,7 @@ class GlyphClusterAtlas {
   static bool IsPureCoverage(const SDL_Surface* glyph);
 
   TTF_Font* font_ = nullptr;
-  SDL_Surface* atlas_ = nullptr;
+  SurfacePtr atlas_;
   SDL_PixelFormat format_ = SDL_PIXELFORMAT_RGBA32;
   int font_height_px_ = 0;
   int slot_width_px_ = 0;

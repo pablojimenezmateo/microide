@@ -2,6 +2,7 @@
 
 #include "render/AsciiGlyphAtlas.h"
 #include "render/GlyphClusterAtlas.h"
+#include "render/SdlSurface.h"
 #include "render/TextRendererBackend.h"
 
 #if MICROIDE_HAS_SDL3_TTF
@@ -102,9 +103,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool CanUseFastAscii(std::string_view text) const;
   void EnsureAsciiAtlas();
   void EnsureClusterAtlas();
-  SDL_Surface* AcquireCompositeSurface(int width, int height);
-  SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
-  SDL_Surface* BuildGridCompositeSurface(std::string_view text, SDL_Color color);
+  SurfacePtr AcquireCompositeSurface(int width, int height);
+  SurfacePtr BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
+  SurfacePtr BuildGridCompositeSurface(std::string_view text, SDL_Color color);
   const StringTextureCache::Entry* ResolveEntry(StringTextureCache& cache, std::string_view text,
                                                 SDL_Color color);
   bool EnsureAtlasTexture();
