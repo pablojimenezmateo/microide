@@ -51,7 +51,13 @@ class CompareMouseCoordinator {
                    int horizontal_ticks);
 
  private:
+  struct ClampedLayout {
+    workspace::CompareSurfaceLayout surface;
+    ScrollSurfaceLayout scroll;
+  };
+
   CompareTabState* ActiveCompareTab() const;
+  ClampedLayout ClampScrollToLayout(const SDL_FRect& surface, CompareTabState& compare_tab) const;
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;

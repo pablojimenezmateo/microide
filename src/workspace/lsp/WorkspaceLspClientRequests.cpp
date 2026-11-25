@@ -196,27 +196,40 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
       });
 }
 
-void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
-                                       FormattingCallback callback) {
-  if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri, insert_spaces)) {
-    return;
-  }
+namespace {
+template <typename Impl>
+void DispatchFormattingRequest(Impl* impl, const char* method, const std::string& uri,
+                               std::optional<LspClient::Range> range, int tab_size,
+                               bool insert_spaces, LspClient::FormattingCallback callback) {
   using namespace util;
   JsonObject options;
   options["tabSize"] = JsonValue(static_cast<std::int64_t>(tab_size));
   options["insertSpaces"] = JsonValue(insert_spaces);
   JsonObject params;
   params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
+  if (range.has_value()) {
+    params["range"] = lsp_protocol::MakeRange(*range);
+  }
   params["options"] = JsonValue(std::move(options));
-  impl_->DispatchResultRequest(
-      "textDocument/formatting", JsonValue(std::move(params)), std::move(callback),
-      [](const util::JsonValue& result) -> std::optional<std::vector<TextEdit>> {
+  impl->DispatchResultRequest(
+      method, JsonValue(std::move(params)), std::move(callback),
+      [](const util::JsonValue& result) -> std::optional<std::vector<LspClient::TextEdit>> {
         if (!result.IsArray()) {
           return std::nullopt;
         }
         return lsp_protocol::ParseTextEdits(result);
       });
+}
+}
+
+void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
+                                       FormattingCallback callback) {
+  if (!callback) return;
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri, insert_spaces)) {
+    return;
+  }
+  DispatchFormattingRequest(impl_.get(), "textDocument/formatting", uri, std::nullopt, tab_size,
+                            insert_spaces, std::move(callback));
 }
 
 void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int tab_size,
@@ -225,22 +238,8 @@ void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int ta
   if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri, insert_spaces)) {
     return;
   }
-  using namespace util;
-  JsonObject options;
-  options["tabSize"] = JsonValue(static_cast<std::int64_t>(tab_size));
-  options["insertSpaces"] = JsonValue(insert_spaces);
-  JsonObject params;
-  params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
-  params["range"] = lsp_protocol::MakeRange(range);
-  params["options"] = JsonValue(std::move(options));
-  impl_->DispatchResultRequest(
-      "textDocument/rangeFormatting", JsonValue(std::move(params)), std::move(callback),
-      [](const util::JsonValue& result) -> std::optional<std::vector<TextEdit>> {
-        if (!result.IsArray()) {
-          return std::nullopt;
-        }
-        return lsp_protocol::ParseTextEdits(result);
-      });
+  DispatchFormattingRequest(impl_.get(), "textDocument/rangeFormatting", uri, range, tab_size,
+                            insert_spaces, std::move(callback));
 }
 
 namespace {

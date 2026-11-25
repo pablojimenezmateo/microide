@@ -47,6 +47,18 @@ MergeTabState* MergeMouseCoordinator::ActiveMergeTab() const {
   return state_.focused_group().active_merge();
 }
 
+MergeMouseCoordinator::ClampedLayout MergeMouseCoordinator::ClampScrollToLayout(
+    const SDL_FRect& surface, MergeTabState& merge_tab) const {
+  ClampedLayout layout{.surface = operations_.compute_merge_surface_layout(surface, merge_tab)};
+  layout.scroll = operations_.compute_merge_scroll_layout(surface, layout.surface, merge_tab);
+  merge_tab.result_viewport.SetScrollLine(
+      static_cast<std::size_t>(std::max(0, layout.scroll.vertical_scroll)));
+  merge_tab.result_viewport.SetHorizontalScroll(layout.scroll.horizontal_scroll);
+  merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
+  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
+  return layout;
+}
+
 bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                              const SDL_FRect& surface) {
   MergeTabState* merge_tab = ActiveMergeTab();
@@ -54,16 +66,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return false;
   }
 
-  const auto surface_layout =
-      operations_.compute_merge_surface_layout(surface, *merge_tab);
-  const auto scroll_layout =
-      operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
-  merge_tab->scroll_row = scroll_layout.vertical_scroll;
-  merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
-  merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab->scroll_row)));
-  merge_tab->result_viewport.SetHorizontalScroll(merge_tab->horizontal_scroll);
-  merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-  merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+  const auto [surface_layout, scroll_layout] = ClampScrollToLayout(surface, *merge_tab);
   const auto interaction =
       operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
   const auto divider_rects = MergeDividerHitRects(surface, surface_layout);
@@ -375,14 +378,7 @@ bool MergeMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   std::optional<MergeHoverState> next_hover;
   if (Contains(surface, event.motion.x, event.motion.y) &&
       !(interaction_state_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
-    const auto surface_layout =
-        operations_.compute_merge_surface_layout(surface, *merge_tab);
-    const auto scroll_layout =
-        operations_.compute_merge_scroll_layout(surface, surface_layout, *merge_tab);
-    merge_tab->result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, scroll_layout.vertical_scroll)));
-    merge_tab->result_viewport.SetHorizontalScroll(scroll_layout.horizontal_scroll);
-    merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
-    merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+    const auto [surface_layout, scroll_layout] = ClampScrollToLayout(surface, *merge_tab);
     const auto interaction =
         operations_.build_merge_interaction_layout(surface, surface_layout, *merge_tab);
     next_hover = operations_.classify_merge_hover_state(

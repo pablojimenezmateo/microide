@@ -64,7 +64,13 @@ class MergeMouseCoordinator {
                    int horizontal_ticks);
 
  private:
+  struct ClampedLayout {
+    workspace::MergeSurfaceLayout surface;
+    ScrollSurfaceLayout scroll;
+  };
+
   MergeTabState* ActiveMergeTab() const;
+  ClampedLayout ClampScrollToLayout(const SDL_FRect& surface, MergeTabState& merge_tab) const;
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;

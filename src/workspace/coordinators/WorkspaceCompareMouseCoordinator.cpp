@@ -37,6 +37,15 @@ CompareTabState* CompareMouseCoordinator::ActiveCompareTab() const {
   return state_.focused_group().active_compare();
 }
 
+CompareMouseCoordinator::ClampedLayout CompareMouseCoordinator::ClampScrollToLayout(
+    const SDL_FRect& surface, CompareTabState& compare_tab) const {
+  ClampedLayout layout{.surface = operations_.compute_compare_surface_layout(surface, compare_tab)};
+  layout.scroll = operations_.compute_compare_scroll_layout(surface, layout.surface, compare_tab);
+  compare_tab.scroll_row = layout.scroll.vertical_scroll;
+  compare_tab.horizontal_scroll = layout.scroll.horizontal_scroll;
+  return layout;
+}
+
 bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                                const SDL_FRect& surface) {
   CompareTabState* compare_tab = ActiveCompareTab();
@@ -44,12 +53,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return false;
   }
 
-  const auto surface_layout =
-      operations_.compute_compare_surface_layout(surface, *compare_tab);
-  const auto scroll_layout =
-      operations_.compute_compare_scroll_layout(surface, surface_layout, *compare_tab);
-  compare_tab->scroll_row = scroll_layout.vertical_scroll;
-  compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+  const auto [surface_layout, scroll_layout] = ClampScrollToLayout(surface, *compare_tab);
   operations_.sync_compare_viewport_scroll(*compare_tab);
   const SDL_FRect divider_rect = CompareDividerHitRect(surface, surface_layout);
 
@@ -212,12 +216,7 @@ bool CompareMouseCoordinator::HandleDrag(const SDL_Event& event,
     return false;
   }
 
-  const auto surface_layout =
-      operations_.compute_compare_surface_layout(surface, *compare_tab);
-  const auto scroll_layout =
-      operations_.compute_compare_scroll_layout(surface, surface_layout, *compare_tab);
-  compare_tab->scroll_row = scroll_layout.vertical_scroll;
-  compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+  const auto [surface_layout, scroll_layout] = ClampScrollToLayout(surface, *compare_tab);
   if (interaction_state_.drag_target == DragTarget::CompareDivider) {
     const float content_width = std::max(
         1.0f, surface.w -
@@ -316,12 +315,7 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
   int next_hover_row = -1;
   if (Contains(surface, event.motion.x, event.motion.y) &&
       !(interaction_state_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
-    const auto surface_layout =
-        operations_.compute_compare_surface_layout(surface, *compare_tab);
-    const auto scroll_layout =
-        operations_.compute_compare_scroll_layout(surface, surface_layout, *compare_tab);
-    compare_tab->scroll_row = scroll_layout.vertical_scroll;
-    compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+    const auto [surface_layout, scroll_layout] = ClampScrollToLayout(surface, *compare_tab);
     operations_.sync_compare_viewport_scroll(*compare_tab);
 
     next_hover_row = CompareHoverRowAtY(MakeCompareControlGeometry(surface, surface_layout), *compare_tab,
